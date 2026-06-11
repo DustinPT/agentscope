@@ -42,6 +42,8 @@ class WakeupDispatcher:
             it can be located by :class:`CancelDispatcher`.
     """
 
+    _RECONNECT_DELAY_SECS = 1.0
+
     def __init__(
         self,
         message_bus: "MessageBus",
@@ -106,21 +108,78 @@ class WakeupDispatcher:
         """Long-lived loop: subscribe to the signal channel and drain
         the queue on every received signal.
 
+        When the Redis pub/sub subscription drops unexpectedly, keep
+        retrying with a short backoff instead of exiting permanently.
+        After a successful re-subscribe, immediately drain the durable
+        wake-up queue so wake-ups queued during the disconnect are
+        recovered even if their transient signal was missed.
+
         Args:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
                 :meth:`start` blocks on this so callers can publish a
                 wake-up immediately after start without racing.
         """
-        try:
-            async for _signal in self._bus.subscribe_wakeup_signal(
-                on_ready=ready.set,
-            ):
-                await self._drain_and_dispatch()
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "WakeupDispatcher loop crashed; subscription ended.",
-            )
+        attempt = 0
+        while True:
+            subscription_restored = False
+
+            def _on_ready() -> None:
+                nonlocal attempt, subscription_restored
+                if not ready.is_set():
+                    ready.set()
+                    return
+                subscription_restored = True
+                logger.info(
+                    "WakeupDispatcher: wake-up signal subscription "
+                    "restored after %d failed attempt(s); draining "
+                    "queued wake-ups.",
+                    attempt,
+                )
+                asyncio.create_task(
+                    self._drain_and_dispatch(),
+                    name="wakeup-dispatcher-recovery-drain",
+                )
+
+            try:
+                if attempt > 0:
+                    logger.info(
+                        "WakeupDispatcher: re-subscribing to wake-up "
+                        "signal channel (attempt %d).",
+                        attempt + 1,
+                    )
+                async for _signal in self._bus.subscribe_wakeup_signal(
+                    on_ready=_on_ready,
+                ):
+                    if subscription_restored:
+                        attempt = 0
+                        subscription_restored = False
+                    await self._drain_and_dispatch()
+
+                attempt += 1
+                logger.warning(
+                    "WakeupDispatcher: wake-up signal subscription "
+                    "ended unexpectedly without an exception "
+                    "(attempt %d); reconnecting in %.1f seconds.",
+                    attempt,
+                    self._RECONNECT_DELAY_SECS,
+                )
+            except asyncio.CancelledError:
+                logger.info(
+                    "WakeupDispatcher: subscription loop cancelled; "
+                    "stopping dispatcher.",
+                )
+                raise
+            except Exception:  # pylint: disable=broad-except
+                attempt += 1
+                logger.exception(
+                    "WakeupDispatcher: wake-up signal subscription "
+                    "failed (attempt %d); reconnecting in %.1f seconds.",
+                    attempt,
+                    self._RECONNECT_DELAY_SECS,
+                )
+
+            await asyncio.sleep(self._RECONNECT_DELAY_SECS)
 
     async def _drain_and_dispatch(self) -> None:
         """Read up to a batch of wake-up entries and dispatch them."""

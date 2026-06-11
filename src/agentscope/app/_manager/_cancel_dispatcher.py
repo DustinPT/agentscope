@@ -48,6 +48,8 @@ class CancelDispatcher:
             no local BG task matches the session.
     """
 
+    _RECONNECT_DELAY_SECS = 1.0
+
     def __init__(
         self,
         message_bus: "MessageBus",
@@ -106,6 +108,9 @@ class CancelDispatcher:
     async def _loop(self, ready: asyncio.Event) -> None:
         """Long-lived loop: yield each incoming cancel and act on it.
 
+        When the Redis pub/sub subscription drops unexpectedly, keep
+        retrying with a short backoff instead of exiting permanently.
+
         Args:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
@@ -113,15 +118,57 @@ class CancelDispatcher:
                 publish a cancel immediately after start without
                 racing the subscription.
         """
-        try:
-            async for session_id in self._bus.session_subscribe_cancel(
-                on_ready=ready.set,
-            ):
-                self._cancel_local(session_id)
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "CancelDispatcher loop crashed; subscription ended.",
-            )
+        attempt = 0
+        while True:
+            def _on_ready() -> None:
+                nonlocal attempt
+                if not ready.is_set():
+                    ready.set()
+                    return
+                logger.info(
+                    "CancelDispatcher: cancel signal subscription "
+                    "restored after %d failed attempt(s).",
+                    attempt,
+                )
+
+            try:
+                if attempt > 0:
+                    logger.info(
+                        "CancelDispatcher: re-subscribing to cancel "
+                        "signal channel (attempt %d).",
+                        attempt + 1,
+                    )
+                async for session_id in self._bus.session_subscribe_cancel(
+                    on_ready=_on_ready,
+                ):
+                    if attempt > 0:
+                        attempt = 0
+                    self._cancel_local(session_id)
+
+                attempt += 1
+                logger.warning(
+                    "CancelDispatcher: cancel signal subscription "
+                    "ended unexpectedly without an exception "
+                    "(attempt %d); reconnecting in %.1f seconds.",
+                    attempt,
+                    self._RECONNECT_DELAY_SECS,
+                )
+            except asyncio.CancelledError:
+                logger.info(
+                    "CancelDispatcher: subscription loop cancelled; "
+                    "stopping dispatcher.",
+                )
+                raise
+            except Exception:  # pylint: disable=broad-except
+                attempt += 1
+                logger.exception(
+                    "CancelDispatcher: cancel signal subscription "
+                    "failed (attempt %d); reconnecting in %.1f seconds.",
+                    attempt,
+                    self._RECONNECT_DELAY_SECS,
+                )
+
+            await asyncio.sleep(self._RECONNECT_DELAY_SECS)
 
     def _cancel_local(self, session_id: str) -> None:
         """Cancel every locally-tracked task for ``session_id``.

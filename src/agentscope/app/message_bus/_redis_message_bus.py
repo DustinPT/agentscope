@@ -41,6 +41,8 @@ class RedisMessageBus(MessageBus):
     may be supplied for tests or for sharing a pool across services.
     """
 
+    _PUBSUB_HEALTH_CHECK_INTERVAL_SECS = 15.0
+
     def __init__(
         self,
         host: str = "localhost",
@@ -162,6 +164,34 @@ class RedisMessageBus(MessageBus):
                 The asyncio Redis client instance.
         """
         return self._client
+
+    def _make_pubsub_client(self) -> Redis:
+        """Create a dedicated Redis client for long-lived Pub/Sub.
+
+        Pub/Sub listens are intentionally isolated from the shared
+        command client so they can disable socket read timeouts without
+        affecting regular Redis operations such as queue drains, stream
+        reads, or lock maintenance.
+        """
+        if self._client is None:
+            raise RuntimeError(
+                "RedisMessageBus client not initialized; "
+                "did you forget to enter the async context?",
+            )
+
+        import redis.asyncio as aioredis
+
+        connection_kwargs = dict(self._client.connection_pool.connection_kwargs)
+        connection_kwargs["decode_responses"] = True
+        # A long-lived subscription must not inherit the default
+        # socket_timeout=5 behaviour from redis-py 8, otherwise an idle
+        # channel repeatedly times out even when Redis itself is healthy.
+        connection_kwargs["socket_timeout"] = None
+        if not connection_kwargs.get("health_check_interval"):
+            connection_kwargs["health_check_interval"] = (
+                self._PUBSUB_HEALTH_CHECK_INTERVAL_SECS
+            )
+        return aioredis.Redis(**connection_kwargs)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -422,7 +452,8 @@ class RedisMessageBus(MessageBus):
             `dict`:
                 Each payload originally passed to :meth:`publish`.
         """
-        pubsub = self._client.pubsub()
+        pubsub_client = self._make_pubsub_client()
+        pubsub = pubsub_client.pubsub()
         try:
             await pubsub.subscribe(key)
             if on_ready is not None:
@@ -436,8 +467,11 @@ class RedisMessageBus(MessageBus):
                     continue
                 yield json.loads(data)
         finally:
-            await pubsub.unsubscribe(key)
-            await pubsub.aclose()
+            try:
+                await pubsub.unsubscribe(key)
+            finally:
+                await pubsub.aclose()
+                await pubsub_client.aclose()
 
     # ------------------------------------------------------------------
     # Mode E — distributed lock
