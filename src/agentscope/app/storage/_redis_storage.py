@@ -53,6 +53,9 @@ class RedisStorage(StorageBase):
         session_index: str = (
             "agentscope:user:{user_id}:agent:{agent_id}:sessions"
         )
+        session_children: str = (
+            "agentscope:user:{user_id}:session_children:{parent_session_id}"
+        )
 
         # Lookup key: maps (user_id, agent_id) → session_id
         session_lookup: str = (
@@ -523,6 +526,8 @@ class RedisStorage(StorageBase):
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
+        parent_session_id: str | None = None,
+        parent_tool_call_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -538,11 +543,31 @@ class RedisStorage(StorageBase):
             raw = await self._client.get(key)
             if raw:
                 record = SessionRecord.model_validate_json(raw)
+                old_parent_session_id = record.parent_session_id
                 record.config = config
                 if state is not None:
                     record.state = state
+                if parent_session_id is not None:
+                    record.parent_session_id = parent_session_id
+                if parent_tool_call_id is not None:
+                    record.parent_tool_call_id = parent_tool_call_id
                 record.updated_at = datetime.now()
                 await self._set_with_ttl(key, record.model_dump_json())
+                if old_parent_session_id != record.parent_session_id:
+                    if old_parent_session_id is not None:
+                        old_children_key = self._key(
+                            self.key_config.session_children,
+                            user_id=user_id,
+                            parent_session_id=old_parent_session_id,
+                        )
+                        await self._client.srem(old_children_key, record.id)
+                    if record.parent_session_id is not None:
+                        children_key = self._key(
+                            self.key_config.session_children,
+                            user_id=user_id,
+                            parent_session_id=record.parent_session_id,
+                        )
+                        await self._client.sadd(children_key, record.id)
                 return record
 
         # Use the caller-provided ``session_id`` when given so a
@@ -555,6 +580,8 @@ class RedisStorage(StorageBase):
             config=config,
             source=source,
             source_schedule_id=source_schedule_id,
+            parent_session_id=parent_session_id,
+            parent_tool_call_id=parent_tool_call_id,
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -570,6 +597,13 @@ class RedisStorage(StorageBase):
         )
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
+        if record.parent_session_id is not None:
+            children_key = self._key(
+                self.key_config.session_children,
+                user_id=user_id,
+                parent_session_id=record.parent_session_id,
+            )
+            await self._client.sadd(children_key, record.id)
 
         if source_schedule_id:
             schedule_session_key = self._key(
@@ -631,6 +665,32 @@ class RedisStorage(StorageBase):
             agent_id=agent_id,
         )
         ids = await self._client.smembers(index_key)
+        records = []
+        for session_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.session,
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
+            )
+            if raw:
+                records.append(SessionRecord.model_validate_json(raw))
+        records.sort(key=lambda r: r.created_at, reverse=True)
+        return records
+
+    async def list_child_sessions(
+        self,
+        user_id: str,
+        parent_session_id: str,
+    ) -> list[SessionRecord]:
+        """Return direct child sessions for a parent session."""
+        children_key = self._key(
+            self.key_config.session_children,
+            user_id=user_id,
+            parent_session_id=parent_session_id,
+        )
+        ids = await self._client.smembers(children_key)
         records = []
         for session_id in ids:
             raw = await self._client.get(
@@ -733,6 +793,13 @@ class RedisStorage(StorageBase):
         await self._client.delete(key)
         await self._client.srem(index_key, session_id)
         await self._client.delete(msg_key)
+        if record.parent_session_id is not None:
+            children_key = self._key(
+                self.key_config.session_children,
+                user_id=user_id,
+                parent_session_id=record.parent_session_id,
+            )
+            await self._client.srem(children_key, session_id)
 
         if record.source_schedule_id:
             schedule_session_key = self._key(

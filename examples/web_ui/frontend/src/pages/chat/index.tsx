@@ -17,6 +17,7 @@ import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
+import { SubAgentSidebar } from '@/components/subagent/SubAgentSidebar';
 import { TeamSidebar } from '@/components/team/TeamSidebar';
 import { ChatTourController } from '@/components/tour/ChatTourController';
 import { Button } from '@/components/ui/button';
@@ -86,7 +87,7 @@ const ChatPageInner = () => {
 	const {
 		agentId: urlAgentId,
 		sessionId: urlSessionId,
-		memberId: urlMemberId,
+		memberId: urlFocusedSessionId,
 	} = useParams<{
 		agentId?: string;
 		sessionId?: string;
@@ -120,15 +121,38 @@ const ChatPageInner = () => {
 	// viewport follows this inner focus. When `urlMemberId` is
 	// undefined or doesn't resolve to a known team member, the inner
 	// focus collapses back to the outer (leader) session.
-	const focusedMember = urlMemberId
-		? (currentView?.team?.members.find((m) => m.agent.id === urlMemberId) ?? null)
+	const flattenChildren = (children = currentView?.children ?? []) => {
+		const walk = (nodes: typeof children): typeof children =>
+			nodes.flatMap((node) => [node, ...walk(node.children)]);
+		return walk(children);
+	};
+	const focusedChildSession = urlFocusedSessionId
+		? (flattenChildren().find((child) => child.session.id === urlFocusedSessionId) ?? null)
 		: null;
-	const effectiveAgentId =
-		focusedMember && focusedMember.session_id ? focusedMember.agent.id : (urlAgentId ?? null);
-	const effectiveSessionId =
-		focusedMember && focusedMember.session_id
+	const focusedMember =
+		urlFocusedSessionId && currentView?.team
+			? (currentView.team.members.find((m) => m.session_id === urlFocusedSessionId) ?? null)
+			: null;
+	const effectiveAgentId = focusedChildSession
+		? focusedChildSession.agent.id
+		: focusedMember && focusedMember.session_id
+			? focusedMember.agent.id
+			: (urlAgentId ?? null);
+	const effectiveSessionId = focusedChildSession
+		? focusedChildSession.session.id
+		: focusedMember && focusedMember.session_id
 			? focusedMember.session_id
 			: (urlSessionId ?? null);
+	const subSessionMeta = focusedChildSession
+		? {
+				agentName:
+					focusedChildSession.agent.data.name || focusedChildSession.agent.id,
+				sessionName:
+					focusedChildSession.session.config.name ||
+					focusedChildSession.session.id,
+				parentSessionName: currentView?.session.config.name || urlSessionId || '',
+			}
+		: null;
 
 	// Redirect: URL is missing an agent → pick the first one and rewrite
 	// the URL in-place (replace so we don't pollute history).
@@ -374,10 +398,25 @@ const ChatPageInner = () => {
 			{currentView?.team && effectiveSessionId && (
 				<TeamSidebar team={currentView.team} currentSessionId={effectiveSessionId} />
 			)}
+			{currentView?.children && currentView.children.length > 0 && urlAgentId && urlSessionId && (
+				<SubAgentSidebar
+					rootAgentId={urlAgentId}
+					rootSessionId={urlSessionId}
+					currentSessionId={effectiveSessionId ?? urlSessionId}
+					children={currentView.children}
+				/>
+			)}
 			<div className="flex flex-1 min-w-0">
 				<ChatViewport
 					agentId={effectiveAgentId}
 					sessionId={effectiveSessionId}
+					sessionViewOverride={focusedChildSession}
+					subSessionMeta={subSessionMeta}
+					onReturnToRootSession={
+						urlAgentId && urlSessionId
+							? () => navigate(`/chat/${urlAgentId}/${urlSessionId}`)
+							: undefined
+					}
 					onTeamUpdated={refetchSessions}
 				/>
 			</div>

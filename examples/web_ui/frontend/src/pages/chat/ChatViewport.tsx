@@ -1,8 +1,8 @@
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { Toolbox } from 'lucide-react';
+import { ArrowLeft, Bot, Toolbox } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { ChatModelConfig } from '@/api';
+import type { ChatModelConfig, SessionView, SubAgentSessionView } from '@/api';
 import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { TaskPanel } from '@/components/chat/TaskPanel';
@@ -11,6 +11,7 @@ import { WorkspaceDrawer } from '@/components/drawer/WorkspaceDrawer.tsx';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useMessages } from '@/hooks/useMessages';
@@ -29,6 +30,18 @@ interface ChatViewportProps {
 	 * workspace drive every control rendered here.
 	 */
 	sessionId: string | null;
+	/**
+	 * Optional pre-resolved session snapshot supplied by the outer page.
+	 * Used for nested views such as sub-agent sessions, which are not
+	 * returned by the child agent's top-level session list endpoint.
+	 */
+	sessionViewOverride?: SessionView | SubAgentSessionView | null;
+	subSessionMeta?: {
+		agentName: string;
+		sessionName: string;
+		parentSessionName: string;
+	} | null;
+	onReturnToRootSession?: () => void;
 	/**
 	 * Optional hook invoked when a team membership change arrives on
 	 * this viewport's SSE stream. The outer page owns the session list
@@ -58,7 +71,14 @@ interface ChatViewportProps {
  *   session is selected yet.
  * @returns The right-side main JSX of the chat page.
  */
-export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewportProps) {
+export function ChatViewport({
+	agentId,
+	sessionId,
+	sessionViewOverride,
+	subSessionMeta,
+	onReturnToRootSession,
+	onTeamUpdated,
+}: ChatViewportProps) {
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
 
@@ -69,6 +89,10 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	// we also fire the parent's refetch to keep that in sync.
 	const handleTeamUpdated = useCallback(() => {
 		refetchSessions();
+		onTeamUpdated?.();
+	}, [refetchSessions, onTeamUpdated]);
+	const refetchRelatedSessions = useCallback(async () => {
+		await refetchSessions();
 		onTeamUpdated?.();
 	}, [refetchSessions, onTeamUpdated]);
 
@@ -103,7 +127,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		removeSkill,
 	} = useWorkspace(agentId, sessionId);
 
-	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
+	const view = sessionViewOverride ?? sessions.find((v) => v.session.id === sessionId) ?? null;
 
 	// ChatViewport keeps its own `useSessions(agentId)` instance (the
 	// outer page has a separate one). Its built-in fetch only fires on
@@ -116,8 +140,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	useEffect(() => {
 		if (!sessionId) return;
 		if (view) return;
+		if (sessionViewOverride) return;
 		refetchSessions();
-	}, [sessionId, view, refetchSessions]);
+	}, [sessionId, view, sessionViewOverride, refetchSessions]);
 
 	// Reset local UI state when the target session changes. Otherwise
 	// the model select (and disabled-state guards on `send`) would
@@ -138,7 +163,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			if (card) return card;
 		}
 		return null;
-	}, [groups, selectedModel?.type, selectedModel?.model]);
+	}, [groups, selectedModel]);
 
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
@@ -148,7 +173,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 * @returns The first available `ChatModelConfig`, or `null` when
 	 *   no credentials / models are configured.
 	 */
-	const getFirstAvailableModel = (): ChatModelConfig | null => {
+	const getFirstAvailableModel = useCallback((): ChatModelConfig | null => {
 		const firstType = Object.keys(groups)[0];
 		if (!firstType) return null;
 		const items = groups[firstType];
@@ -164,7 +189,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			model: modelName,
 			parameters: {},
 		};
-	};
+	}, [groups]);
 
 	// Sync tasksContext from the session snapshot. Real-time updates
 	// arrive via the CustomEvent(name="state_updated") → the
@@ -206,7 +231,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 				if (sessionId && agentId) {
 					sessionApi
 						.update(sessionId, agentId, { chat_model_config: firstModel })
-						.then(() => refetchSessions())
+						.then(() => refetchRelatedSessions())
 						.catch(() => {});
 				}
 			} else {
@@ -215,7 +240,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
-	}, [view, groups, sessionId, agentId]);
+	}, [view, sessionId, agentId, getFirstAvailableModel, refetchRelatedSessions]);
 
 	// Sync selectedPermissionMode when the session changes. Same
 	// loading-window guard as above — don't reset the displayed mode
@@ -238,7 +263,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		if (!config || !sessionId || !agentId) return;
 		setSelectedModel(config);
 		await sessionApi.update(sessionId, agentId, { chat_model_config: config });
-		await refetchSessions();
+		await refetchRelatedSessions();
 	};
 
 	/**
@@ -251,7 +276,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		const updated = { ...selectedModel, parameters };
 		setSelectedModel(updated);
 		await sessionApi.update(sessionId, agentId, { chat_model_config: updated });
-		await refetchSessions();
+		await refetchRelatedSessions();
 	};
 
 	/**
@@ -263,7 +288,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		if (!sessionId || !agentId) return;
 		setSelectedFallbackModel(config);
 		await sessionApi.update(sessionId, agentId, { fallback_chat_model_config: config });
-		await refetchSessions();
+		await refetchRelatedSessions();
 	};
 
 	/**
@@ -275,13 +300,40 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setSelectedPermissionMode(mode);
 		if (!sessionId || !agentId) return;
 		await sessionApi.update(sessionId, agentId, { permission_mode: mode });
-		await refetchSessions();
+		await refetchRelatedSessions();
 	};
 
 	return (
 		<>
 			<main className="flex size-full">
 				<div className="flex flex-col flex-1 min-h-0 p-2">
+					{subSessionMeta && (
+						<div className="mb-2 flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2">
+							<div className="min-w-0">
+								<div className="flex items-center gap-2 text-sm">
+									<Badge variant="secondary" className="gap-1">
+										<Bot className="size-3.5" />
+										子会话
+									</Badge>
+									<span className="truncate font-medium">
+										{subSessionMeta.agentName} / {subSessionMeta.sessionName}
+									</span>
+								</div>
+								<div className="mt-1 text-xs text-muted-foreground">
+									当前正在查看子 agent 会话，所属主会话：{subSessionMeta.parentSessionName}
+								</div>
+							</div>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={onReturnToRootSession}
+								disabled={!onReturnToRootSession}
+							>
+								<ArrowLeft className="size-4" />
+								返回主会话
+							</Button>
+						</div>
+					)}
 					<div className="flex flex-row gap-x-2 justify-between">
 						<div id="tour-llm-select" className="flex flex-row items-center gap-x-1">
 							<LlmSelect

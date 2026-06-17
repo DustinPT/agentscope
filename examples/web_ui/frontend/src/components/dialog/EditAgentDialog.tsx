@@ -10,6 +10,14 @@ import {
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
 import type { SchemaFormValue } from '@/components/form/SchemaForm';
+import {
+	createSubAgentConfigValue,
+	parseSubAgentConfigValue,
+	type SubAgentConfigValue,
+} from '@/components/form/subAgentConfig';
+import {
+	SubAgentConfigFields,
+} from '@/components/form/SubAgentConfigFields';
 import { Button } from '@/components/ui/button';
 import {
 	Dialog,
@@ -30,11 +38,14 @@ interface Props {
 }
 
 export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props) {
-	const { update } = useAgents();
+	const { agents, update } = useAgents();
 	const { t } = useTranslation();
 	const { schema } = useAgentSchema();
 	const [submitting, setSubmitting] = useState(false);
 	const [values, setValues] = useState<AgentFormValues | null>(null);
+	const [subAgentValue, setSubAgentValue] = useState<SubAgentConfigValue>(
+		createSubAgentConfigValue(agent),
+	);
 
 	useEffect(() => {
 		if (!open || !schema) {
@@ -49,11 +60,13 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 			identity: {
 				...base.identity,
 				name: d.name,
+				description: d.description,
 				system_prompt: d.system_prompt,
 			},
 			context_config: { ...base.context_config, ...(d.context_config ?? {}) },
 			react_config: { ...base.react_config, ...(d.react_config ?? {}) },
 		});
+		setSubAgentValue(createSubAgentConfigValue(agent));
 	}, [open, schema, agent]);
 
 	const handleChange = (section: AgentSection, key: string, value: SchemaFormValue) => {
@@ -68,11 +81,14 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 		if (!name) return;
 		setSubmitting(true);
 		try {
+			const subAgentConfig = parseSubAgentConfigValue(subAgentValue);
 			await update(agent.id, {
 				name,
+				description: values.identity.description as string | undefined,
 				system_prompt: values.identity.system_prompt as string | undefined,
 				context_config: values.context_config as unknown as ContextConfig,
 				react_config: values.react_config as unknown as ReActConfig,
+				...subAgentConfig,
 			});
 			onOpenChange(false);
 			onUpdated?.();
@@ -94,7 +110,19 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 				</DialogHeader>
 				<div className="no-scrollbar -mx-4 max-h-[75vh] overflow-y-auto px-4">
 					{schema && values ? (
-						<AgentFormFields schema={schema} values={values} onChange={handleChange} />
+						<div className="space-y-6">
+							<AgentFormFields
+								schema={schema}
+								values={values}
+								onChange={handleChange}
+							/>
+							<SubAgentConfigFields
+								value={subAgentValue}
+								onChange={setSubAgentValue}
+								agents={agents}
+								currentAgentId={agent.id}
+							/>
+						</div>
 					) : (
 						<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
 					)}

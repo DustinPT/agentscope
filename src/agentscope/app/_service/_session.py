@@ -204,9 +204,22 @@ class SessionService:
             agent_id,
             session_id,
         )
-        all_sids = [session_id, *worker_sids]
+        descendant_sessions = await self._descendant_sessions(
+            user_id,
+            session_id,
+        )
+        descendant_sids = [session.id for session in descendant_sessions]
+        all_sids = list(
+            dict.fromkeys([session_id, *worker_sids, *descendant_sids]),
+        )
 
         await self._cancel_runs(all_sids)
+        for descendant in reversed(descendant_sessions):
+            await self._storage.delete_session(
+                user_id,
+                descendant.agent_id,
+                descendant.id,
+            )
         deleted = await self._storage.delete_session(
             user_id,
             agent_id,
@@ -355,6 +368,28 @@ class SessionService:
             )
             sids.extend(s.id for s in worker_sessions)
         return sids
+
+    async def _descendant_sessions(
+        self,
+        user_id: str,
+        parent_session_id: str,
+    ) -> list:
+        """Return every descendant session under ``parent_session_id``.
+
+        Sessions are returned parent-first so callers can reverse the list
+        when they need a safe leaf-first delete order.
+        """
+        descendants = []
+        direct_children = await self._storage.list_child_sessions(
+            user_id,
+            parent_session_id,
+        )
+        for child in direct_children:
+            descendants.append(child)
+            descendants.extend(
+                await self._descendant_sessions(user_id, child.id),
+            )
+        return descendants
 
     async def _cancel_runs(self, session_ids: list[str]) -> None:
         """Cancel every in-flight run in ``session_ids`` concurrently.

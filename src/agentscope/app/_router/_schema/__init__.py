@@ -31,6 +31,7 @@ from ._session import (
     ListSessionsResponse,
     ListMessagesResponse,
     SessionView,
+    SubAgentSessionView,
     TeamDetailResponse,
     TeamMemberView,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "ListSessionsResponse",
     "ListMessagesResponse",
     "SessionView",
+    "SubAgentSessionView",
     "TeamDetailResponse",
     "TeamMemberView",
 ]

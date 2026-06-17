@@ -20,6 +20,7 @@ from ._schema import (
     ListMessagesResponse,
     ListSessionsResponse,
     SessionView,
+    SubAgentSessionView,
     TeamDetailResponse,
     TeamMemberView,
     UpdateSessionRequest,
@@ -80,6 +81,35 @@ async def _build_team_detail(
         leader_agent=leader_agent,
         members=members,
     )
+
+
+async def _build_child_sessions(
+    storage: StorageBase,
+    message_bus: MessageBus,
+    user_id: str,
+    parent_session_id: str,
+) -> list[SubAgentSessionView]:
+    """Resolve direct and nested child sessions for a parent session."""
+    children = await storage.list_child_sessions(user_id, parent_session_id)
+    views: list[SubAgentSessionView] = []
+    for child in children:
+        agent = await storage.get_agent(user_id, child.agent_id)
+        if agent is None:
+            continue
+        views.append(
+            SubAgentSessionView(
+                session=child,
+                agent=agent,
+                is_running=await message_bus.session_is_running(child.id),
+                children=await _build_child_sessions(
+                    storage,
+                    message_bus,
+                    user_id,
+                    child.id,
+                ),
+            ),
+        )
+    return views
 
 
 session_router = APIRouter(
@@ -169,6 +199,8 @@ async def list_sessions(
     sessions = await storage.list_sessions(user_id, agent_id)
     views: list[SessionView] = []
     for session in sessions:
+        if session.parent_session_id is not None:
+            continue
         team_detail = None
         if session.team_id:
             team_record = await storage.get_team(user_id, session.team_id)
@@ -183,6 +215,12 @@ async def list_sessions(
                 session=session,
                 is_running=await message_bus.session_is_running(session.id),
                 team=team_detail,
+                children=await _build_child_sessions(
+                    storage,
+                    message_bus,
+                    user_id,
+                    session.id,
+                ),
             ),
         )
     return ListSessionsResponse(sessions=views, total=len(views))

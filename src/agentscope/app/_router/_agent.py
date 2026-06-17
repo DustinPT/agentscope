@@ -16,6 +16,58 @@ from ._schema import (
 from .._service import SessionService
 from ..storage import StorageBase, AgentData, AgentRecord
 
+
+async def _ensure_credential_exists(
+    storage: StorageBase,
+    user_id: str,
+    credential_id: str | None,
+) -> None:
+    """Validate that a referenced credential belongs to the user."""
+    if credential_id is None:
+        return
+    credentials = await storage.list_credentials(user_id)
+    if not any(c.id == credential_id for c in credentials):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Credential '{credential_id}' not found.",
+        )
+
+
+async def _validate_subagent_config(
+    storage: StorageBase,
+    user_id: str,
+    *,
+    self_agent_id: str | None,
+    allow_subagent_calls: bool,
+    allowed_subagent_ids: list[str],
+    default_credential_id: str | None,
+) -> None:
+    """Validate sub-agent configuration against storage."""
+    await _ensure_credential_exists(storage, user_id, default_credential_id)
+
+    if self_agent_id is not None and self_agent_id in allowed_subagent_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An agent cannot allow itself as a sub-agent target.",
+        )
+
+    for target_agent_id in allowed_subagent_ids:
+        target = await storage.get_agent(user_id, target_agent_id)
+        if target is None or target.user_id != user_id or target.source != "user":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Allowed sub-agent '{target_agent_id}' not found.",
+            )
+
+    if not allow_subagent_calls and allowed_subagent_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "allowed_subagent_ids must be empty when "
+                "allow_subagent_calls is false."
+            ),
+        )
+
 agent_router = APIRouter(
     prefix="/agent",
     tags=["agent"],
@@ -45,7 +97,7 @@ async def get_agent_schema() -> AgentSchemaResponse:
     # a dict by hand) keeps Pydantic as the single source of truth for
     # defaults, titles, descriptions, and the ``format: textarea`` hint.
     agent_schema = AgentData.model_json_schema()
-    identity_keys = ("name", "system_prompt")
+    identity_keys = ("name", "description", "system_prompt")
     identity = {
         "type": "object",
         "title": "Identity",
@@ -65,10 +117,61 @@ async def get_agent_schema() -> AgentSchemaResponse:
     # expected to edit it from the form, so we hide it.
     context_schema.get("properties", {}).pop("summary_schema", None)
 
+    subagent_keys = (
+        "default_chat_model_config",
+        "allow_subagent_calls",
+        "allowed_subagent_ids",
+    )
+    subagent_config = {
+        "type": "object",
+        "title": "Sub-Agent Config",
+        "properties": {
+            "default_chat_model_config": {
+                "type": "object",
+                "title": "Default Sub-Agent Model",
+                "description": (
+                    "Preferred model used when this agent runs as a "
+                    "sub-agent. Leave empty to inherit the caller session's "
+                    "model."
+                ),
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "title": "Provider Type",
+                    },
+                    "credential_id": {
+                        "type": "string",
+                        "title": "Credential Id",
+                    },
+                    "model": {
+                        "type": "string",
+                        "title": "Model",
+                    },
+                },
+            },
+            "allow_subagent_calls": (
+                agent_schema.get("properties", {})
+                .get("allow_subagent_calls", {})
+            ),
+            "allowed_subagent_ids": {
+                "type": "array",
+                "title": "Allowed Sub-Agents",
+                "description": (
+                    "Managed agent ids this agent may call as sub-agents."
+                ),
+                "items": {"type": "string"},
+            },
+        },
+        "required": [
+            r for r in agent_schema.get("required", []) if r in subagent_keys
+        ],
+    }
+
     return AgentSchemaResponse(
         identity=identity,
         context_config=context_schema,
         react_config=ReActConfig.model_json_schema(),
+        subagent_config=subagent_config,
     )
 
 
@@ -122,13 +225,30 @@ async def create_agent(
         `CreateAgentResponse`:
             The server-assigned agent identifier.
     """
+    await _validate_subagent_config(
+        storage,
+        user_id,
+        self_agent_id=None,
+        allow_subagent_calls=body.allow_subagent_calls,
+        allowed_subagent_ids=body.allowed_subagent_ids,
+        default_credential_id=(
+            body.default_chat_model_config.credential_id
+            if body.default_chat_model_config is not None
+            else None
+        ),
+    )
+
     record = AgentRecord(
         user_id=user_id,
         data=AgentData(
             name=body.name,
+            description=body.description,
             system_prompt=body.system_prompt,
             context_config=body.context_config,
             react_config=body.react_config,
+            default_chat_model_config=body.default_chat_model_config,
+            allow_subagent_calls=body.allow_subagent_calls,
+            allowed_subagent_ids=body.allowed_subagent_ids,
         ),
     )
     agent_id = await storage.upsert_agent(user_id, record)
@@ -173,7 +293,21 @@ async def update_agent(
         )
 
     updates = body.model_dump(exclude_none=True)
-    updated_data = existing.data.model_copy(update=updates)
+    merged_data = existing.data.model_dump(mode="python")
+    merged_data.update(updates)
+    updated_data = AgentData.model_validate(merged_data)
+    await _validate_subagent_config(
+        storage,
+        user_id,
+        self_agent_id=agent_id,
+        allow_subagent_calls=updated_data.allow_subagent_calls,
+        allowed_subagent_ids=updated_data.allowed_subagent_ids,
+        default_credential_id=(
+            updated_data.default_chat_model_config.credential_id
+            if updated_data.default_chat_model_config is not None
+            else None
+        ),
+    )
     updated_agent = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},
     )

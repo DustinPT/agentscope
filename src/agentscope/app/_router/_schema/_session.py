@@ -46,6 +46,20 @@ class TeamDetailResponse(BaseModel):
     )
 
 
+class SubAgentSessionView(BaseModel):
+    """Recursive child-session view for sub-agent sessions."""
+
+    session: SessionRecord = Field(description="The child session record.")
+    agent: AgentRecord = Field(description="The child agent record.")
+    is_running: bool = Field(
+        description="Whether a chat run is currently active on this child session.",
+    )
+    children: list["SubAgentSessionView"] = Field(
+        default_factory=list,
+        description="Direct child sessions spawned from this child session.",
+    )
+
+
 class CreateSessionRequest(BaseModel):
     """Request body for creating a new session."""
 
@@ -136,6 +150,10 @@ class SessionView(BaseModel):
             "(leader agent + member agents with their session ids). "
             "``None`` when the session does not participate in any team."
         ),
+    )
+    children: list[SubAgentSessionView] = Field(
+        default_factory=list,
+        description="Recursive child sessions spawned under this session.",
     )
 
 

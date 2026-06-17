@@ -13,13 +13,16 @@ that wants them subscribes through the
 """
 from fastapi import HTTPException
 
+from .._reply_state import is_reply_awaiting_tool_interaction
 from ..message_bus import MessageBus
 from ..storage import StorageBase
 from .._manager import BackgroundTaskManager, SchedulerManager
+from .._manager import ChatRunRegistry
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
     StateChangeMiddleware,
+    SubAgentResultMiddleware,
     ToolOffloadMiddleware,
 )
 from .._types import (
@@ -37,7 +40,7 @@ from ...event import (
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
 )
-from ...message import AssistantMsg, Msg, ToolCallState
+from ...message import AssistantMsg, Msg
 from ...permission import AdditionalWorkingDirectory
 
 
@@ -63,6 +66,7 @@ class ChatService:
         scheduler_manager: SchedulerManager,
         background_task_manager: BackgroundTaskManager,
         message_bus: MessageBus,
+        chat_run_registry: ChatRunRegistry,
         extra_agent_middlewares: AgentMiddlewareFactory | None = None,
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
@@ -89,6 +93,8 @@ class ChatService:
                 distributed locking (via :meth:`session_run`), event
                 replay + live fan-out (via :meth:`session_publish_event`),
                 and inbox delivery (via :class:`InboxMiddleware`).
+            chat_run_registry (`ChatRunRegistry`):
+                Per-process registry used to spawn child session chat runs.
             extra_agent_middlewares (`AgentMiddlewareFactory | None`, \
              optional):
                 Async factory invoked at every chat turn to produce
@@ -111,6 +117,7 @@ class ChatService:
         self._scheduler_manager = scheduler_manager
         self._background_task_manager = background_task_manager
         self._message_bus = message_bus
+        self._chat_run_registry = chat_run_registry
         self._extra_agent_middlewares = extra_agent_middlewares
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
@@ -268,6 +275,16 @@ class ChatService:
                 agent_id=agent_id,
             ),
         ]
+        if session_record.parent_session_id is not None:
+            middlewares.append(
+                SubAgentResultMiddleware(
+                    storage=self._storage,
+                    message_bus=self._message_bus,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                ),
+            )
         if self._extra_agent_middlewares is not None:
             middlewares.extend(
                 await self._extra_agent_middlewares(
@@ -330,27 +347,19 @@ class ChatService:
         # :class:`InboxMiddleware` drain the queue naturally.
         # ----------------------------------------------------------------
         if input_msg is None and agent.state.context:
-            last_msg = agent.state.context[-1]
-            if last_msg.role == "assistant" and last_msg.name == agent.name:
-                awaiting = [
-                    tc
-                    for tc in last_msg.get_content_blocks("tool_call")
-                    if tc.state
-                    in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
-                ]
-                if awaiting:
-                    logger.info(
-                        "Skipping wake-up for session %s: agent is parked "
-                        "on %d awaiting tool call(s); inbox messages will "
-                        "be drained when the agent resumes.",
-                        session_id,
-                        len(awaiting),
-                    )
-                    return
+            if is_reply_awaiting_tool_interaction(agent):
+                logger.info(
+                    "Skipping wake-up for session %s: agent is parked on "
+                    "awaiting tool call(s); inbox messages will be drained "
+                    "when the agent resumes.",
+                    session_id,
+                )
+                return
 
         # ----------------------------------------------------------------
         # 7. Run the agent inside the bus's distributed session lock
         # ----------------------------------------------------------------
+        needs_followup_wakeup = False
         async with self._message_bus.session_run(session_id):
             reply_msg: Msg | None = None
 
@@ -431,5 +440,29 @@ class ChatService:
                 state=agent.state,
             )
 
+            parked_on_awaiting_tool = is_reply_awaiting_tool_interaction(
+                agent,
+            )
+
+            pending_inbox_entries = await self._message_bus.inbox_length(
+                session_id,
+            )
+            needs_followup_wakeup = (
+                pending_inbox_entries > 0 and not parked_on_awaiting_tool
+            )
+            if needs_followup_wakeup:
+                logger.info(
+                    "ChatService: session %s finished with %d pending inbox "
+                    "entries; scheduling a follow-up wakeup.",
+                    session_id,
+                    pending_inbox_entries,
+                )
+
         # ``session_run.__aexit__`` trims the replay log before
         # releasing the lock — see :meth:`MessageBus.session_run`.
+        if needs_followup_wakeup:
+            await self._message_bus.enqueue_wakeup(
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+            )

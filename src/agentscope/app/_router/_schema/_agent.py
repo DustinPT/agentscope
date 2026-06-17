@@ -3,13 +3,20 @@
 from pydantic import BaseModel, Field
 
 from ....agent import ContextConfig, ReActConfig
-from ...storage import AgentRecord
+from ...storage import AgentRecord, ChatModelConfig
 
 
 class CreateAgentRequest(BaseModel):
     """Request body for creating a new agent."""
 
     name: str = Field(description="Display name of the agent.")
+    description: str = Field(
+        default="",
+        description=(
+            "Capability summary describing what the agent is good at and "
+            "when it should be called."
+        ),
+    )
     system_prompt: str = Field(
         default="You're a helpful assistant.",
         description="Base system prompt fed to the agent.",
@@ -21,6 +28,18 @@ class CreateAgentRequest(BaseModel):
     react_config: ReActConfig = Field(
         default_factory=ReActConfig,
         description="ReAct loop configuration.",
+    )
+    default_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Preferred model when this agent runs as a sub-agent.",
+    )
+    allow_subagent_calls: bool = Field(
+        default=False,
+        description="Whether this agent may call other managed agents.",
+    )
+    allowed_subagent_ids: list[str] = Field(
+        default_factory=list,
+        description="Managed agents this agent may call as sub-agents.",
     )
 
 
@@ -37,6 +56,13 @@ class UpdateAgentRequest(BaseModel):
     """
 
     name: str | None = Field(default=None, description="New display name.")
+    description: str | None = Field(
+        default=None,
+        description=(
+            "Updated capability summary describing what the agent is good at "
+            "and when it should be called."
+        ),
+    )
     system_prompt: str | None = Field(
         default=None,
         description="New system prompt.",
@@ -48,6 +74,18 @@ class UpdateAgentRequest(BaseModel):
     react_config: ReActConfig | None = Field(
         default=None,
         description="New ReAct loop configuration.",
+    )
+    default_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Preferred model when this agent runs as a sub-agent.",
+    )
+    allow_subagent_calls: bool | None = Field(
+        default=None,
+        description="Whether this agent may call other managed agents.",
+    )
+    allowed_subagent_ids: list[str] | None = Field(
+        default=None,
+        description="Managed agents this agent may call as sub-agents.",
     )
 
 
@@ -79,4 +117,7 @@ class AgentSchemaResponse(BaseModel):
     )
     react_config: dict = Field(
         description="Schema for ``ReActConfig``.",
+    )
+    subagent_config: dict = Field(
+        description="Schema for sub-agent execution and access control.",
     )

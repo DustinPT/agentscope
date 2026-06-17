@@ -178,6 +178,8 @@ class StorageBase(ABC):
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
+        parent_session_id: str | None = None,
+        parent_tool_call_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -197,6 +199,11 @@ class StorageBase(ABC):
             source_schedule_id (`str | None`, optional): The schedule that
                 created this session. When set, the session is indexed under
                 the schedule for execution history queries.
+            parent_session_id (`str | None`, optional): Parent session id
+                when this session is spawned as a child session.
+            parent_tool_call_id (`str | None`, optional): Tool call id that
+                created this child session. Used to associate UI cards with
+                child sessions.
 
         Returns:
             `SessionRecord`: The created or updated record.
@@ -261,6 +268,23 @@ class StorageBase(ABC):
 
         Returns:
             `list[SessionRecord]`: List of all sessions for the (user, agent).
+        """
+
+    @abstractmethod
+    async def list_child_sessions(
+        self,
+        user_id: str,
+        parent_session_id: str,
+    ) -> list[SessionRecord]:
+        """List all direct child sessions for a parent session.
+
+        Args:
+            user_id (`str`): The owner user id.
+            parent_session_id (`str`): Parent session id.
+
+        Returns:
+            `list[SessionRecord]`: Direct child sessions ordered by creation
+            time descending.
         """
 
     @abstractmethod

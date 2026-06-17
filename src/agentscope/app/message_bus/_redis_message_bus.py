@@ -306,6 +306,10 @@ class RedisMessageBus(MessageBus):
         """
         await self._client.delete(key)
 
+    async def queue_length(self, key: str) -> int:
+        """Return the current entry count of a drain queue."""
+        return await self._client.xlen(key)
+
     # ------------------------------------------------------------------
     # Mode C — replay log
     # ------------------------------------------------------------------

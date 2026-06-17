@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import Field, BaseModel
 
 from ._base import _RecordBase
+from ._session import ChatModelConfig
 from ....agent import ContextConfig, ReActConfig
 
 
@@ -21,6 +22,16 @@ class AgentData(BaseModel):
     name: str = Field(
         description="The name of the agent.",
         title="Name",
+    )
+
+    description: str = Field(
+        default="",
+        description=(
+            "A short capability summary describing what the agent is good at "
+            "and when it should be called."
+        ),
+        title="Description",
+        json_schema_extra={"format": "textarea"},
     )
 
     system_prompt: str = Field(
@@ -40,6 +51,30 @@ class AgentData(BaseModel):
     react_config: ReActConfig = Field(
         description="The react config for the agent.",
         title="React Config",
+    )
+
+    default_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description=(
+            "Preferred chat model for this agent when it is executed as a "
+            "sub-agent. Falls back to the caller session's model when unset."
+        ),
+        title="Default Sub-Agent Model",
+    )
+
+    allow_subagent_calls: bool = Field(
+        default=False,
+        description="Whether this agent may call other managed agents.",
+        title="Allow Sub-Agent Calls",
+    )
+
+    allowed_subagent_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Managed agent ids this agent may call as sub-agents. "
+            "Ignored when sub-agent calling is disabled."
+        ),
+        title="Allowed Sub-Agents",
     )
 
 

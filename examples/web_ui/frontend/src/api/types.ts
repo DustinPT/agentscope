@@ -31,9 +31,13 @@ export interface ReActConfig {
 export interface AgentData {
 	id: string;
 	name: string;
+	description: string;
 	system_prompt: string;
 	context_config: ContextConfig;
 	react_config: ReActConfig;
+	default_chat_model_config: ChatModelConfig | null;
+	allow_subagent_calls: boolean;
+	allowed_subagent_ids: string[];
 }
 
 export interface AgentRecord extends RecordBase {
@@ -43,9 +47,13 @@ export interface AgentRecord extends RecordBase {
 
 export interface CreateAgentRequest {
 	name: string;
+	description?: string;
 	system_prompt?: string;
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
+	default_chat_model_config?: ChatModelConfig | null;
+	allow_subagent_calls?: boolean;
+	allowed_subagent_ids?: string[];
 }
 
 export interface CreateAgentResponse {
@@ -54,9 +62,13 @@ export interface CreateAgentResponse {
 
 export interface UpdateAgentRequest {
 	name?: string;
+	description?: string;
 	system_prompt?: string;
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
+	default_chat_model_config?: ChatModelConfig | null;
+	allow_subagent_calls?: boolean;
+	allowed_subagent_ids?: string[];
 }
 
 export interface AgentListResponse {
@@ -73,11 +85,12 @@ export interface AgentSchemaResponse {
 	identity: JSONSchema;
 	context_config: JSONSchema;
 	react_config: JSONSchema;
+	subagent_config: JSONSchema;
 }
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-export type SessionSource = 'user' | 'schedule';
+export type SessionSource = 'user' | 'schedule' | 'subagent';
 
 export interface SessionConfig {
 	name: string;
@@ -102,6 +115,8 @@ export interface SessionRecord extends RecordBase {
 	 * regular standalone sessions.
 	 */
 	team_id: string | null;
+	parent_session_id: string | null;
+	parent_tool_call_id: string | null;
 	config: SessionConfig;
 	state: AgentState;
 }
@@ -201,6 +216,14 @@ export interface SessionView {
 	session: SessionRecord;
 	is_running: boolean;
 	team: TeamDetailResponse | null;
+	children: SubAgentSessionView[];
+}
+
+export interface SubAgentSessionView {
+	session: SessionRecord;
+	agent: AgentRecord;
+	is_running: boolean;
+	children: SubAgentSessionView[];
 }
 
 // ─── JSON Schema ──────────────────────────────────────────────────────────────
@@ -217,6 +240,8 @@ export interface JSONSchemaProperty {
 	default?: unknown;
 	const?: unknown;
 	anyOf?: Array<{ type: string }>;
+	items?: { type?: string };
+	properties?: Record<string, JSONSchemaProperty>;
 	title?: string;
 	writeOnly?: boolean;
 	minimum?: number;

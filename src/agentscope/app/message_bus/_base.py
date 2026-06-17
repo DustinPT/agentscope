@@ -163,6 +163,20 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Queue identifier.
         """
 
+    @abstractmethod
+    async def queue_length(self, key: str) -> int:
+        """Return the current number of entries in the queue at ``key``.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+
+        Returns:
+            `int`:
+                Current number of pending entries. Returns ``0`` when
+                the queue does not exist.
+        """
+
     # ------------------------------------------------------------------
     # Mode C — replay log (multi-consumer, externally bounded)
     # ------------------------------------------------------------------
@@ -658,6 +672,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             self._INBOX_KEY.format(sid=session_id),
             max_count=max_count,
         )
+
+    async def inbox_length(self, session_id: str) -> int:
+        """Return the current number of pending inbox entries."""
+        return await self.queue_length(self._INBOX_KEY.format(sid=session_id))
 
     # Wakeup ----------------------------------------------------------
 
