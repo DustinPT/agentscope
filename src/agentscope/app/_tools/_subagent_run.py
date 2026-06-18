@@ -61,7 +61,6 @@ Important:
 - When creating a new child session, you MUST provide `session_name`.
 - When resuming an existing child session, you MUST provide `session_id` and
   MUST leave `session_name` empty.
-- The target agent must be explicitly allowed by the caller's whitelist.
 - Put the full task, context, constraints, and deliverables in `prompt` so the
   sub-agent can start working immediately.
 - This tool returns immediately after the child session starts. DO NOT poll,
@@ -112,11 +111,6 @@ Important:
                 available_lines.append(line)
 
             available_text = "\n".join(available_lines)
-            self.description = (
-                f"{self.description}\n"
-                f"Available sub-agents:\n"
-                f"{available_text}\n"
-            )
             schema = copy.deepcopy(_SubAgentRunParams.model_json_schema())
             schema["properties"]["agent_id"] = {
                 "type": "string",
@@ -129,10 +123,6 @@ Important:
             }
             self.input_schema = schema
         else:
-            self.description = (
-                f"{self.description}\n"
-                "No callable sub-agents are currently configured.\n"
-            )
             schema = copy.deepcopy(_SubAgentRunParams.model_json_schema())
             schema["properties"]["agent_id"]["description"] = (
                 "Managed agent id to run as a sub-agent. "
