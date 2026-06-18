@@ -9,7 +9,7 @@ from typing import Any, AsyncGenerator, Callable
 from .._reply_state import get_current_reply_msg, is_reply_awaiting_tool_interaction
 from ..message_bus import MessageBus
 from ..storage import StorageBase
-from ...message import DataBlock, HintBlock, Msg, TextBlock
+from ...message import DataBlock, HintBlock, TextBlock
 from ...middleware import MiddlewareBase
 
 
@@ -38,10 +38,7 @@ class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
         """Mirror a finished child-session reply back to the parent session."""
-        streamed_final_msg: Msg | None = None
         async for item in next_handler(**input_kwargs):
-            if isinstance(item, Msg):
-                streamed_final_msg = item
             yield item
 
         child_session = await self._storage.get_session(
@@ -52,12 +49,7 @@ class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
         if child_session is None or child_session.parent_session_id is None:
             return
 
-        # Prefer the persisted assistant reply in context over the last streamed
-        # Msg so synthetic waiting messages do not look like a finished reply.
-        final_msg = get_current_reply_msg(
-            agent,
-            fallback_msg=streamed_final_msg,
-        )
+        final_msg = get_current_reply_msg(agent)
 
         if final_msg is None:
             return
@@ -77,11 +69,16 @@ class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
         if child_agent is None:
             return
 
-        content_blocks = [
-            deepcopy(block)
-            for block in final_msg.content
-            if isinstance(block, (TextBlock, DataBlock))
-        ]
+        reply_content = final_msg.content
+        content_blocks: list[TextBlock | DataBlock] = []
+        if isinstance(reply_content, list):
+            trailing_blocks: list[TextBlock | DataBlock] = []
+            for block in reversed(reply_content):
+                if isinstance(block, (TextBlock, DataBlock)):
+                    trailing_blocks.append(deepcopy(block))
+                else:
+                    break
+            content_blocks = list(reversed(trailing_blocks))
         prefix = (
             f'<subagent-message agent_id="{self._agent_id}" '
             f'agent_name="{child_agent.data.name}" '
@@ -103,11 +100,7 @@ class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
 
             hint_content: str | list[TextBlock | DataBlock] = content_blocks
         else:
-            content = (
-                final_msg.to_str()
-                if hasattr(final_msg, "to_str")
-                else str(final_msg)
-            )
+            content = reply_content if isinstance(reply_content, str) else ""
             hint_content = f"{prefix}{content}{suffix}"
 
         hint = HintBlock(

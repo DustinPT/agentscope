@@ -9,25 +9,18 @@ from ..message import Msg, ToolCallState
 
 def get_current_reply_msg(
     agent: Any,
-    fallback_msg: Msg | None = None,
 ) -> Msg | None:
     """Return the persisted assistant message for the current reply.
 
-    When a reply pauses for outside interaction, the agent may yield a
-    synthetic waiting ``Msg`` that is not persisted into
-    ``agent.state.context``. Prefer the context-backed assistant message so
-    callers can inspect the real tool-call state of the current reply.
+    The authority of the current reply message is the last assistant message
+    in ``agent.state.context`` that belongs to the current agent.
     """
     if agent.state.context:
         last_msg = agent.state.context[-1]
-        if (
-            last_msg.role == "assistant"
-            and last_msg.name == agent.name
-            and last_msg.id == agent.state.reply_id
-        ):
+        if last_msg.role == "assistant" and last_msg.name == agent.name:
             return last_msg
 
-    return fallback_msg
+    return None
 
 
 def is_reply_awaiting_tool_interaction(agent: Any) -> bool:
