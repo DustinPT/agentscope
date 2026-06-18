@@ -1,5 +1,6 @@
 import { ChevronDown, Loader2, Radio, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { ToolStateIcon } from './_shared';
 import type { ToolCallWithResult } from './types';
@@ -31,6 +32,7 @@ interface Props {
 }
 
 function SubAgentTranscript({ payload }: { payload: SubAgentRunResult }) {
+	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const activeSessionId = open ? payload.session_id ?? null : null;
@@ -41,8 +43,8 @@ function SubAgentTranscript({ payload }: { payload: SubAgentRunResult }) {
 	);
 	const errorText = useMemo(() => {
 		if (!error) return null;
-		return error.message || '订阅子会话实时消息失败';
-	}, [error]);
+		return error.message || t('subagent.renderer.subscribeError');
+	}, [error, t]);
 
 	useEffect(() => {
 		if (!open) abort();
@@ -61,7 +63,7 @@ function SubAgentTranscript({ payload }: { payload: SubAgentRunResult }) {
 				<CollapsibleTrigger asChild>
 					<Button variant="ghost" size="sm" className="h-7 px-2">
 						<ChevronDown className={`size-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
-						<span>查看子会话历史</span>
+						<span>{t('subagent.renderer.viewHistory')}</span>
 					</Button>
 				</CollapsibleTrigger>
 			</div>
@@ -71,10 +73,10 @@ function SubAgentTranscript({ payload }: { payload: SubAgentRunResult }) {
 						<div className="flex items-center justify-between gap-3">
 							<div className="min-w-0">
 								<CardTitle className="truncate">
-									{payload.session_name ?? payload.session_id ?? '子会话'}
+									{payload.session_name ?? payload.session_id ?? t('subagent.renderer.sessionFallback')}
 								</CardTitle>
 								<div className="flex items-center gap-2 text-xs text-muted-foreground">
-									<span>{payload.agent_name ?? payload.agent_id ?? 'sub-agent'}</span>
+									<span>{payload.agent_name ?? payload.agent_id ?? t('subagent.renderer.agentFallback')}</span>
 									{open && (
 										<span className="inline-flex items-center gap-1">
 											<Radio
@@ -82,7 +84,9 @@ function SubAgentTranscript({ payload }: { payload: SubAgentRunResult }) {
 													streaming ? 'text-primary animate-pulse' : 'text-muted-foreground'
 												}`}
 											/>
-											{streaming ? '实时更新中' : '已连接'}
+											{streaming
+												? t('subagent.renderer.streaming')
+												: t('subagent.renderer.connected')}
 										</span>
 									)}
 								</div>
@@ -103,7 +107,7 @@ function SubAgentTranscript({ payload }: { payload: SubAgentRunResult }) {
 								disabled={loading}
 							>
 								<RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
-								重连
+								{t('subagent.renderer.reconnect')}
 							</Button>
 						</div>
 					</CardHeader>
@@ -111,13 +115,15 @@ function SubAgentTranscript({ payload }: { payload: SubAgentRunResult }) {
 						{loading ? (
 							<div className="flex items-center gap-2 text-sm text-muted-foreground">
 								<Loader2 className="size-4 animate-spin" />
-								加载中...
+								{t('common.loading')}
 							</div>
 						) : errorText ? (
 							<div className="text-sm text-destructive">{errorText}</div>
 						) : msgs.length === 0 ? (
 							<div className="text-sm text-muted-foreground">
-								{streaming ? '正在等待子会话消息...' : '暂无子会话消息'}
+								{streaming
+									? t('subagent.renderer.waiting')
+									: t('subagent.renderer.empty')}
 							</div>
 						) : (
 							msgs.map((message) => (
@@ -136,6 +142,7 @@ function SubAgentTranscript({ payload }: { payload: SubAgentRunResult }) {
 }
 
 export function SubAgentRunGroup({ calls, parseInput, parseResult }: Props) {
+	const { t } = useTranslation();
 	return (
 		<div className="flex flex-col gap-3 w-full">
 			{calls.map((callWithResult) => {
@@ -147,7 +154,9 @@ export function SubAgentRunGroup({ calls, parseInput, parseResult }: Props) {
 						<div className="flex flex-row gap-x-2 w-full max-w-full items-center">
 							<ToolStateIcon states={[result?.state]} />
 							<span className="truncate">
-								<strong className="truncate text-primary">SubAgentRun</strong>
+								<strong className="truncate text-primary">
+									{t('subagent.renderer.toolName')}
+								</strong>
 								{parsedInput && (
 									<>
 										(
@@ -165,7 +174,7 @@ export function SubAgentRunGroup({ calls, parseInput, parseResult }: Props) {
 						{parsedResult && (
 							<div className="pl-6 pt-2">
 								<div className="text-sm text-muted-foreground">
-									{`${parsedResult.agent_name ?? parsedResult.agent_id ?? 'sub-agent'} -> ${
+									{`${parsedResult.agent_name ?? parsedResult.agent_id ?? t('subagent.renderer.agentFallback')} -> ${
 										parsedResult.session_name ?? parsedResult.session_id ?? ''
 									}`}
 								</div>

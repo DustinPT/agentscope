@@ -75,6 +75,7 @@ class CreateSessionRequest(BaseModel):
     chat_model_config: ChatModelConfig | None = Field(
         default=None,
         description="Model provider and parameters. "
+        "If omitted, the agent default model is used when configured. "
         "Can be set later via PATCH.",
     )
     fallback_chat_model_config: ChatModelConfig | None = Field(

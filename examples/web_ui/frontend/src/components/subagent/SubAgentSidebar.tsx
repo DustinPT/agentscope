@@ -1,4 +1,5 @@
 import { Bot } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 
 import type { SubAgentSessionView } from '@/api';
@@ -38,6 +39,7 @@ export function SubAgentSidebar({
 	currentSessionId,
 	children,
 }: Props) {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const rows = flattenChildren(children);
 
@@ -46,17 +48,17 @@ export function SubAgentSidebar({
 			<SidebarHeader>
 				<div className="flex flex-col gap-y-1 px-2 py-1">
 					<span className="text-muted-foreground text-xs uppercase tracking-wide">
-						Sub Sessions
+						{t('subagent.sidebar.title')}
 					</span>
 				</div>
 			</SidebarHeader>
 			<SidebarContent>
 				<SidebarGroup>
-					<SidebarGroupLabel>Children</SidebarGroupLabel>
+					<SidebarGroupLabel>{t('subagent.sidebar.children')}</SidebarGroupLabel>
 					<SidebarGroupContent>
 						{rows.length === 0 ? (
 							<p className="px-3 py-2 text-xs text-muted-foreground">
-								No sub sessions
+								{t('subagent.sidebar.empty')}
 							</p>
 						) : (
 							<SidebarMenu>

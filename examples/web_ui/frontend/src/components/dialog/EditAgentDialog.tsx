@@ -9,6 +9,12 @@ import {
 	type AgentFormValues,
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
+import {
+	createAgentModelConfigValue,
+	parseAgentModelConfigValue,
+	type AgentModelConfigValue,
+} from '@/components/form/agentModelConfig';
+import { AgentModelConfigFields } from '@/components/form/AgentModelConfigFields';
 import type { SchemaFormValue } from '@/components/form/SchemaForm';
 import {
 	createSubAgentConfigValue,
@@ -43,6 +49,9 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 	const { schema } = useAgentSchema();
 	const [submitting, setSubmitting] = useState(false);
 	const [values, setValues] = useState<AgentFormValues | null>(null);
+	const [modelConfigValue, setModelConfigValue] = useState<AgentModelConfigValue>(
+		createAgentModelConfigValue(agent),
+	);
 	const [subAgentValue, setSubAgentValue] = useState<SubAgentConfigValue>(
 		createSubAgentConfigValue(agent),
 	);
@@ -66,6 +75,7 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 			context_config: { ...base.context_config, ...(d.context_config ?? {}) },
 			react_config: { ...base.react_config, ...(d.react_config ?? {}) },
 		});
+		setModelConfigValue(createAgentModelConfigValue(agent));
 		setSubAgentValue(createSubAgentConfigValue(agent));
 	}, [open, schema, agent]);
 
@@ -81,6 +91,7 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 		if (!name) return;
 		setSubmitting(true);
 		try {
+			const modelConfig = parseAgentModelConfigValue(modelConfigValue);
 			const subAgentConfig = parseSubAgentConfigValue(subAgentValue);
 			await update(agent.id, {
 				name,
@@ -88,6 +99,7 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 				system_prompt: values.identity.system_prompt as string | undefined,
 				context_config: values.context_config as unknown as ContextConfig,
 				react_config: values.react_config as unknown as ReActConfig,
+				...modelConfig,
 				...subAgentConfig,
 			});
 			onOpenChange(false);
@@ -115,6 +127,14 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 								schema={schema}
 								values={values}
 								onChange={handleChange}
+								renderAfterSection={(section) =>
+									section === 'identity' ? (
+										<AgentModelConfigFields
+											value={modelConfigValue}
+											onChange={setModelConfigValue}
+										/>
+									) : null
+								}
 							/>
 							<SubAgentConfigFields
 								value={subAgentValue}

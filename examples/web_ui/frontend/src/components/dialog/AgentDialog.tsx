@@ -9,6 +9,12 @@ import {
 	type AgentFormValues,
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
+import {
+	createAgentModelConfigValue,
+	parseAgentModelConfigValue,
+	type AgentModelConfigValue,
+} from '@/components/form/agentModelConfig';
+import { AgentModelConfigFields } from '@/components/form/AgentModelConfigFields';
 import type { SchemaFormValue } from '@/components/form/SchemaForm';
 import {
 	createSubAgentConfigValue,
@@ -43,6 +49,9 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 	const [open, setOpen] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [values, setValues] = useState<AgentFormValues | null>(null);
+	const [modelConfigValue, setModelConfigValue] = useState<AgentModelConfigValue>(
+		createAgentModelConfigValue(),
+	);
 	const [subAgentValue, setSubAgentValue] = useState<SubAgentConfigValue>(
 		createSubAgentConfigValue(),
 	);
@@ -50,10 +59,12 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 	useEffect(() => {
 		if (open && schema && !values) {
 			setValues(defaultAgentFormValues(schema));
+			setModelConfigValue(createAgentModelConfigValue());
 			setSubAgentValue(createSubAgentConfigValue());
 		}
 		if (!open) {
 			setValues(null);
+			setModelConfigValue(createAgentModelConfigValue());
 			setSubAgentValue(createSubAgentConfigValue());
 		}
 	}, [open, schema, values]);
@@ -70,6 +81,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 		if (!name) return;
 		setSubmitting(true);
 		try {
+			const modelConfig = parseAgentModelConfigValue(modelConfigValue);
 			const subAgentConfig = parseSubAgentConfigValue(subAgentValue);
 			await create({
 				name,
@@ -77,6 +89,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 				system_prompt: values.identity.system_prompt as string | undefined,
 				context_config: values.context_config as unknown as ContextConfig,
 				react_config: values.react_config as unknown as ReActConfig,
+				...modelConfig,
 				...subAgentConfig,
 			});
 			setOpen(false);
@@ -110,6 +123,14 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 								schema={schema}
 								values={values}
 								onChange={handleChange}
+								renderAfterSection={(section) =>
+									section === 'identity' ? (
+										<AgentModelConfigFields
+											value={modelConfigValue}
+											onChange={setModelConfigValue}
+										/>
+									) : null
+								}
 							/>
 							<SubAgentConfigFields
 								value={subAgentValue}

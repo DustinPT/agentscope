@@ -128,11 +128,12 @@ async def get_agent_schema() -> AgentSchemaResponse:
         "properties": {
             "default_chat_model_config": {
                 "type": "object",
-                "title": "Default Sub-Agent Model",
+                "title": "Agent Default Model",
                 "description": (
-                    "Preferred model used when this agent runs as a "
-                    "sub-agent. Leave empty to inherit the caller session's "
-                    "model."
+                    "Default model for this agent. Used for new sessions "
+                    "when the caller does not provide a model, and for "
+                    "sub-agent runs. Leave empty to inherit the caller "
+                    "session's model during sub-agent runs."
                 ),
                 "properties": {
                     "type": {

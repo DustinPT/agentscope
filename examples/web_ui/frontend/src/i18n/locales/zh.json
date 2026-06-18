@@ -116,7 +116,11 @@
 		"identity": {
 			"legend": "Agent 身份",
 			"description": "定义此 Agent 行为的名称和指令。",
-			"name": { "label": "名称", "placeholder": "我的 Agent" },
+			"name": { "label": "名称", "placeholder": "请输入 Agent 名称" },
+			"description-field": {
+				"label": "描述",
+				"placeholder": "简要说明该 Agent 擅长什么，以及适合在什么场景下调用。"
+			},
 			"system-prompt": { "label": "系统提示词" }
 		},
 		"context-config": {
@@ -133,6 +137,47 @@
 			"description": "控制推理和行动循环的行为。",
 			"max-iters": { "label": "最大迭代次数" },
 			"stop-on-reject": { "label": "拒绝时停止" }
+		},
+		"model-config": {
+			"legend": "默认模型",
+			"description": "配置该 Agent 的默认模型，用于新建会话和子 Agent 调用。",
+			"default-model": {
+				"label": "Agent 默认模型",
+				"placeholder": "选择 Agent 默认模型",
+				"clear": "清空 Agent 默认模型",
+				"description": "当新建会话未显式指定模型时使用该模型；作为子 Agent 运行时，也会优先使用该模型。"
+			}
+		},
+		"subagent-config": {
+			"legend": "子 Agent 配置",
+			"description": "配置该 Agent 调用其他受管 Agent 的权限范围。",
+			"allow-subagent-calls": {
+				"label": "允许调用子 Agent"
+			},
+			"allowed-subagents": {
+				"label": "允许的子 Agent",
+				"empty": "暂无其他受管 Agent",
+				"description": "只有勾选的 Agent 才允许被作为子 Agent 调用。"
+			}
+		}
+	},
+	"subagent": {
+		"sidebar": {
+			"title": "子会话",
+			"children": "子级会话",
+			"empty": "暂无子会话"
+		},
+		"renderer": {
+			"toolName": "子 Agent 调用",
+			"viewHistory": "查看子会话历史",
+			"sessionFallback": "子会话",
+			"agentFallback": "子 Agent",
+			"streaming": "实时更新中",
+			"connected": "已连接",
+			"reconnect": "重连",
+			"waiting": "正在等待子会话消息...",
+			"empty": "暂无子会话消息",
+			"subscribeError": "订阅子会话实时消息失败"
 		}
 	},
 	"dialog-agent-edit": {

@@ -262,7 +262,14 @@ async def create_session(
             detail=f"Agent '{body.agent_id}' not found.",
         )
 
-    await _ensure_credential_exists(storage, user_id, body.chat_model_config)
+    resolved_chat_model_config = (
+        body.chat_model_config or agent.data.default_chat_model_config
+    )
+    await _ensure_credential_exists(
+        storage,
+        user_id,
+        resolved_chat_model_config,
+    )
     await _ensure_credential_exists(
         storage,
         user_id,
@@ -274,7 +281,7 @@ async def create_session(
         agent_id=body.agent_id,
         config=SessionConfig(
             workspace_id=body.workspace_id or uuid.uuid4().hex,
-            chat_model_config=body.chat_model_config,
+            chat_model_config=resolved_chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             **({"name": body.name} if body.name is not None else {}),
         ),

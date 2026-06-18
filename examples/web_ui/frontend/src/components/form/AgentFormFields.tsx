@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { AgentSchemaResponse } from '@/api';
@@ -20,6 +21,7 @@ interface Props {
 	schema: AgentSchemaResponse;
 	values: AgentFormValues;
 	onChange: (section: AgentSection, key: string, value: SchemaFormValue) => void;
+	renderAfterSection?: (section: AgentSection) => ReactNode;
 }
 
 const SECTIONS: { key: AgentSection; i18n: string }[] = [
@@ -29,8 +31,9 @@ const SECTIONS: { key: AgentSection; i18n: string }[] = [
 ];
 
 const toKebab = (s: string) => s.replace(/_/g, '-');
+const fieldI18nKey = (s: string) => (s === 'description' ? 'description-field' : toKebab(s));
 
-export function AgentFormFields({ schema, values, onChange }: Props) {
+export function AgentFormFields({ schema, values, onChange, renderAfterSection }: Props) {
 	const { t } = useTranslation();
 
 	return (
@@ -55,17 +58,18 @@ export function AgentFormFields({ schema, values, onChange }: Props) {
 								onChange={(k, v) => onChange(sectionKey, k, v)}
 								idPrefix={`agent-form-${sectionI18n}`}
 								labelFor={(k, prop) =>
-									t(`agent-form.${sectionI18n}.${toKebab(k)}.label`, {
+									t(`agent-form.${sectionI18n}.${fieldI18nKey(k)}.label`, {
 										defaultValue: prop.title ?? k.replace(/_/g, ' '),
 									})
 								}
 								placeholderFor={(k, prop) =>
-									t(`agent-form.${sectionI18n}.${toKebab(k)}.placeholder`, {
+									t(`agent-form.${sectionI18n}.${fieldI18nKey(k)}.placeholder`, {
 										defaultValue: prop.description ?? '',
 									}) || undefined
 								}
 							/>
 						</FieldSet>
+						{renderAfterSection?.(sectionKey)}
 					</div>
 				);
 			})}

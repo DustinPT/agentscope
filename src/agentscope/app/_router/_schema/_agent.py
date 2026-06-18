@@ -31,7 +31,10 @@ class CreateAgentRequest(BaseModel):
     )
     default_chat_model_config: ChatModelConfig | None = Field(
         default=None,
-        description="Preferred model when this agent runs as a sub-agent.",
+        description=(
+            "Default model for this agent. Used for new sessions when the "
+            "caller does not provide a model, and for sub-agent runs."
+        ),
     )
     allow_subagent_calls: bool = Field(
         default=False,
@@ -77,7 +80,10 @@ class UpdateAgentRequest(BaseModel):
     )
     default_chat_model_config: ChatModelConfig | None = Field(
         default=None,
-        description="Preferred model when this agent runs as a sub-agent.",
+        description=(
+            "Default model for this agent. Used for new sessions when the "
+            "caller does not provide a model, and for sub-agent runs."
+        ),
     )
     allow_subagent_calls: bool | None = Field(
         default=None,

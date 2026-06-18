@@ -56,10 +56,11 @@ class AgentData(BaseModel):
     default_chat_model_config: ChatModelConfig | None = Field(
         default=None,
         description=(
-            "Preferred chat model for this agent when it is executed as a "
-            "sub-agent. Falls back to the caller session's model when unset."
+            "Default chat model for this agent. Used for new sessions when "
+            "the caller does not provide a model, and for sub-agent runs "
+            "before falling back to the caller session's model."
         ),
-        title="Default Sub-Agent Model",
+        title="Agent Default Model",
     )
 
     allow_subagent_calls: bool = Field(

@@ -117,6 +117,10 @@
 			"legend": "Agent Identity",
 			"description": "Name and instructions that define this agent's behaviour.",
 			"name": { "label": "Name", "placeholder": "My agent" },
+			"description-field": {
+				"label": "Description",
+				"placeholder": "Briefly describe what this agent is good at and when it should be called."
+			},
 			"system-prompt": { "label": "System prompt" }
 		},
 		"context-config": {
@@ -133,6 +137,47 @@
 			"description": "Controls the reasoning and action loop behaviour.",
 			"max-iters": { "label": "Max iterations" },
 			"stop-on-reject": { "label": "Stop on reject" }
+		},
+		"model-config": {
+			"legend": "Default Model",
+			"description": "Configure the default model used by this agent for new sessions and sub-agent runs.",
+			"default-model": {
+				"label": "Agent Default Model",
+				"placeholder": "Select an agent default model",
+				"clear": "Clear agent default model",
+				"description": "Used for new sessions when no model is provided, and for sub-agent runs before inheriting the caller session model."
+			}
+		},
+		"subagent-config": {
+			"legend": "Sub-Agent Config",
+			"description": "Configure which managed agents this agent is allowed to call.",
+			"allow-subagent-calls": {
+				"label": "Allow Sub-Agent Calls"
+			},
+			"allowed-subagents": {
+				"label": "Allowed Sub-Agents",
+				"empty": "No other managed agents",
+				"description": "Only checked agents can be called as sub-agents."
+			}
+		}
+	},
+	"subagent": {
+		"sidebar": {
+			"title": "Sub Sessions",
+			"children": "Children",
+			"empty": "No sub sessions"
+		},
+		"renderer": {
+			"toolName": "SubAgentRun",
+			"viewHistory": "View sub-session history",
+			"sessionFallback": "Sub Session",
+			"agentFallback": "Sub-Agent",
+			"streaming": "Streaming",
+			"connected": "Connected",
+			"reconnect": "Reconnect",
+			"waiting": "Waiting for sub-session messages...",
+			"empty": "No sub-session messages",
+			"subscribeError": "Failed to subscribe to sub-session live messages"
 		}
 	},
 	"dialog-agent-edit": {
