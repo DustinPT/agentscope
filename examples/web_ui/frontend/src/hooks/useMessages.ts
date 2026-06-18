@@ -88,6 +88,55 @@ export function useMessages(
 		});
 	}, []);
 
+	/**
+	 * Resolve the reply targeted by an incoming event.
+	 *
+	 * Most streaming events carry ``reply_id``. Re-resolving the reply from
+	 * ``msgsRef`` keeps duplicated subscriptions to the same session in sync
+	 * even when only one of them initiated the continuation (for example, a
+	 * human-in-the-loop confirmation from another expanded card).
+	 */
+	const resolveReplyForEvent = useCallback((event: AgentEvent) => {
+		if (!('reply_id' in event)) return null;
+		if (currentReplyRef.current?.id === event.reply_id) {
+			return currentReplyRef.current;
+		}
+		const target = msgsRef.current.find((msg) => msg.id === event.reply_id) ?? null;
+		if (target) {
+			currentReplyRef.current = target;
+		}
+		return target;
+	}, []);
+
+	/**
+	 * Keep tool-call confirmation state consistent when continuation events
+	 * arrive without a mirrored ``USER_CONFIRM_RESULT`` on every subscriber.
+	 *
+	 * Once a tool result starts streaming for a ``tool_call_id``, that call is
+	 * no longer waiting for approval from the UI perspective.
+	 */
+	const reconcileToolCallState = useCallback((msg: Msg, event: AgentEvent) => {
+		if (!('reply_id' in event) || event.reply_id !== msg.id) return;
+
+		const hasToolResultEvent =
+			event.type === EventType.TOOL_RESULT_START ||
+			event.type === EventType.TOOL_RESULT_TEXT_DELTA ||
+			event.type === EventType.TOOL_RESULT_DATA_DELTA ||
+			event.type === EventType.TOOL_RESULT_END;
+		if (!hasToolResultEvent) return;
+
+		const toolCallId = event.tool_call_id;
+		const toolCall = msg.content.find(
+			(block): block is ToolCallBlock =>
+				block.type === 'tool_call' && block.id === toolCallId,
+		);
+		if (!toolCall) return;
+
+		if (toolCall.state === 'asking' || toolCall.state === 'pending') {
+			toolCall.state = 'allowed';
+		}
+	}, []);
+
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
 		(event: AgentEvent) => {
@@ -113,13 +162,24 @@ export function useMessages(
 				currentReplyRef.current = msg;
 				setStreaming(true);
 			} else if (event.type === EventType.REPLY_END) {
-				if (currentReplyRef.current) {
-					appendEvent(currentReplyRef.current, event);
+				const targetReply = resolveReplyForEvent(event);
+				if (targetReply) {
+					appendEvent(targetReply, event);
+					reconcileToolCallState(targetReply, event);
 				}
 				setStreaming(false);
-				currentReplyRef.current = null;
-			} else if (currentReplyRef.current) {
-				appendEvent(currentReplyRef.current, event);
+				if (
+					'reply_id' in event &&
+					currentReplyRef.current?.id === event.reply_id
+				) {
+					currentReplyRef.current = null;
+				}
+			} else {
+				const targetReply = resolveReplyForEvent(event);
+				if (targetReply) {
+					appendEvent(targetReply, event);
+					reconcileToolCallState(targetReply, event);
+				}
 			}
 
 			// Route streaming audio DataBlocks to the audio manager. They still
@@ -147,7 +207,7 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager],
+		[scheduleUpdate, audioManager, resolveReplyForEvent, reconcileToolCallState],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
