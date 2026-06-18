@@ -157,7 +157,8 @@
 			"allowed-subagents": {
 				"label": "允许的子 Agent",
 				"empty": "暂无其他受管 Agent",
-				"description": "只有勾选的 Agent 才允许被作为子 Agent 调用。"
+				"description": "只有勾选的 Agent 才允许被作为子 Agent 调用。",
+				"no-description": "暂无描述"
 			}
 		}
 	},

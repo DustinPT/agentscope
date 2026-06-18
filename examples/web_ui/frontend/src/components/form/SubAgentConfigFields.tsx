@@ -15,6 +15,7 @@ import {
 	FieldSet,
 	FieldTitle,
 } from '@/components/ui/field';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface Props {
 	value: SubAgentConfigValue;
@@ -69,6 +70,9 @@ export function SubAgentConfigFields({
 								) : (
 									options.map((agent) => {
 										const checked = value.allowed_subagent_ids.includes(agent.id);
+										const description =
+											agent.data.description?.trim() ||
+											t('agent-form.subagent-config.allowed-subagents.no-description');
 										return (
 											<FieldLabel key={agent.id}>
 												<Field orientation="horizontal">
@@ -87,9 +91,20 @@ export function SubAgentConfigFields({
 															});
 														}}
 													/>
-													<FieldContent>
-														<FieldTitle>{agent.data.name}</FieldTitle>
-														<FieldDescription>{agent.id}</FieldDescription>
+													<FieldContent className="min-w-0">
+														<FieldTitle className="max-w-full truncate">
+															{agent.data.name}
+														</FieldTitle>
+														<Tooltip>
+															<TooltipTrigger asChild>
+																<FieldDescription className="max-w-full cursor-default truncate">
+																	{description}
+																</FieldDescription>
+															</TooltipTrigger>
+															<TooltipContent className="max-w-md whitespace-pre-wrap break-words">
+																{description}
+															</TooltipContent>
+														</Tooltip>
 													</FieldContent>
 												</Field>
 											</FieldLabel>

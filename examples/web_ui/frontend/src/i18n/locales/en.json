@@ -157,7 +157,8 @@
 			"allowed-subagents": {
 				"label": "Allowed Sub-Agents",
 				"empty": "No other managed agents",
-				"description": "Only checked agents can be called as sub-agents."
+				"description": "Only checked agents can be called as sub-agents.",
+				"no-description": "No description"
 			}
 		}
 	},
