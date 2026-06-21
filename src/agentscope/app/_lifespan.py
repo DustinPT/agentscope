@@ -78,6 +78,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.session_service = SessionService(
             storage=storage,
             message_bus=message_bus,
+            chat_service=chat_service,
+            chat_run_registry=chat_run_registry,
         )
 
         # Dispatchers need live references somewhere, or they would be

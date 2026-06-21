@@ -10,8 +10,10 @@ import { cn } from '@/lib/utils';
 interface ChatContentProps {
 	msgs: Msg[];
 	sending: boolean;
+	stoppable?: boolean;
 	disabled: boolean;
 	onSend: (content: ContentBlock[]) => void;
+	onStop?: () => void | Promise<void>;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
@@ -29,8 +31,10 @@ interface ChatContentProps {
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	sending,
+	stoppable = false,
 	disabled,
 	onSend,
+	onStop,
 	onUserConfirm,
 	autoComplete,
 	className,
@@ -103,6 +107,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			<TextInput
 				className="min-w-full max-w-full w-full"
 				onSend={onSend}
+				onStop={onStop}
+				sending={stoppable}
 				disabled={disabled}
 				autoComplete={autoComplete}
 				allowedInputTypes={allowedInputTypes}

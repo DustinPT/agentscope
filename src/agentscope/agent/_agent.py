@@ -44,6 +44,7 @@ from ..event import (
     RequireUserConfirmEvent,
     RequireExternalExecutionEvent,
     ExternalExecutionResultEvent,
+    SessionInterruptEvent,
     UserConfirmResultEvent,
     DataBlockStartEvent,
     DataBlockDeltaEvent,
@@ -194,6 +195,7 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | SessionInterruptEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Reply to the given inputs and stream agent events.
@@ -219,19 +221,22 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | SessionInterruptEvent
         | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
         Args:
             inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
-            ExternalExecutionResultEvent | None`, optional):
+            ExternalExecutionResultEvent | SessionInterruptEvent | None`, \
+            optional):
                 The inputs that trigger this reply. It can be:
 
                 - a single `Msg` or a list of `Msg` objects to start a new
                   reply,
                 - a `UserConfirmResultEvent` or
-                  `ExternalExecutionResultEvent` to continue from the
+                  `ExternalExecutionResultEvent` or
+                  `SessionInterruptEvent` to continue from the
                   outside interaction required by the previous reply,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
@@ -500,6 +505,7 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | SessionInterruptEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
@@ -549,11 +555,20 @@ class Agent:
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
         # Dispatch the unified inputs by type into the legacy local variables
-        event: (UserConfirmResultEvent | ExternalExecutionResultEvent | None)
+        event: (
+            UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | SessionInterruptEvent
+            | None
+        )
         msgs: Msg | list[Msg] | None
         if isinstance(
             inputs,
-            (UserConfirmResultEvent, ExternalExecutionResultEvent),
+            (
+                UserConfirmResultEvent,
+                ExternalExecutionResultEvent,
+                SessionInterruptEvent,
+            ),
         ):
             event = inputs
             msgs = None
@@ -576,6 +591,15 @@ class Agent:
         if is_awaiting:
             async for evt in self._handle_incoming_event(event):
                 yield evt
+            if isinstance(event, SessionInterruptEvent):
+                yield ReplyEndEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                )
+                last_msg = self._get_last_msg()
+                if last_msg is not None:
+                    yield last_msg
+                return
         else:
             await self._handle_incoming_messages(msgs)
             # Update the context with the incoming message and state
@@ -881,14 +905,14 @@ class Agent:
 
     async def _check_incoming_event(
         self,
-        event: UserConfirmResultEvent | ExternalExecutionResultEvent | None,
+        event: UserConfirmResultEvent | ExternalExecutionResultEvent | SessionInterruptEvent | None,
     ) -> bool:
         """Check if the agent is waiting for the incoming event, if no, raise
         error.
 
         Args:
             event (`UserConfirmResultEvent | ExternalExecutionResultEvent \
-            | None`):
+            | SessionInterruptEvent | None`):
                 The incoming event to be checked.
 
         Raises:
@@ -934,6 +958,9 @@ class Agent:
                 f"but received no event.",
             )
 
+        if isinstance(event, SessionInterruptEvent):
+            return True
+
         if isinstance(event, UserConfirmResultEvent):
             if not awaiting_confirmations:
                 raise ValueError(
@@ -972,7 +999,7 @@ class Agent:
 
     async def _handle_incoming_event(
         self,
-        event: UserConfirmResultEvent | ExternalExecutionResultEvent | None,
+        event: UserConfirmResultEvent | ExternalExecutionResultEvent | SessionInterruptEvent | None,
     ) -> AsyncGenerator[
         ToolResultStartEvent
         | ToolResultTextDeltaEvent
@@ -984,7 +1011,7 @@ class Agent:
 
         Args:
             event (`UserConfirmResultEvent | ExternalExecutionResultEvent \
-            | None`):
+            | SessionInterruptEvent | None`):
                 The incoming event to be handled.
 
         Yields:
@@ -1068,8 +1095,28 @@ class Agent:
                     ToolCallState.FINISHED,
                 )
 
-        else:
-            raise ValueError(f"Invalid event type: {event}")
+        elif isinstance(event, SessionInterruptEvent):
+            last_msg = self.state.context[-1]
+            for tool_call in last_msg.get_content_blocks("tool_call"):
+                if tool_call.state not in (
+                    ToolCallState.ASKING,
+                    ToolCallState.SUBMITTED,
+                    ToolCallState.PENDING,
+                    ToolCallState.ALLOWED,
+                ):
+                    continue
+                async for evt in self._handle_error_tool_call(
+                    tool_call,
+                    message=(
+                        "<system-reminder>The execution of tool "
+                        f'"{tool_call.name}" is interrupted by session cancel.'
+                        "</system-reminder>"
+                    ),
+                    state=ToolResultState.INTERRUPTED,
+                ):
+                    yield evt
+
+        return
 
     async def _handle_incoming_messages(
         self,

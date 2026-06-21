@@ -37,6 +37,7 @@ from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...event import (
     ReplyStartEvent,
+    SessionInterruptEvent,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
 )
@@ -132,15 +133,16 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | SessionInterruptEvent
         | None = None,
     ) -> None:
         """Drive a chat run to completion.
 
         Persists input messages (Case A) or the incoming continuation
-        event applied to the existing reply (Case B), runs the agent
-        while publishing every produced event to the message bus, and
-        persists the rebuilt reply ``Msg`` + updated agent state when
-        finished.
+        event applied to the existing reply (Case B / Case C), runs the
+        agent while publishing every produced event to the message bus,
+        and persists the rebuilt reply ``Msg`` + updated agent state
+        when finished.
 
         Session serialisation is handled by the bus's distributed lock
         (:meth:`MessageBus.session_run`); events are simultaneously
@@ -167,6 +169,9 @@ class ChatService:
                 - ``UserConfirmResultEvent`` /
                   ``ExternalExecutionResultEvent``: resume an awaiting
                   tool call (Case B).
+                - ``SessionInterruptEvent``: interrupt an awaiting tool
+                  interaction and close the current reply without model
+                  reasoning (Case C).
         """
         try:
             await self._run_impl(user_id, session_id, agent_id, input_msg)
@@ -189,6 +194,7 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | SessionInterruptEvent
         | None,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
@@ -393,7 +399,10 @@ class ChatService:
                     elif reply_msg is not None:
                         reply_msg.append_event(event)
 
-            else:
+            elif isinstance(
+                input_msg,
+                (UserConfirmResultEvent, ExternalExecutionResultEvent),
+            ):
                 # Case B: continuation (UserConfirmResult / ExternalExecResult)
                 reply_msg = await self._storage.get_message(
                     user_id,
@@ -405,6 +414,34 @@ class ChatService:
                     logger.warning(
                         "Reply message %r not found in storage for session "
                         "%r; tool-call state changes from the incoming event "
+                        "will not be persisted.",
+                        agent.state.reply_id,
+                        session_id,
+                    )
+                elif input_msg:
+                    reply_msg.append_event(input_msg)
+
+                async for event in agent.reply_stream(inputs=input_msg):
+                    await self._message_bus.session_publish_event(
+                        session_id,
+                        event.model_dump(mode="json"),
+                    )
+                    if reply_msg is not None:
+                        reply_msg.append_event(event)
+
+            else:
+                # Case C: session interrupt (interrupt awaiting tool calls
+                # without entering model reasoning)
+                reply_msg = await self._storage.get_message(
+                    user_id,
+                    session_id,
+                    agent.state.reply_id,
+                )
+
+                if reply_msg is None:
+                    logger.warning(
+                        "Reply message %r not found in storage for session "
+                        "%r; interrupt state changes from the incoming event "
                         "will not be persisted.",
                         agent.state.reply_id,
                         session_id,

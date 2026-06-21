@@ -30,8 +30,10 @@ interface ProcessedFile {
 
 interface TextInputProps {
 	onSend: (blocks: ContentBlock[]) => void;
+	onStop?: () => void | Promise<void>;
 	placeholder?: string;
 	autoComplete?: (input: string) => string | null;
+	sending?: boolean;
 	disabled?: boolean;
 	className?: string;
 	/**
@@ -76,8 +78,10 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 	(
 		{
 			onSend,
+			onStop,
 			placeholder,
 			autoComplete,
+			sending = false,
 			disabled = false,
 			className,
 			allowedInputTypes,
@@ -164,6 +168,11 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			onSend?.(blocks);
 			setValue('');
 			setFiles([]);
+		};
+
+		const handleStop = () => {
+			if (!sending) return;
+			void onStop?.();
 		};
 
 		const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -331,20 +340,37 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							</Tooltip>
 
 							{/* Send button */}
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<Button
-										type="button"
-										onClick={handleSend}
-										disabled={disabled || !value.trim() || hasProcessing}
-										size="icon"
-										className="shrink-0 rounded-full"
-									>
-										<Send className="h-4 w-4" />
-									</Button>
-								</TooltipTrigger>
-								<TooltipContent>{t('textInput.send')}</TooltipContent>
-							</Tooltip>
+							{sending ? (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											onClick={handleStop}
+											size="icon"
+											variant="secondary"
+											className="shrink-0 rounded-full"
+										>
+											<X className="h-4 w-4" />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>{t('textInput.stop')}</TooltipContent>
+								</Tooltip>
+							) : (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											onClick={handleSend}
+											disabled={disabled || !value.trim() || hasProcessing}
+											size="icon"
+											className="shrink-0 rounded-full"
+										>
+											<Send className="h-4 w-4" />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>{t('textInput.send')}</TooltipContent>
+								</Tooltip>
+							)}
 
 							{/* Hidden file input */}
 							<input

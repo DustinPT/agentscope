@@ -112,10 +112,14 @@ export function ChatViewport({
 		// TODO: handle permission_context updates when permission UI is built
 	}, []);
 
-	const { msgs, streaming, send, onUserConfirm } = useMessages(agentId, sessionId, {
+	const { msgs, streaming, canStop, send, onUserConfirm, cancelCurrentRun } = useMessages(
+		agentId,
+		sessionId,
+		{
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
-	});
+		},
+	);
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -367,8 +371,10 @@ export function ChatViewport({
 							className={'max-w-[var(--chat-content-w)] w-full'}
 							msgs={msgs}
 							sending={streaming}
+							stoppable={canStop}
 							disabled={selectedModel === null}
 							onSend={send}
+							onStop={cancelCurrentRun}
 							onUserConfirm={onUserConfirm}
 							allowedInputTypes={(selectedModelCard?.input_types ?? []).filter(
 								(t) =>

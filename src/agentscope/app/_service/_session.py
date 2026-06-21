@@ -46,10 +46,17 @@ component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
 import asyncio
+from typing import TYPE_CHECKING
 
 from ..message_bus import MessageBus
 from ..storage import StorageBase
 from ..._logging import logger
+from ...event import SessionInterruptEvent
+from ...message import ToolCallState
+
+if TYPE_CHECKING:
+    from .._manager import ChatRunRegistry
+    from ._chat import ChatService
 
 
 class SessionService:
@@ -79,6 +86,8 @@ class SessionService:
         self,
         storage: StorageBase,
         message_bus: MessageBus,
+        chat_service: "ChatService | None" = None,
+        chat_run_registry: "ChatRunRegistry | None" = None,
     ) -> None:
         """Bind dependencies.
 
@@ -88,6 +97,8 @@ class SessionService:
         """
         self._storage = storage
         self._bus = message_bus
+        self._chat_service = chat_service
+        self._chat_run_registry = chat_run_registry
 
     # ------------------------------------------------------------------
     # Cancel
@@ -97,32 +108,22 @@ class SessionService:
         self,
         session_id: str,
         *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
         timeout: float = 10.0,
     ) -> bool:
-        """Broadcast a session cancel and wait for the chat-run lock to
-        clear.
-
-        Publishes one cancel payload on the bus's shared cancel channel,
-        unconditionally. Every process's
-        :class:`~agentscope.app._manager.CancelDispatcher` reacts to the
-        broadcast by cancelling whatever it locally holds for the
-        session — the chat-run asyncio task **and** any background
-        tasks owned by that session. The publisher does not need to
-        know which worker holds which piece.
-
-        After publishing, polls
-        :meth:`MessageBus.session_is_running` until the distributed
-        chat-run lock clears. Only the chat run holds a distributed
-        lock; BG tasks do not, so this poll only waits for the chat
-        run. Returns immediately when no chat run was active.
-
-        Idempotent: calling on an idle session just sends a no-op
-        broadcast and observes a clear lock.
+        """Cancel a session run and optionally trigger interrupt cleanup.
 
         Args:
             session_id (`str`):
                 The session whose chat run + BG tasks should be
                 cancelled.
+            user_id (`str | None`, optional):
+                Owner user id. When provided together with ``agent_id``,
+                the service also triggers Case C interrupt cleanup for
+                the full recursive closure rooted at ``session_id``.
+            agent_id (`str | None`, optional):
+                Owning agent id of ``session_id``.
             timeout (`float`, defaults to ``10.0``):
                 Maximum seconds to wait for the chat-run lock to
                 release. On timeout the method returns ``False`` so
@@ -136,8 +137,52 @@ class SessionService:
                 ``False`` if the lock was still held when the timeout
                 expired.
         """
-        await self._bus.session_publish_cancel(session_id)
+        if user_id is None or agent_id is None:
+            return await self._cancel_single_session_run(
+                session_id,
+                timeout=timeout,
+            )
 
+        targets = await self._interrupt_closure(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+        if not targets:
+            return await self._cancel_single_session_run(
+                session_id,
+                timeout=timeout,
+            )
+
+        release_results = await asyncio.gather(
+            *(
+                self._cancel_single_session_run(target.id, timeout=timeout)
+                for target in targets
+            ),
+        )
+        await asyncio.gather(
+            *(
+                self._interrupt_waiting_session(
+                    user_id=user_id,
+                    session=target,
+                    cascade_root_session_id=session_id,
+                )
+                for target in targets
+            ),
+        )
+        return all(release_results)
+
+    async def _cancel_single_session_run(
+        self,
+        session_id: str,
+        *,
+        timeout: float,
+    ) -> bool:
+        """Broadcast a single session cancel and wait for its run-lock."""
+        was_running = await self._bus.session_is_running(session_id)
+        await self._bus.session_publish_cancel(session_id)
+        if not was_running:
+            return True
         deadline = asyncio.get_event_loop().time() + timeout
         while True:
             if not await self._bus.session_is_running(session_id):
@@ -151,6 +196,70 @@ class SessionService:
                 )
                 return False
             await asyncio.sleep(self._CANCEL_POLL_INTERVAL_SECS)
+
+    @staticmethod
+    def _has_interruptible_tool_calls(session) -> bool:
+        """Return whether the session is parked on waiting tool calls."""
+        if not session.state.context:
+            return False
+        last_msg = session.state.context[-1]
+        return any(
+            tool_call.state
+            in (
+                ToolCallState.ASKING,
+                ToolCallState.SUBMITTED,
+                ToolCallState.PENDING,
+                ToolCallState.ALLOWED,
+            )
+            for tool_call in last_msg.get_content_blocks("tool_call")
+        )
+
+    async def _interrupt_waiting_session(
+        self,
+        *,
+        user_id: str,
+        session,
+        cascade_root_session_id: str,
+    ) -> None:
+        """Trigger Case C for a single session when it is awaiting tools."""
+        if not self._has_interruptible_tool_calls(session):
+            return
+        if self._chat_service is None:
+            logger.warning(
+                "SessionService has no ChatService; skipping interrupt cleanup "
+                "for session %s.",
+                session.id,
+            )
+            return
+
+        interrupt_event = SessionInterruptEvent(
+            reply_id=session.state.reply_id,
+            source="session_cancel",
+            reason="Session interrupted by cancel request.",
+            cascade_root_session_id=cascade_root_session_id,
+        )
+        if self._chat_run_registry is not None:
+            existing = self._chat_run_registry.get(session.id)
+            if existing is None or existing.done():
+                task = self._chat_run_registry.spawn(
+                    self._chat_service.run(
+                        user_id=user_id,
+                        session_id=session.id,
+                        agent_id=session.agent_id,
+                        input_msg=interrupt_event,
+                    ),
+                    session_id=session.id,
+                    name=f"session-interrupt:{session.id}",
+                )
+                await task
+                return
+
+        await self._chat_service.run(
+            user_id=user_id,
+            session_id=session.id,
+            agent_id=session.agent_id,
+            input_msg=interrupt_event,
+        )
 
     # ------------------------------------------------------------------
     # Delete cascades — every higher-level method delegates to
@@ -368,6 +477,67 @@ class SessionService:
             )
             sids.extend(s.id for s in worker_sessions)
         return sids
+
+    async def _team_worker_sessions(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> list:
+        """Return worker session records for the team led by ``session_id``."""
+        session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session is None or not session.team_id:
+            return []
+        team = await self._storage.get_team(user_id, session.team_id)
+        if team is None or team.session_id != session_id:
+            return []
+        worker_sessions = []
+        for member_id in team.data.member_ids:
+            worker_sessions.extend(
+                await self._storage.list_sessions(user_id, member_id),
+            )
+        return worker_sessions
+
+    async def _interrupt_closure(
+        self,
+        *,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> list:
+        """Return the full recursive interrupt closure for ``session_id``."""
+        root = await self._storage.get_session(user_id, agent_id, session_id)
+        if root is None:
+            return []
+
+        targets = []
+        queue = [root]
+        seen_session_ids = set()
+        while queue:
+            current = queue.pop(0)
+            if current.id in seen_session_ids:
+                continue
+            seen_session_ids.add(current.id)
+            targets.append(current)
+
+            direct_children = await self._storage.list_child_sessions(
+                user_id,
+                current.id,
+            )
+            queue.extend(direct_children)
+
+            member_sessions = await self._team_worker_sessions(
+                user_id,
+                current.agent_id,
+                current.id,
+            )
+            queue.extend(member_sessions)
+
+        return targets
 
     async def _descendant_sessions(
         self,

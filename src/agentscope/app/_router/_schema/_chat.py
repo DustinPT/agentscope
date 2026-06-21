@@ -4,7 +4,11 @@
 from pydantic import BaseModel, Field
 
 from ....message import Msg
-from ....event import UserConfirmResultEvent, ExternalExecutionResultEvent
+from ....event import (
+    UserConfirmResultEvent,
+    ExternalExecutionResultEvent,
+    SessionInterruptEvent,
+)
 
 
 class ChatRequest(BaseModel):
@@ -23,6 +27,7 @@ class ChatRequest(BaseModel):
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | SessionInterruptEvent
         | None
     ) = Field(
         description="The input message(s), or agent event, or None.",

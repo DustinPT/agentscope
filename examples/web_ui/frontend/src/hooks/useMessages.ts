@@ -42,7 +42,7 @@ import { useAudioManager } from '@/context/AudioContext';
  *   skip.
  * @param sessionId - The session to subscribe. ``null`` to skip.
  * @returns Object with ``msgs``, ``loading``, ``streaming``, ``error``,
- *   ``send``, ``onUserConfirm``, and ``abort``.
+ *   ``send``, ``onUserConfirm``, ``cancelCurrentRun``, and ``abort``.
  */
 export function useMessages(
 	agentId: string | null,
@@ -64,6 +64,18 @@ export function useMessages(
 		onStateUpdated?: (value: Record<string, unknown>) => void;
 	},
 ) {
+	const isAwaitingToolInteraction = useCallback((message: Msg | null | undefined) => {
+		if (!message || message.role !== 'assistant') return false;
+		return message.content.some(
+			(block) =>
+				block.type === 'tool_call' &&
+				(block.state === 'asking' ||
+					block.state === 'submitted' ||
+					block.state === 'pending' ||
+					block.state === 'allowed'),
+		);
+	}, []);
+
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [streaming, setStreaming] = useState(false);
@@ -207,7 +219,12 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager, resolveReplyForEvent, reconcileToolCallState],
+		[
+			scheduleUpdate,
+			audioManager,
+			resolveReplyForEvent,
+			reconcileToolCallState,
+		],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
@@ -293,6 +310,17 @@ export function useMessages(
 	);
 
 	/**
+	 * Request cancellation of the current backend run while keeping the
+	 * session stream subscribed.
+	 */
+	const cancelCurrentRun = useCallback(async () => {
+		if (!agentId || !sessionId) return;
+		await sessionApi.cancel(sessionId, agentId);
+		audioManager?.stopAllPlayback();
+		setStreaming(false);
+	}, [agentId, sessionId, audioManager]);
+
+	/**
 	 * Confirm or deny a tool call (human-in-the-loop). Fires a
 	 * ``POST /chat/`` with a ``UserConfirmResultEvent``; events
 	 * arrive via SSE.
@@ -343,5 +371,19 @@ export function useMessages(
 		abortRef.current?.abort();
 	}, []);
 
-	return { msgs, loading, streaming, error, send, onUserConfirm, abort };
+	return {
+		msgs,
+		loading,
+		streaming,
+		canStop:
+			streaming ||
+			isAwaitingToolInteraction(
+				[...msgs].reverse().find((msg) => msg.role === 'assistant') ?? null,
+			),
+		error,
+		send,
+		onUserConfirm,
+		cancelCurrentRun,
+		abort,
+	};
 }

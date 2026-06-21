@@ -27,6 +27,7 @@ from ._credential import (
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
+    CancelSessionResponse,
     UpdateSessionRequest,
     ListSessionsResponse,
     ListMessagesResponse,
@@ -65,6 +66,7 @@ __all__ = [
     # Session
     "CreateSessionRequest",
     "CreateSessionResponse",
+    "CancelSessionResponse",
     "UpdateSessionRequest",
     "ListSessionsResponse",
     "ListMessagesResponse",

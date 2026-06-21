@@ -68,7 +68,8 @@
 		"newLine": "换行",
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
-		"send": "发送"
+		"send": "发送",
+		"stop": "停止"
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
