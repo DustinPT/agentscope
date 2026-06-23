@@ -155,6 +155,111 @@ class ChatModelBase:
 
         return model_cards
 
+    @classmethod
+    def get_model_card(
+        cls,
+        model_name: str,
+        custom_yaml_dir: str | None = None,
+    ) -> ModelCard | None:
+        """Return the model card that matches the given model name.
+
+        Args:
+            model_name (`str`):
+                The model name defined in the model card.
+            custom_yaml_dir (`str | None`):
+                Optional custom YAML directory.
+
+        Returns:
+            `ModelCard | None`:
+                The matching model card, or ``None`` when not found.
+        """
+        for card in cls.list_models(custom_yaml_dir=custom_yaml_dir):
+            if card.name == model_name:
+                return card
+        return None
+
+    @classmethod
+    def get_runtime_init_kwargs(
+        cls,
+        model_name: str,
+        custom_yaml_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Build runtime init kwargs from model card metadata.
+
+        This keeps frontend-displayed model capabilities and runtime model
+        behavior aligned by deriving runtime configuration from the same YAML
+        model cards.
+
+        Args:
+            model_name (`str`):
+                The model name defined in the model card.
+            custom_yaml_dir (`str | None`):
+                Optional custom YAML directory.
+
+        Returns:
+            `dict[str, Any]`:
+                Keyword arguments that should be forwarded to the model
+                constructor.
+        """
+        card = cls.get_model_card(
+            model_name=model_name,
+            custom_yaml_dir=custom_yaml_dir,
+        )
+        if card is None:
+            return {}
+
+        return {
+            "context_size": card.context_size,
+        }
+
+    @classmethod
+    def normalize_runtime_parameters(
+        cls,
+        model_name: str,
+        parameters: dict[str, Any] | None = None,
+        custom_yaml_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate runtime parameters against the model card.
+
+        Args:
+            model_name (`str`):
+                The model name defined in the model card.
+            parameters (`dict[str, Any] | None`):
+                The raw runtime parameters.
+            custom_yaml_dir (`str | None`):
+                Optional custom YAML directory.
+
+        Returns:
+            `dict[str, Any]`:
+                The normalized parameters.
+
+        Raises:
+            `ValueError`:
+                Raised when parameters exceed model-card-declared limits.
+        """
+        normalized = dict(parameters or {})
+        card = cls.get_model_card(
+            model_name=model_name,
+            custom_yaml_dir=custom_yaml_dir,
+        )
+        if card is None:
+            return normalized
+
+        supports_max_tokens = "max_tokens" in cls.Parameters.model_fields
+        max_tokens = normalized.get("max_tokens")
+        if (
+            supports_max_tokens
+            and max_tokens is not None
+            and max_tokens > card.output_size
+        ):
+            raise ValueError(
+                "Parameter 'max_tokens' for model "
+                f"{model_name!r} exceeds the model card output size limit "
+                f"({card.output_size}).",
+            )
+
+        return normalized
+
     async def __call__(
         self,
         messages: list[Msg],
