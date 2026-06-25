@@ -746,6 +746,54 @@ class Agent:
             ensure_ascii=False,
         )
 
+    async def _build_context_usage_metadata(self) -> dict[str, Any] | None:
+        """Build reply-level context usage metadata for UI display.
+
+        The value reflects the context that would be used for the next model
+        call after the current reply has been written back into state.
+        """
+        max_context_tokens = int(getattr(self.model, "context_size", 0) or 0)
+        if max_context_tokens <= 0:
+            return None
+
+        try:
+            kwargs = await self._prepare_model_input()
+            current_tokens = int(await self.model.count_tokens(**kwargs))
+        except Exception:
+            logger.warning(
+                "Failed to calculate context usage for agent %s reply %s.",
+                self.name,
+                self.state.reply_id,
+                exc_info=True,
+            )
+            return None
+
+        return {
+            "context_usage": {
+                "current_tokens": current_tokens,
+                "max_context_tokens": max_context_tokens,
+                "usage_ratio": current_tokens / max_context_tokens,
+            },
+        }
+
+    async def _finalize_reply_metadata(
+        self,
+        reply_msg: Msg | None = None,
+    ) -> dict[str, Any]:
+        """Attach reply-level metadata to the current reply and return it."""
+        metadata = await self._build_context_usage_metadata()
+        if not metadata:
+            return {}
+
+        last_msg = self._get_last_msg()
+        if last_msg is not None and last_msg.id == self.state.reply_id:
+            last_msg.metadata.update(metadata)
+
+        if reply_msg is not None:
+            reply_msg.metadata.update(metadata)
+
+        return metadata
+
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
     # ======================================================================
@@ -843,12 +891,15 @@ class Agent:
             async for evt in self._handle_incoming_event(event):
                 yield evt
             if isinstance(event, SessionInterruptEvent):
+                reply_metadata = await self._finalize_reply_metadata()
                 yield ReplyEndEvent(
                     session_id=self.state.session_id,
                     reply_id=self.state.reply_id,
+                    metadata=reply_metadata,
                 )
                 last_msg = self._get_last_msg()
                 if last_msg is not None:
+                    last_msg.metadata.update(reply_metadata)
                     yield last_msg
                 return
         else:
@@ -888,9 +939,11 @@ class Agent:
                     # Exit the loop when no tool calls generated and the reply
                     # message is generated
                     if isinstance(evt, Msg):
+                        reply_metadata = await self._finalize_reply_metadata(evt)
                         yield ReplyEndEvent(
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
+                            metadata=reply_metadata,
                         )
                         yield evt
                         return
@@ -962,17 +1015,20 @@ class Agent:
         # Mirror the normal-exit path so subscribers (e.g. SSE clients
         # waiting on a terminal event) don't hang when the loop bails
         # out on max_iters.
-        yield ReplyEndEvent(
-            session_id=self.state.session_id,
-            reply_id=self.state.reply_id,
-        )
-
-        yield AssistantMsg(
+        final_msg = AssistantMsg(
             id=self.state.reply_id,
             name=self.name,
             content="Executed maximum iterations of reasoning-acting loop"
             "without finishing the task.",
         )
+        reply_metadata = await self._finalize_reply_metadata(final_msg)
+        yield ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=self.state.reply_id,
+            metadata=reply_metadata,
+        )
+
+        yield final_msg
 
     async def _reasoning(
         self,

@@ -96,6 +96,7 @@
 		"playAudio": "Play audio",
 		"pauseAudio": "Pause audio",
 		"running": "Running...",
+		"contextUsageTooltip": "Context usage (current context length / model max context)",
 		"hintSource": {
 			"tool_output": "Tool Output",
 			"team_message": "Team Message",

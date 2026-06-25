@@ -96,6 +96,7 @@
 		"playAudio": "播放音频",
 		"pauseAudio": "暂停音频",
 		"running": "运行中...",
+		"contextUsageTooltip": "上下文使用率（当前上下文长度/模型最大上下文）",
 		"hintSource": {
 			"tool_output": "工具输出",
 			"team_message": "团队消息",

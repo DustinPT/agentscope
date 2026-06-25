@@ -14,6 +14,7 @@ import {
 	ChevronDownIcon,
 	CirclePlay,
 	Copy,
+	Gauge,
 	Loader2,
 	MessageSquareQuote,
 	Wrench,
@@ -45,6 +46,38 @@ interface ToolCallGroupBlock {
 }
 
 type ExtendedContentBlock = ContentBlock | ToolCallGroupBlock;
+
+interface ContextUsageMetadata {
+	current_tokens: number;
+	max_context_tokens: number;
+	usage_ratio: number;
+}
+
+function getContextUsageMetadata(message: Msg): ContextUsageMetadata | null {
+	const raw = message.metadata?.context_usage;
+	if (!raw || typeof raw !== 'object') return null;
+
+	const candidate = raw as Partial<ContextUsageMetadata>;
+	if (
+		typeof candidate.current_tokens !== 'number' ||
+		typeof candidate.max_context_tokens !== 'number' ||
+		typeof candidate.usage_ratio !== 'number' ||
+		candidate.max_context_tokens <= 0
+	) {
+		return null;
+	}
+
+	return {
+		current_tokens: candidate.current_tokens,
+		max_context_tokens: candidate.max_context_tokens,
+		usage_ratio: candidate.usage_ratio,
+	};
+}
+
+function formatContextUsage(metadata: ContextUsageMetadata): string {
+	const percentage = Math.round(Math.max(0, metadata.usage_ratio) * 100);
+	return `${percentage}%(${formatNumber(metadata.current_tokens)}/${formatNumber(metadata.max_context_tokens)})`;
+}
 
 /**
  * Group tool_call blocks of the same name into a single
@@ -502,6 +535,7 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	const hasUsage =
 		!!message.usage &&
 		((message.usage.input_tokens ?? 0) > 0 || (message.usage.output_tokens ?? 0) > 0);
+	const contextUsage = getContextUsageMetadata(message);
 
 	// Tick once per second while running so the elapsed time updates live.
 	const [now, setNow] = useState(() => Date.now());
@@ -527,6 +561,7 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
 	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
 	const elapsedText = formatTime(elapsedSeconds);
+	const contextUsageText = contextUsage ? formatContextUsage(contextUsage) : null;
 
 	return (
 		<div
@@ -576,6 +611,17 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 								<ArrowDown data-icon="inline-start" className="ml-1" />
 								<span className="tabular-nums">
 									{formatNumber(message.usage?.output_tokens ?? 0)}
+								</span>
+							</>
+						)}
+						{contextUsageText && (
+							<>
+								<Gauge data-icon="inline-start" className="ml-1" />
+								<span
+									className="tabular-nums"
+									title={t('messageBubble.contextUsageTooltip')}
+								>
+									{contextUsageText}
 								</span>
 							</>
 						)}

@@ -5,6 +5,7 @@ import type {
 	DataBlockStartEvent,
 	DataBlockDeltaEvent,
 	DataBlockEndEvent,
+	ReplyEndEvent,
 	ReplyStartEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
@@ -16,6 +17,14 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { sessionApi } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
+
+type JsonLike =
+	| string
+	| number
+	| boolean
+	| null
+	| JsonLike[]
+	| { [key: string]: JsonLike };
 
 /**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
@@ -92,6 +101,17 @@ export function useMessages(
 	useEffect(() => {
 		optionsRef.current = options;
 	}, [options]);
+
+	const mergeReplyMetadata = useCallback((msg: Msg, event: AgentEvent) => {
+		if (event.type !== EventType.REPLY_END) return;
+		const replyEndEvent = event as ReplyEndEvent;
+		const contextUsage = replyEndEvent.metadata?.context_usage;
+		if (!contextUsage || typeof contextUsage !== 'object') return;
+		msg.metadata = {
+			...msg.metadata,
+			context_usage: contextUsage as JsonLike,
+		};
+	}, []);
 	const scheduleUpdate = useCallback(() => {
 		if (rafRef.current !== null) return;
 		rafRef.current = requestAnimationFrame(() => {
@@ -177,6 +197,7 @@ export function useMessages(
 				const targetReply = resolveReplyForEvent(event);
 				if (targetReply) {
 					appendEvent(targetReply, event);
+					mergeReplyMetadata(targetReply, event);
 					reconcileToolCallState(targetReply, event);
 				}
 				setStreaming(false);
@@ -220,6 +241,7 @@ export function useMessages(
 			scheduleUpdate();
 		},
 		[
+			mergeReplyMetadata,
 			scheduleUpdate,
 			audioManager,
 			resolveReplyForEvent,

@@ -238,6 +238,8 @@ class Msg(BaseModel):
         match event.type:
             case EventType.REPLY_END:
                 self.finished_at = event.created_at
+                if event.metadata:
+                    self.metadata.update(event.metadata)
 
             case EventType.MODEL_CALL_END:
                 if self.usage is None:
