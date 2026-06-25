@@ -2,6 +2,8 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import inspect
+import json
+import re
 import uuid
 
 from asyncio import Queue
@@ -56,6 +58,7 @@ from ..model import (
     ChatResponse,
     ChatUsage,
     ChatModelBase,
+    StructuredResponse,
 )
 from ..message import (
     Msg,
@@ -90,6 +93,19 @@ if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
 else:
     MiddlewareBase = Any
+
+_CONTEXT_COMPRESS_TOOL_NAME = "ContextCompress"
+_CONTEXT_COMPRESS_FALLBACK_PROMPT = (
+    "<system-hint>The structured summary tool is unavailable for this turn. "
+    "Return a plain-text continuation summary using exactly these markdown "
+    "headings:\n"
+    "# Task Overview\n"
+    "# Current State\n"
+    "# Important Discoveries\n"
+    "# Next Steps\n"
+    "# Context to Preserve\n"
+    "Keep each section concise and actionable.</system-hint>"
+)
 
 
 class Agent:
@@ -264,56 +280,81 @@ class Agent:
     async def compress_context(
         self,
         context_config: ContextConfig | None = None,
-    ) -> None:
+    ) -> AsyncGenerator[AgentEvent, None]:
         """Compress the agent's context if the token count exceeds the
-        threshold.
+        threshold and stream display-only events for the current reply.
 
         Args:
             context_config (`ContextConfig | None`, optional):
                 If provided, compress the context with the given context
                 config. Otherwise, use the default context config in the
                 agent.
+
+        Yields:
+            `AgentEvent`:
+                Display-only tool-call events describing the compression.
+                These events are intended for reply-stream persistence and
+                UI rendering only; they are not written into
+                ``agent.state.context``.
         """
         if not self._compress_context_middlewares:
-            await self._compress_context_impl(context_config=context_config)
+            async for event in self._compress_context_impl(
+                context_config=context_config,
+            ):
+                yield event
         else:
 
             async def execute_chain(
                 index: int = 0,
                 context_config: ContextConfig | None = context_config,
-            ) -> None:
+            ) -> AsyncGenerator[AgentEvent, None]:
                 """Execute the compress_context middleware chain."""
                 if index >= len(self._compress_context_middlewares):
-                    await self._compress_context_impl(
+                    async for event in self._compress_context_impl(
                         context_config=context_config,
-                    )
+                    ):
+                        yield event
                 else:
                     mw = self._compress_context_middlewares[index]
                     input_kwargs = {"context_config": context_config}
 
-                    async def next_handler(**kwargs: Any) -> None:
-                        await execute_chain(index + 1, **kwargs)
+                    async def next_handler(
+                        **kwargs: Any,
+                    ) -> AsyncGenerator[AgentEvent, None]:
+                        async for event in execute_chain(
+                            index + 1,
+                            **kwargs,
+                        ):
+                            yield event
 
-                    await mw.on_compress_context(
+                    async for event in mw.on_compress_context(
                         agent=self,
                         input_kwargs=input_kwargs,
                         next_handler=next_handler,
-                    )
+                    ):
+                        yield event
 
-            await execute_chain()
+            async for event in execute_chain():
+                yield event
 
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
-    ) -> None:
+    ) -> AsyncGenerator[AgentEvent, None]:
         """Compress the agent's context if the token count exceeds the
-        threshold.
+        threshold and stream display-only events for the reply stream.
 
         Args:
             context_config (`ContextConfig | None`, optional):
                 If provided, compress the context with the given context
                 config. Otherwise, use the default context config in the
                 agent.
+
+        Yields:
+            `AgentEvent`:
+                Display-only tool-call events for the compression. The events
+                are intentionally not saved into ``agent.state.context`` so
+                they won't be sent back to the model in later turns.
         """
         cfg: ContextConfig = context_config or self.context_config
 
@@ -424,7 +465,36 @@ class Agent:
             )
             context_overflow = True
 
+        tool_call_id = uuid.uuid4().hex
+        yield ToolCallStartEvent(
+            reply_id=self.state.reply_id,
+            tool_call_id=tool_call_id,
+            tool_call_name=_CONTEXT_COMPRESS_TOOL_NAME,
+        )
+        yield ToolCallDeltaEvent(
+            reply_id=self.state.reply_id,
+            tool_call_id=tool_call_id,
+            delta=self._build_context_compression_call_input(
+                estimated_tokens=int(estimated_tokens),
+                input_tokens=int(estimated_compression_tokens),
+                threshold_tokens=int(threshold),
+                compressed_message_count=len(msgs_to_compress),
+                reserved_message_count=len(msgs_to_reserve),
+            ),
+        )
+        yield ToolCallEndEvent(
+            reply_id=self.state.reply_id,
+            tool_call_id=tool_call_id,
+        )
+        yield ToolResultStartEvent(
+            reply_id=self.state.reply_id,
+            tool_call_id=tool_call_id,
+            tool_call_name=_CONTEXT_COMPRESS_TOOL_NAME,
+        )
+
         # Compress the messages
+        structured_error: Exception | None = None
+        res = None
         try:
             res = await self.model.generate_structured_output(
                 messages=messages,
@@ -432,6 +502,7 @@ class Agent:
             )
 
         except Exception as e:
+            structured_error = e
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -463,13 +534,21 @@ class Agent:
                     ):
                         break
 
-                res = await self.model.generate_structured_output(
-                    messages=messages,
-                    structured_model=cfg.summary_schema,
-                )
+                try:
+                    res = await self.model.generate_structured_output(
+                        messages=messages,
+                        structured_model=cfg.summary_schema,
+                    )
+                    structured_error = None
+                except Exception as retry_error:
+                    structured_error = retry_error
 
-            else:
-                raise e from None
+        if res is None:
+            res = await self._generate_context_summary_from_text_fallback(
+                messages=messages,
+                summary_schema=cfg.summary_schema,
+                previous_error=structured_error,
+            )
 
         # Update the summary
         self.state.summary = cfg.summary_template.format(**res.content)
@@ -493,6 +572,178 @@ class Agent:
         logger.info(
             "[AGENT %s]: The context compression finished.",
             self.name,
+        )
+        usage = res.usage
+        input_tokens = usage.input_tokens if usage is not None else None
+        output_tokens = usage.output_tokens if usage is not None else None
+        yield ToolResultTextDeltaEvent(
+            reply_id=self.state.reply_id,
+            tool_call_id=tool_call_id,
+            delta=self._build_context_compression_result_output(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                summary=self.state.summary,
+                offload_path=path if self.offloader else None,
+            ),
+        )
+        yield ToolResultEndEvent(
+            reply_id=self.state.reply_id,
+            tool_call_id=tool_call_id,
+            state=ToolResultState.SUCCESS,
+        )
+
+    async def _generate_context_summary_from_text_fallback(
+        self,
+        messages: list[Msg],
+        summary_schema: dict[str, Any],
+        previous_error: Exception | None,
+    ) -> StructuredResponse:
+        """Fallback to plain-text summarization when structured output fails."""
+        logger.warning(
+            "Structured context compression failed (%s); falling back to "
+            "plain-text summarization.",
+            previous_error,
+        )
+        fallback_messages = deepcopy(messages) + [
+            UserMsg(
+                name="user",
+                content=_CONTEXT_COMPRESS_FALLBACK_PROMPT,
+            ),
+        ]
+        response = await self._call_model(
+            messages=fallback_messages,
+            tools=[],
+            tool_choice=None,
+        )
+        completed_response = await self._collect_completed_chat_response(
+            response,
+        )
+        summary_text = self._extract_text_from_chat_response(
+            completed_response,
+        )
+        if not summary_text:
+            raise RuntimeError(
+                "Failed to generate fallback compression summary text.",
+            )
+        structured_content = self._build_context_summary_from_plain_text(
+            summary_text,
+            summary_schema,
+        )
+        return StructuredResponse(
+            content=structured_content,
+            usage=completed_response.usage,
+            metadata=completed_response.metadata,
+        )
+
+    async def _collect_completed_chat_response(
+        self,
+        response: ChatResponse | AsyncGenerator[ChatResponse, None],
+    ) -> ChatResponse:
+        """Collect the final ChatResponse from sync or streaming model output."""
+        if inspect.isasyncgen(response):
+            completed_response: ChatResponse | None = None
+            async for chunk in response:
+                if chunk.is_last:
+                    completed_response = chunk
+            if completed_response is None:
+                raise RuntimeError(
+                    "Failed to collect fallback compression response.",
+                )
+            return completed_response
+
+        return response
+
+    def _extract_text_from_chat_response(
+        self,
+        response: ChatResponse,
+    ) -> str:
+        """Extract concatenated text blocks from a model response."""
+        texts = [
+            block.text
+            for block in response.content
+            if isinstance(block, TextBlock)
+        ]
+        return "\n".join(texts).strip()
+
+    def _build_context_summary_from_plain_text(
+        self,
+        summary_text: str,
+        summary_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Map a plain-text fallback summary into the structured schema."""
+        title_to_key = {
+            "Task Overview": "task_overview",
+            "Current State": "current_state",
+            "Important Discoveries": "important_discoveries",
+            "Next Steps": "next_steps",
+            "Context to Preserve": "context_to_preserve",
+        }
+        pattern = re.compile(
+            r"(?ms)^# (?P<title>Task Overview|Current State|"
+            r"Important Discoveries|Next Steps|Context to Preserve)\s*\n"
+            r"(?P<body>.*?)(?=^# |\Z)",
+        )
+        content = {value: "" for value in title_to_key.values()}
+        for match in pattern.finditer(summary_text):
+            title = match.group("title")
+            body = match.group("body").strip()
+            content[title_to_key[title]] = body
+
+        if not any(content.values()):
+            paragraphs = [
+                paragraph.strip()
+                for paragraph in summary_text.split("\n\n")
+                if paragraph.strip()
+            ]
+            content["task_overview"] = paragraphs[0] if paragraphs else ""
+            content["current_state"] = summary_text.strip()
+            content["important_discoveries"] = (
+                paragraphs[1] if len(paragraphs) > 1 else ""
+            )
+
+        return self.model._truncate_structured_output_to_schema(
+            content,
+            summary_schema,
+        )
+
+    def _build_context_compression_call_input(
+        self,
+        *,
+        estimated_tokens: int,
+        input_tokens: int,
+        threshold_tokens: int,
+        compressed_message_count: int,
+        reserved_message_count: int,
+    ) -> str:
+        """Build the display payload for the compression pseudo tool call."""
+        return json.dumps(
+            {
+                "estimated_tokens": estimated_tokens,
+                "input_tokens": input_tokens,
+                "threshold_tokens": threshold_tokens,
+                "compressed_message_count": compressed_message_count,
+                "reserved_message_count": reserved_message_count,
+            },
+            ensure_ascii=False,
+        )
+
+    def _build_context_compression_result_output(
+        self,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        summary: str,
+        offload_path: str | None,
+    ) -> str:
+        """Build the final display payload for the compression result."""
+        return json.dumps(
+            {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "summary": summary,
+                "offload_path": offload_path,
+            },
+            ensure_ascii=False,
         )
 
     # ======================================================================
@@ -630,7 +881,8 @@ class Agent:
             # ===============================================================
             if action == "reasoning":
                 # Compressed the memory if needed before reasoning
-                await self.compress_context()
+                async for evt in self.compress_context():
+                    yield evt
                 # Perform reasoning
                 async for evt in self._reasoning():
                     # Exit the loop when no tool calls generated and the reply

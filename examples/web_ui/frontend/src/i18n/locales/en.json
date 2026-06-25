@@ -43,6 +43,21 @@
 	},
 	"tool": {
 		"moreLines": "... {{count}} more lines",
+		"contextCompress": {
+			"name": "Context Compression",
+			"estimatedTokens": "Triggered At {{count}} tokens",
+			"estimatedTokensTip": "Estimated total context tokens when compression was triggered, including messages and tool schemas.",
+			"thresholdTokens": "Threshold {{count}} tokens",
+			"thresholdTokensTip": "Context compression starts when this threshold is reached.",
+			"inputTokens": "Estimated Input {{count}} tokens",
+			"inputTokensTip": "Estimated input tokens for the compression call before sending it to the model, counting messages only and excluding tool schemas.",
+			"actualInputTokens": "Actual Input {{count}} tokens",
+			"actualOutputTokens": "Actual Output {{count}} tokens",
+			"compressedMessages": "Compressed {{count}} messages",
+			"reservedMessages": "Reserved {{count}} messages",
+			"details": "View Details",
+			"summary": "Compression Summary"
+		},
 		"read": {
 			"name": "Read",
 			"fileCount_one": "{{count}} file",

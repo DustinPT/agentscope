@@ -6,10 +6,11 @@ import os
 import tempfile
 
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import MockModel, AnyString
 
-from agentscope.model import StructuredResponse
+from agentscope.model import StructuredResponse, ChatResponse
 from agentscope.agent import Agent, ContextConfig
 from agentscope.state import AgentState
 from agentscope.message import UserMsg, AssistantMsg, TextBlock, ToolCallBlock
@@ -603,7 +604,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        await agent.compress_context()
+        _ = [evt async for evt in agent.compress_context()]
 
         self.assertEqual(
             agent.state.summary,
@@ -660,6 +661,93 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "usage": None,
                 },
             ],
+        )
+
+    async def test_context_compression_falls_back_to_plain_text_summary(
+        self,
+    ) -> None:
+        """Compression falls back to plain text when structured output fails."""
+        model = MockModel(
+            context_size=100,
+            mock_chat_responses=[
+                ChatResponse(
+                    content=[
+                        TextBlock(
+                            text=(
+                                "# Task Overview\n"
+                                "1\n\n"
+                                "# Current State\n"
+                                "2\n\n"
+                                "# Important Discoveries\n"
+                                "3\n\n"
+                                "# Next Steps\n"
+                                "4\n\n"
+                                "# Context to Preserve\n"
+                                "5"
+                            ),
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        with patch.object(
+            model,
+            "_call_api_with_structured_output",
+            side_effect=RuntimeError(
+                "Failed to generate structured output for model.",
+            ),
+        ):
+            _ = [evt async for evt in agent.compress_context()]
+
+        self.assertEqual(
+            agent.state.summary,
+            """<system-info>Here is a summary of your previous work
+# Task Overview
+1
+
+# Current State
+2
+
+# Important Discoveries
+3
+
+# Next Steps
+4
+
+# Context to Preserve
+5</system-info>""",
         )
 
     async def test_context_compression_clears_evicted_read_cache(self) -> None:
@@ -728,7 +816,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 ),
             )
 
-            await agent.compress_context()
+            _ = [evt async for evt in agent.compress_context()]
 
             self.assertIsNone(
                 await agent.state.tool_context.get_cache(file_path),
@@ -807,7 +895,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 ),
             )
 
-            await agent.compress_context()
+            _ = [evt async for evt in agent.compress_context()]
 
             self.assertIsNotNone(
                 await agent.state.tool_context.get_cache(file_path),
@@ -865,7 +953,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 ),
             )
 
-            await agent.compress_context()
+            _ = [evt async for evt in agent.compress_context()]
 
             self.assertIsNone(
                 await agent.state.tool_context.get_cache(file_path),

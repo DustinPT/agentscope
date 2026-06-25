@@ -43,6 +43,21 @@
 	},
 	"tool": {
 		"moreLines": "... 还有 {{count}} 行",
+		"contextCompress": {
+			"name": "上下文压缩",
+			"estimatedTokens": "触发时 {{count}} tokens",
+			"estimatedTokensTip": "触发压缩时的上下文总 token 预估，包含消息内容和工具定义。",
+			"thresholdTokens": "阈值 {{count}} tokens",
+			"thresholdTokensTip": "达到该阈值后会触发上下文压缩。",
+			"inputTokens": "预估输入 {{count}} tokens",
+			"inputTokensTip": "压缩调用发给模型前的输入 token 预估，仅统计消息内容，不包含工具定义。",
+			"actualInputTokens": "实际输入 {{count}} tokens",
+			"actualOutputTokens": "实际输出 {{count}} tokens",
+			"compressedMessages": "压缩 {{count}} 条消息",
+			"reservedMessages": "保留 {{count}} 条消息",
+			"details": "查看详情",
+			"summary": "压缩摘要"
+		},
 		"read": {
 			"name": "读取",
 			"fileCount_one": "{{count}} 个文件",

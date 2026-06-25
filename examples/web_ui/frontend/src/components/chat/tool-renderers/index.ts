@@ -2,6 +2,7 @@ import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/m
 import type { ReactNode } from 'react';
 
 import { BashRenderer } from './BashRenderer';
+import { ContextCompressRenderer } from './ContextCompressRenderer';
 import {
 	defaultGetDisplayName,
 	defaultRenderCallArgs,
@@ -20,6 +21,7 @@ import { WriteRenderer } from './WriteRenderer';
 
 const renderers: Record<string, ToolRenderer> = {
 	Bash: BashRenderer,
+	ContextCompress: ContextCompressRenderer,
 	Read: ReadRenderer,
 	Write: WriteRenderer,
 	Edit: EditRenderer,

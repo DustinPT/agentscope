@@ -6,6 +6,7 @@ from ..tool import ToolBase
 
 if TYPE_CHECKING:
     from ..agent import Agent
+    from ..event import AgentEvent
     from ..model import ChatResponse
 
 
@@ -189,8 +190,8 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable[..., Awaitable[None]],
-    ) -> None:
+        next_handler: Callable[..., AsyncGenerator["AgentEvent", None]],
+    ) -> AsyncGenerator["AgentEvent", None]:
         """Onion hook for `compress_context` function in `Agent` class
 
         Args:
@@ -199,13 +200,18 @@ class MiddlewareBase:  # pylint: disable=unused-argument
             input_kwargs (`dict`):
                 Dictionary containing:
                 - context_config: ContextConfig | None
-            next_handler (`Callable[..., Awaitable[None]]`):
+            next_handler (`Callable[..., AsyncGenerator[AgentEvent, None]]`):
                 Callable that executes the next middleware or
                 original method
+
+        Yields:
+            `AgentEvent`:
+                Display-only events produced by context compression.
         """
         raise RuntimeError(
             f"{type(self).__name__} does not implement on_compress_context",
         )
+        yield  # pylint: disable=unreachable
 
     async def on_system_prompt(
         self,

@@ -36,6 +36,87 @@ _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 class ChatModelBase:
     """The base class for chat models."""
 
+    @classmethod
+    def _truncate_structured_output_to_schema(
+        cls,
+        value: Any,
+        schema: dict[str, Any],
+        path: str = "<root>",
+    ) -> Any:
+        """Best-effort truncate oversized structured-output fields.
+
+        Currently this focuses on JSON-Schema ``maxLength`` for strings and
+        recursively descends through ``object`` / ``array`` containers. It is
+        intentionally conservative: unsupported schema constructs are left
+        unchanged so the subsequent validation can still fail loudly.
+        """
+        if not isinstance(schema, dict):
+            return value
+
+        if value is None:
+            return value
+
+        if isinstance(value, str):
+            max_length = schema.get("maxLength")
+            if isinstance(max_length, int) and len(value) > max_length:
+                logger.warning(
+                    "Structured output field %s exceeds maxLength=%d; "
+                    "truncating from %d chars.",
+                    path,
+                    max_length,
+                    len(value),
+                )
+                return value[:max_length]
+            return value
+
+        schema_type = schema.get("type")
+        if schema_type == "object" and isinstance(value, dict):
+            properties = schema.get("properties", {})
+            additional = schema.get("additionalProperties")
+            truncated: dict[str, Any] = {}
+            for key, item in value.items():
+                child_schema = properties.get(key)
+                if child_schema is None and isinstance(additional, dict):
+                    child_schema = additional
+                truncated[key] = (
+                    cls._truncate_structured_output_to_schema(
+                        item,
+                        child_schema,
+                        f"{path}.{key}",
+                    )
+                    if isinstance(child_schema, dict)
+                    else item
+                )
+            return truncated
+
+        if schema_type == "array" and isinstance(value, list):
+            item_schema = schema.get("items")
+            if isinstance(item_schema, dict):
+                return [
+                    cls._truncate_structured_output_to_schema(
+                        item,
+                        item_schema,
+                        f"{path}[{index}]",
+                    )
+                    for index, item in enumerate(value)
+                ]
+            return value
+
+        for union_key in ("anyOf", "oneOf", "allOf"):
+            union_schemas = schema.get(union_key)
+            if isinstance(union_schemas, list):
+                for candidate in union_schemas:
+                    if isinstance(candidate, dict):
+                        truncated = cls._truncate_structured_output_to_schema(
+                            value,
+                            candidate,
+                            path,
+                        )
+                        if truncated != value:
+                            return truncated
+
+        return value
+
     class Parameters(BaseModel):
         """Each subclass should implement this inner class to define its
         parameters."""
@@ -668,19 +749,34 @@ class ChatModelBase:
                 "Failed to generate structured output for model.",
             )
 
-        # Validate the output
+        # Validate the output. If validation fails on recoverable constraints
+        # like ``maxLength``, truncate oversized fields according to the schema
+        # and validate once more so one noisy field won't fail the whole run.
         if isinstance(structured_model, dict):
-            jsonschema.validate(structured_output, structured_model)
-
+            validation_schema = structured_model
         elif issubclass(structured_model, BaseModel):
-            structured_model.model_validate(structured_output)
-
+            validation_schema = structured_model.model_json_schema()
         else:
             raise ValueError(
                 "The structured_model is expected to be a subclass of "
                 "Pydantic.BaseModel or a dict, "
                 f"but got {type(structured_model)}.",
             )
+
+        try:
+            jsonschema.validate(structured_output, validation_schema)
+        except jsonschema.ValidationError:
+            repaired_output = self._truncate_structured_output_to_schema(
+                structured_output,
+                validation_schema,
+            )
+            if repaired_output == structured_output:
+                raise
+            structured_output = repaired_output
+            jsonschema.validate(structured_output, validation_schema)
+
+        if not isinstance(structured_model, dict):
+            structured_model.model_validate(structured_output)
 
         return StructuredResponse(
             id=completed_response.id,

@@ -10,14 +10,14 @@ class SummarySchema(BaseModel):
     """The compressed memory model, used to generate summary of old memories"""
 
     task_overview: str = Field(
-        max_length=300,
+        max_length=1000,
         description=(
             "The user's core request and success criteria.\n"
             "Any clarifications or constraints they specified"
         ),
     )
     current_state: str = Field(
-        max_length=300,
+        max_length=1000,
         description=(
             "What has been completed so far.\n"
             "File created, modified, or analyzed (with paths if relevant).\n"
@@ -25,7 +25,7 @@ class SummarySchema(BaseModel):
         ),
     )
     important_discoveries: str = Field(
-        max_length=300,
+        max_length=1200,
         description=(
             "Technical constraints or requirements uncovered.\n"
             "Decisions made and their rationale.\n"
@@ -34,7 +34,7 @@ class SummarySchema(BaseModel):
         ),
     )
     next_steps: str = Field(
-        max_length=200,
+        max_length=600,
         description=(
             "Specific actions needed to complete the task.\n"
             "Any blockers or open questions to resolve.\n"
@@ -42,7 +42,7 @@ class SummarySchema(BaseModel):
         ),
     )
     context_to_preserve: str = Field(
-        max_length=300,
+        max_length=1000,
         description=(
             "User preferences or style requirements.\n"
             "Domain-specific details that aren't obvious.\n"
