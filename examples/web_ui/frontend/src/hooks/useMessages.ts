@@ -141,11 +141,13 @@ export function useMessages(
 	}, []);
 
 	/**
-	 * Keep tool-call confirmation state consistent when continuation events
-	 * arrive without a mirrored ``USER_CONFIRM_RESULT`` on every subscriber.
+	 * Keep locally reconstructed tool-call state aligned with the backend's
+	 * event-to-message semantics.
 	 *
-	 * Once a tool result starts streaming for a ``tool_call_id``, that call is
-	 * no longer waiting for approval from the UI perspective.
+	 * Python-side ``Msg.append_event`` treats ``TOOL_RESULT_END`` as the end
+	 * of the paired tool-call lifecycle and flips the call to ``finished``.
+	 * The frontend mirrors that implicit transition here because SSE does not
+	 * emit a dedicated "tool_call finished" event.
 	 */
 	const reconcileToolCallState = useCallback((msg: Msg, event: AgentEvent) => {
 		if (!('reply_id' in event) || event.reply_id !== msg.id) return;
@@ -164,7 +166,16 @@ export function useMessages(
 		);
 		if (!toolCall) return;
 
-		if (toolCall.state === 'asking' || toolCall.state === 'pending') {
+		if (event.type === EventType.TOOL_RESULT_END) {
+			toolCall.state = 'finished';
+			return;
+		}
+
+		if (
+			toolCall.state === 'asking' ||
+			toolCall.state === 'pending' ||
+			toolCall.state === 'submitted'
+		) {
 			toolCall.state = 'allowed';
 		}
 	}, []);
