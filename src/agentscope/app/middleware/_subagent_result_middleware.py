@@ -15,6 +15,78 @@ from ...message import DataBlock, HintBlock, TextBlock
 from ...middleware import MiddlewareBase
 
 
+_FINAL_RESULT_MARKER = "[[FINAL_RESULT]]"
+
+
+def _has_result_content(blocks: list[TextBlock | DataBlock]) -> bool:
+    """Return whether extracted result blocks contain usable content."""
+    for block in blocks:
+        if isinstance(block, DataBlock):
+            return True
+        if block.text.strip():
+            return True
+    return False
+
+
+def _extract_marked_result_blocks(
+    reply_content: str | list[TextBlock | DataBlock],
+) -> list[TextBlock | DataBlock]:
+    """Extract result blocks after the explicit final result marker."""
+    if isinstance(reply_content, str):
+        marker_index = reply_content.find(_FINAL_RESULT_MARKER)
+        if marker_index < 0:
+            return []
+        result_text = reply_content[
+            marker_index + len(_FINAL_RESULT_MARKER) :
+        ].lstrip()
+        if not result_text.strip():
+            return []
+        return [TextBlock(text=result_text)]
+
+    extracted_blocks: list[TextBlock | DataBlock] = []
+    collecting = False
+    for block in reply_content:
+        if not collecting:
+            if not isinstance(block, TextBlock):
+                continue
+            marker_index = block.text.find(_FINAL_RESULT_MARKER)
+            if marker_index < 0:
+                continue
+            collecting = True
+            remaining_text = block.text[
+                marker_index + len(_FINAL_RESULT_MARKER) :
+            ].lstrip()
+            if remaining_text:
+                copied_block = deepcopy(block)
+                copied_block.text = remaining_text
+                extracted_blocks.append(copied_block)
+            continue
+
+        if not isinstance(block, (TextBlock, DataBlock)):
+            return []
+        extracted_blocks.append(deepcopy(block))
+
+    if not collecting or not _has_result_content(extracted_blocks):
+        return []
+    return extracted_blocks
+
+
+def _extract_trailing_result_blocks(
+    reply_content: str | list[TextBlock | DataBlock],
+) -> list[TextBlock | DataBlock]:
+    """Extract trailing text and data blocks as a compatibility fallback."""
+    if not isinstance(reply_content, list):
+        return []
+
+    trailing_blocks: list[TextBlock | DataBlock] = []
+    for block in reversed(reply_content):
+        if isinstance(block, (TextBlock, DataBlock)):
+            trailing_blocks.append(deepcopy(block))
+        else:
+            break
+    return list(reversed(trailing_blocks))
+
+
 class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     """Push the final child-session reply into the parent session's inbox."""
 
@@ -103,15 +175,9 @@ class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
             )
         else:
             reply_content = final_msg.content
-            content_blocks: list[TextBlock | DataBlock] = []
-            if isinstance(reply_content, list):
-                trailing_blocks: list[TextBlock | DataBlock] = []
-                for block in reversed(reply_content):
-                    if isinstance(block, (TextBlock, DataBlock)):
-                        trailing_blocks.append(deepcopy(block))
-                    else:
-                        break
-                content_blocks = list(reversed(trailing_blocks))
+            content_blocks = _extract_marked_result_blocks(reply_content)
+            if not content_blocks:
+                content_blocks = _extract_trailing_result_blocks(reply_content)
 
             notification_prefix = (
                 f"{prefix}"

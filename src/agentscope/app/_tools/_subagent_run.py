@@ -23,6 +23,19 @@ if TYPE_CHECKING:
     from ..storage import StorageBase
 
 
+_SUBAGENT_FINAL_RESULT_HINT = """Final output requirements:
+- Your final reply MUST include a complete, self-contained result.
+- Start the complete result with [[FINAL_RESULT]].
+- Do not rely on earlier messages, references, or brief summaries instead of the full result.
+- If you already shared partial results earlier, restate the full result in the final reply.
+- If the final result includes attachments or other data blocks, place them after the [[FINAL_RESULT]] marker.
+
+Use this format in your final reply:
+[[FINAL_RESULT]]
+(complete, self-contained result)
+"""
+
+
 class _SubAgentRunParams(ParamsBase):
     """Parameters for :class:`SubAgentRun`."""
 
@@ -78,11 +91,15 @@ Important:
 - This tool returns immediately after the child session starts. DO NOT poll,
   query, or wait for the child session yourself. DO NOT call any waiting tool
   such as `bash sleep`.
-- After the child session finishes, the parent session will be notified
-  automatically. You have exactly two valid follow-up options:
+- After calling this tool, you have exactly two valid follow-up options:
   1. Continue with other independent tasks and ignore this sub-agent for now; or
   2. If there is nothing else to do, simply give a text reply without calling
      any tool, which ends the current reasoning loop.
+- After the child session finishes, the parent session will be notified
+  automatically.
+- If the child session result is incomplete, unsatisfactory, or needs more
+  work, you MAY resume the existing child session by providing `session_id`
+  and sending follow-up instructions.
 """
     input_schema: dict[str, Any] = _SubAgentRunParams.model_json_schema()
     is_concurrency_safe: bool = True
@@ -151,6 +168,18 @@ Important:
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             message="SubAgentRun is allowed when attached to the agent.",
+        )
+
+    def _build_subagent_task_hint(self, prompt: str, caller_agent_name: str) -> str:
+        """Build the child-session task hint with final result requirements."""
+        prompt_text = prompt.rstrip()
+        return (
+            f'<subagent-task parent_agent_id="{self._agent_id}" '
+            f'parent_agent_name="{caller_agent_name}" '
+            f'parent_session_id="{self._session_id}">\n'
+            f"{prompt_text}\n\n"
+            f"{_SUBAGENT_FINAL_RESULT_HINT}"
+            f"</subagent-task>"
         )
 
     async def __call__(
@@ -332,12 +361,9 @@ Important:
             child_session_name = child_session.config.name
 
         hint = HintBlock(
-            hint=(
-                f'<subagent-task parent_agent_id="{self._agent_id}" '
-                f'parent_agent_name="{caller_agent.data.name}" '
-                f'parent_session_id="{self._session_id}">\n'
-                f"{prompt}\n"
-                f"</subagent-task>"
+            hint=self._build_subagent_task_hint(
+                prompt=prompt,
+                caller_agent_name=caller_agent.data.name,
             ),
             source=json.dumps(
                 {
