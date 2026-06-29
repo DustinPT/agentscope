@@ -146,6 +146,15 @@ class ReActConfig(BaseModel):
     won't continue reasoning and wait for outside interaction from the user.
     """
 
+    enable_tool_offload: bool = Field(
+        title="Enable Tool Offload",
+        default=False,
+        description=(
+            "Whether to offload long-running tool calls to background tasks."
+        ),
+    )
+    """Whether long-running tool calls can be offloaded to the background."""
+
 
 class ModelConfig(BaseModel):
     """The model related configuration."""

@@ -274,13 +274,16 @@ class ChatService:
                 message_bus=self._message_bus,
                 session_id=session_id,
             ),
-            ToolOffloadMiddleware(
-                bg_manager=self._background_task_manager,
-                message_bus=self._message_bus,
-                user_id=user_id,
-                agent_id=agent_id,
-            ),
         ]
+        if agent_record.data.react_config.enable_tool_offload:
+            middlewares.append(
+                ToolOffloadMiddleware(
+                    bg_manager=self._background_task_manager,
+                    message_bus=self._message_bus,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                ),
+            )
         if session_record.parent_session_id is not None:
             middlewares.append(
                 SubAgentResultMiddleware(

@@ -153,7 +153,8 @@
 			"legend": "ReAct Config",
 			"description": "Controls the reasoning and action loop behaviour.",
 			"max-iters": { "label": "Max iterations" },
-			"stop-on-reject": { "label": "Stop on reject" }
+			"stop-on-reject": { "label": "Stop on reject" },
+			"enable-tool-offload": { "label": "Enable tool offload" }
 		},
 		"model-config": {
 			"legend": "Default Model",

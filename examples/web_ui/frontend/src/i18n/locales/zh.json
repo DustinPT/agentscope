@@ -153,7 +153,8 @@
 			"legend": "ReAct 配置",
 			"description": "控制推理和行动循环的行为。",
 			"max-iters": { "label": "最大迭代次数" },
-			"stop-on-reject": { "label": "拒绝时停止" }
+			"stop-on-reject": { "label": "拒绝时停止" },
+			"enable-tool-offload": { "label": "开启工具卸载" }
 		},
 		"model-config": {
 			"legend": "默认模型",
