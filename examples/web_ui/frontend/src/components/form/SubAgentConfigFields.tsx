@@ -74,8 +74,8 @@ export function SubAgentConfigFields({
 											agent.data.description?.trim() ||
 											t('agent-form.subagent-config.allowed-subagents.no-description');
 										return (
-											<FieldLabel key={agent.id}>
-												<Field orientation="horizontal">
+											<FieldLabel key={agent.id} className="w-full min-w-0 overflow-hidden">
+												<Field orientation="horizontal" className="min-w-0">
 													<Checkbox
 														checked={checked}
 														disabled={!value.allow_subagent_calls}
@@ -91,17 +91,21 @@ export function SubAgentConfigFields({
 															});
 														}}
 													/>
-													<FieldContent className="min-w-0">
-														<FieldTitle className="max-w-full truncate">
+													<FieldContent className="min-w-0 flex-1 overflow-hidden">
+														<FieldTitle className="w-full max-w-full truncate">
 															{agent.data.name}
 														</FieldTitle>
 														<Tooltip>
 															<TooltipTrigger asChild>
-																<FieldDescription className="max-w-full cursor-default truncate">
+																<p className="w-full cursor-default overflow-hidden text-left text-sm leading-normal font-normal text-ellipsis whitespace-nowrap text-muted-foreground">
 																	{description}
-																</FieldDescription>
+																</p>
 															</TooltipTrigger>
-															<TooltipContent className="max-w-md whitespace-pre-wrap break-words">
+															<TooltipContent
+																side="top"
+																sideOffset={6}
+																className="max-w-md whitespace-pre-wrap break-words"
+															>
 																{description}
 															</TooltipContent>
 														</Tooltip>
