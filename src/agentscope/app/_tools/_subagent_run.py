@@ -35,7 +35,12 @@ class _SubAgentRunParams(ParamsBase):
     session_name: str | None = Field(
         default=None,
         description=(
-            "Required when creating a new child session. Omit when resuming "
+            "Required when creating a new child session. Use a short, "
+            "user-friendly task title in the user's language so it can be "
+            "shown directly in the UI, for example '整理发布计划' or "
+            "'Write onboarding email'. Do not use technical slugs, internal "
+            "identifiers, filenames, or agent ids such as "
+            "'presentation-builder-china-space-station'. Omit when resuming "
             "an existing child session."
         ),
     )
@@ -59,6 +64,13 @@ parallel. The call returns immediately after the child session is scheduled.
 
 Important:
 - When creating a new child session, you MUST provide `session_name`.
+- `session_name` MUST be a short, user-friendly task title written in the
+  user's language, because it is shown directly in the product UI.
+- Use natural titles such as `整理竞品调研结论`, `撰写发布公告`, or
+  `Write onboarding email`.
+- DO NOT use technical or internal names such as
+  `presentation-builder-china-space-station`, `research_task_01`,
+  filenames, repo paths, or agent ids.
 - When resuming an existing child session, you MUST provide `session_id` and
   MUST leave `session_name` empty.
 - Put the full task, context, constraints, and deliverables in `prompt` so the
