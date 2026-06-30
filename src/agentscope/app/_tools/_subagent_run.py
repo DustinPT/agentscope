@@ -35,6 +35,13 @@ Use this format in your final reply:
 (complete, self-contained result)
 """
 
+_SUBAGENT_START_ACK_HINT = (
+    "This payload only confirms that the child session has started. It is not "
+    "the delegated task result. Wait for the later child-session result "
+    "notification before using or summarizing the delegated work. Do not "
+    "resume the child session before it returns a result."
+)
+
 
 class _SubAgentRunParams(ParamsBase):
     """Parameters for :class:`SubAgentRun`."""
@@ -72,8 +79,8 @@ class SubAgentRun(ToolBase):
     name: str = "SubAgentRun"
     description: str = """Asynchronously run a managed sub-agent.
 
-Use this tool when you want another configured agent to work on a sub-task in
-parallel. The call returns immediately after the child session is scheduled.
+Use this tool when you want to delegate a sub-task to another configured agent.
+The call returns immediately after the child session is scheduled.
 
 Important:
 - When creating a new child session, you MUST provide `session_name`.
@@ -88,13 +95,33 @@ Important:
   MUST leave `session_name` empty.
 - Put the full task, context, constraints, and deliverables in `prompt` so the
   sub-agent can start working immediately.
+- Calling this tool transfers ownership of the delegated sub-task to the child
+  session.
+- After calling this tool, you MUST wait for the child session's result.
+- Before the child session returns a result, you MUST NOT resume it, send
+  follow-up instructions, or otherwise intervene in the delegated task.
+- After calling this tool, you MUST NOT perform the same task yourself, repeat
+  a substantially overlapping task, or create a speculative backup version of
+  the delegated work.
+- "Independent tasks" means work that does not overlap with the delegated
+  sub-task in goal, required evidence, expected output, or decision purpose.
+- You MUST NOT re-search, re-research, re-analyze, re-summarize, or collect
+  overlapping evidence "to speed things up", "while waiting", "for backup", or
+  "to verify" before the child session returns.
 - This tool returns immediately after the child session starts. DO NOT poll,
   query, or wait for the child session yourself. DO NOT call any waiting tool
   such as `bash sleep`.
-- After calling this tool, you have exactly two valid follow-up options:
-  1. Continue with other independent tasks and ignore this sub-agent for now; or
+- If the delegated result is required before you can continue, do not call any
+  other tool. Instead, give a brief text reply with no tool call so the current
+  reasoning loop ends and wait for the automatic child-session notification.
+- Valid follow-up actions after calling this tool:
+  1. Continue only with genuinely orthogonal work; or
   2. If there is nothing else to do, simply give a text reply without calling
      any tool, which ends the current reasoning loop.
+- Invalid follow-up examples after delegating research to a sub-agent include:
+  launching your own search for the same topic, drafting the same analysis
+  before the child returns, collecting overlapping evidence in parallel, or
+  producing a provisional answer that depends on the delegated result.
 - After the child session finishes, the parent session will be notified
   automatically.
 - If the child session result is incomplete, unsatisfactory, or needs more
@@ -386,6 +413,9 @@ Important:
 
         payload = {
             "status": "started",
+            "result_status": "pending",
+            "is_final_result": False,
+            "message": _SUBAGENT_START_ACK_HINT,
             "agent_id": agent_id,
             "agent_name": target_agent.data.name,
             "session_id": child_session_id,
