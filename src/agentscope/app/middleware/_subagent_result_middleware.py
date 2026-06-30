@@ -87,6 +87,17 @@ def _extract_trailing_result_blocks(
     return list(reversed(trailing_blocks))
 
 
+def _build_empty_result_text(child_name: str, session_id: str) -> str:
+    """Build guidance text for completed child sessions without result content."""
+    return (
+        f"Sub-agent '{child_name}' (session_id={session_id}) has completed, "
+        "but did not return any result.\n\n"
+        "Please determine whether this is expected for the current task. If it "
+        "is not expected, resume this existing child session and provide "
+        "further instructions."
+    )
+
+
 class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     """Push the final child-session reply into the parent session's inbox."""
 
@@ -178,6 +189,8 @@ class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
             content_blocks = _extract_marked_result_blocks(reply_content)
             if not content_blocks:
                 content_blocks = _extract_trailing_result_blocks(reply_content)
+            if content_blocks and not _has_result_content(content_blocks):
+                content_blocks = []
 
             notification_prefix = (
                 f"{prefix}"
@@ -206,9 +219,16 @@ class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
                 hint_content: str | list[TextBlock | DataBlock] = content_blocks
             else:
                 content = reply_content if isinstance(reply_content, str) else ""
-                hint_content = (
-                    f"{notification_prefix}{content}{notification_suffix}"
-                )
+                if content.strip():
+                    hint_content = (
+                        f"{notification_prefix}{content}{notification_suffix}"
+                    )
+                else:
+                    hint_content = (
+                        f"{prefix}"
+                        f"{_build_empty_result_text(child_agent.data.name, self._session_id)}"
+                        f"{suffix}"
+                    )
 
         hint = HintBlock(
             hint=hint_content,
