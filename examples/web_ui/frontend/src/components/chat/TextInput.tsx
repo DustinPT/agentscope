@@ -4,6 +4,7 @@ import React, {
 	useState,
 	useRef,
 	useMemo,
+	useEffect,
 	type KeyboardEvent,
 	useImperativeHandle,
 	forwardRef,
@@ -33,6 +34,7 @@ interface TextInputProps {
 	onStop?: () => void | Promise<void>;
 	placeholder?: string;
 	autoComplete?: (input: string) => string | null;
+	focusKey?: string | null;
 	sending?: boolean;
 	disabled?: boolean;
 	className?: string;
@@ -81,6 +83,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			onStop,
 			placeholder,
 			autoComplete,
+			focusKey,
 			sending = false,
 			disabled = false,
 			className,
@@ -114,6 +117,12 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
 		}));
+
+		// Re-focus the composer when the user switches to another session.
+		useEffect(() => {
+			if (disabled) return;
+			textareaRef.current?.focus();
+		}, [focusKey, disabled]);
 
 		// Calculate autocomplete suggestion using useMemo
 		const suggestion = useMemo(() => {

@@ -370,6 +370,7 @@ export function ChatViewport({
 						<ChatContent
 							className={'max-w-[var(--chat-content-w)] w-full'}
 							msgs={msgs}
+							sessionKey={sessionId}
 							sending={streaming}
 							stoppable={canStop}
 							disabled={selectedModel === null}

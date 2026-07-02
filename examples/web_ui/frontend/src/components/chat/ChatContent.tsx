@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 
 interface ChatContentProps {
 	msgs: Msg[];
+	sessionKey?: string | null;
 	sending: boolean;
 	stoppable?: boolean;
 	disabled: boolean;
@@ -30,6 +31,7 @@ interface ChatContentProps {
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
+	sessionKey,
 	sending,
 	stoppable = false,
 	disabled,
@@ -44,31 +46,60 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const prevMsgCountRef = useRef<number>(0);
 	const wasNearBottomRef = useRef<boolean>(true);
+	const pendingInitialScrollRef = useRef<boolean>(true);
+	const skipNextScrollCheckRef = useRef<boolean>(false);
+
+	// When the user opens a different session, force exactly one initial
+	// jump to the latest message after that session's history is rendered.
+	useEffect(() => {
+		prevMsgCountRef.current = 0;
+		wasNearBottomRef.current = true;
+		pendingInitialScrollRef.current = true;
+		skipNextScrollCheckRef.current = true;
+	}, [sessionKey]);
 
 	// Auto-scroll to bottom only if user is already near the bottom
 	useEffect(() => {
 		const currentCount = msgs.length;
 		const prevCount = prevMsgCountRef.current;
 
+		// On session switch the first render may still contain the previous
+		// session's messages before `useMessages` clears and reloads them.
+		// Skip exactly one check so the forced initial scroll is consumed only
+		// by the newly selected session's content.
+		if (skipNextScrollCheckRef.current) {
+			skipNextScrollCheckRef.current = false;
+			prevMsgCountRef.current = currentCount;
+			return;
+		}
+
+		const shouldForceInitialScroll =
+			pendingInitialScrollRef.current && (currentCount > 0 || sending);
+
 		const shouldCheck =
+			shouldForceInitialScroll ||
 			(currentCount > prevCount && prevCount > 0) || (sending && prevCount > 0);
 
 		if (shouldCheck && scrollAreaRef.current) {
 			const { scrollHeight } = scrollAreaRef.current;
 
 			// Check if user was near bottom before content changed
-			const isNearBottom = wasNearBottomRef.current;
+			const isNearBottom = shouldForceInitialScroll || wasNearBottomRef.current;
 
 			if (isNearBottom) {
 				scrollAreaRef.current.scrollTo({
 					top: scrollHeight,
-					behavior: 'smooth',
+					behavior: shouldForceInitialScroll ? 'auto' : 'smooth',
 				});
 			}
 		}
 
+		if (shouldForceInitialScroll) {
+			pendingInitialScrollRef.current = false;
+		}
+
 		prevMsgCountRef.current = currentCount;
-	}, [msgs, sending]);
+	}, [msgs, sending, sessionKey]);
 
 	// Track if user is near bottom whenever they scroll
 	useEffect(() => {
@@ -108,6 +139,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				className="min-w-full max-w-full w-full"
 				onSend={onSend}
 				onStop={onStop}
+				focusKey={sessionKey}
 				sending={stoppable}
 				disabled={disabled}
 				autoComplete={autoComplete}
