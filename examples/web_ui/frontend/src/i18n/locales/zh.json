@@ -122,6 +122,10 @@
 			"emptyTitle": "暂无会话",
 			"emptyNoAgent": "请先选择一个 Agent。",
 			"emptyHasAgent": "创建会话开始对话。"
+		},
+		"toolbar": {
+			"scrollToTop": "滚动到顶部",
+			"scrollToBottom": "滚动到底部"
 		}
 	},
 	"dialog-agent-create": {

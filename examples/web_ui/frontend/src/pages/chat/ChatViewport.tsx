@@ -1,5 +1,5 @@
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { ArrowLeft, Bot, List, Toolbox } from 'lucide-react';
+import { ArrowDownToLine, ArrowLeft, ArrowUpToLine, Bot, List, Toolbox } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ChatModelConfig, SessionView, SubAgentSessionView } from '@/api';
@@ -110,6 +110,10 @@ export function ChatViewport({
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [outlineOpen, setOutlineOpen] = useState(false);
 	const [scrollTargetMessageId, setScrollTargetMessageId] = useState<string | null>(null);
+	const [scrollViewportCommand, setScrollViewportCommand] = useState<{
+		type: 'top' | 'bottom';
+		nonce: number;
+	} | null>(null);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
@@ -175,6 +179,7 @@ export function ChatViewport({
 	useEffect(() => {
 		setOutlineOpen(false);
 		setScrollTargetMessageId(null);
+		setScrollViewportCommand(null);
 	}, [sessionId]);
 
 	const selectedModelCard = useMemo(() => {
@@ -331,6 +336,10 @@ export function ChatViewport({
 		setOutlineOpen(false);
 	}, []);
 
+	const handleScrollViewport = useCallback((type: 'top' | 'bottom') => {
+		setScrollViewportCommand({ type, nonce: Date.now() });
+	}, []);
+
 	return (
 		<>
 			<main className="flex size-full">
@@ -398,6 +407,7 @@ export function ChatViewport({
 							scrollTargetMessageId={scrollTargetMessageId}
 							activeMessageId={scrollTargetMessageId}
 							onScrollTargetHandled={() => setScrollTargetMessageId(null)}
+							scrollViewportCommand={scrollViewportCommand}
 							sending={streaming}
 							stoppable={canStop}
 							disabled={selectedModel === null}
@@ -456,6 +466,22 @@ export function ChatViewport({
 					</div>
 				</div>
 				<div className="flex flex-col h-full gap-2 p-2">
+					<Button
+						size="icon-sm"
+						variant="ghost"
+						tooltip={t('chat.toolbar.scrollToTop')}
+						onClick={() => handleScrollViewport('top')}
+					>
+						<ArrowUpToLine />
+					</Button>
+					<Button
+						size="icon-sm"
+						variant="ghost"
+						tooltip={t('chat.toolbar.scrollToBottom')}
+						onClick={() => handleScrollViewport('bottom')}
+					>
+						<ArrowDownToLine />
+					</Button>
 					<Button
 						size="icon-sm"
 						variant="ghost"

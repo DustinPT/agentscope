@@ -26,6 +26,10 @@ interface ChatContentProps {
 	scrollTargetMessageId?: string | null;
 	onScrollTargetHandled?: () => void;
 	activeMessageId?: string | null;
+	scrollViewportCommand?: {
+		type: 'top' | 'bottom';
+		nonce: number;
+	} | null;
 	/** @see TextInputProps.allowedInputTypes */
 	allowedInputTypes: string[];
 	/** @see TextInputProps.fileProcessor */
@@ -46,6 +50,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	scrollTargetMessageId,
 	onScrollTargetHandled,
 	activeMessageId,
+	scrollViewportCommand,
 	allowedInputTypes,
 	fileProcessor,
 }) => {
@@ -142,8 +147,22 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		const node = messageRefs.current.get(scrollTargetMessageId);
 		if (!node) return;
 		node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		wasNearBottomRef.current = false;
 		onScrollTargetHandled?.();
 	}, [scrollTargetMessageId, onScrollTargetHandled, msgs]);
+
+	useEffect(() => {
+		if (!scrollViewportCommand) return;
+		const scrollArea = scrollAreaRef.current;
+		if (!scrollArea) return;
+		if (scrollViewportCommand.type === 'top') {
+			wasNearBottomRef.current = false;
+			scrollArea.scrollTo({ top: 0, behavior: 'smooth' });
+			return;
+		}
+		wasNearBottomRef.current = true;
+		scrollArea.scrollTo({ top: scrollArea.scrollHeight, behavior: 'smooth' });
+	}, [scrollViewportCommand]);
 
 	return (
 		<div className={cn('flex flex-col h-full w-full items-center p-2 gap-4', className)}>

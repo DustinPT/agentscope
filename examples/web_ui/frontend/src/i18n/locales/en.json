@@ -122,6 +122,10 @@
 			"emptyTitle": "No sessions",
 			"emptyNoAgent": "Select an agent first.",
 			"emptyHasAgent": "Create a session to start chatting."
+		},
+		"toolbar": {
+			"scrollToTop": "Scroll to top",
+			"scrollToBottom": "Scroll to bottom"
 		}
 	},
 	"dialog-agent-create": {
