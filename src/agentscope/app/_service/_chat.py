@@ -11,6 +11,8 @@ Events produced by the agent are not exposed back through this method
 that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
+from dataclasses import dataclass
+
 from fastapi import HTTPException
 
 from .._reply_state import is_reply_awaiting_tool_interaction
@@ -36,13 +38,30 @@ from ._toolkit import get_toolkit
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...event import (
+    DataBlockDeltaEvent,
+    ExternalExecutionResultEvent,
     ReplyStartEvent,
     SessionInterruptEvent,
+    ThinkingBlockDeltaEvent,
+    TextBlockDeltaEvent,
+    ToolCallDeltaEvent,
     UserConfirmResultEvent,
-    ExternalExecutionResultEvent,
 )
 from ...message import AssistantMsg, Msg
 from ...permission import AdditionalWorkingDirectory
+
+
+@dataclass
+class _ReplyCheckpointState:
+    """Per-run counters used to decide when to persist a reply checkpoint."""
+
+    event_count: int = 0
+    char_count: int = 0
+
+    def reset(self) -> None:
+        """Clear counters after a checkpoint write."""
+        self.event_count = 0
+        self.char_count = 0
 
 
 class ChatService:
@@ -59,6 +78,12 @@ class ChatService:
     to both a replay log (for late-joining subscribers) and a live
     Pub/Sub channel.
     """
+
+    _REPLY_CHECKPOINT_EVENT_THRESHOLD = MessageBus._SESSION_REPLAY_MAX_LEN // 2
+    """Maximum events to buffer locally before checkpointing the reply."""
+
+    _REPLY_CHECKPOINT_CHAR_THRESHOLD = 2_000
+    """Maximum model-output characters to buffer locally before checkpointing."""
 
     def __init__(
         self,
@@ -123,6 +148,86 @@ class ChatService:
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
+
+    @staticmethod
+    def _checkpoint_char_delta(event: object) -> int:
+        """Return the model-output character contribution of *event*."""
+        if isinstance(event, TextBlockDeltaEvent):
+            return len(event.delta)
+        if isinstance(event, DataBlockDeltaEvent):
+            return len(event.data)
+        if isinstance(event, ThinkingBlockDeltaEvent):
+            return len(event.delta)
+        if isinstance(event, ToolCallDeltaEvent):
+            return len(event.delta)
+        return 0
+
+    def _record_checkpoint_event(
+        self,
+        checkpoint_state: _ReplyCheckpointState,
+        event: object,
+    ) -> None:
+        """Accumulate counters for a reply event that was appended locally."""
+        checkpoint_state.event_count += 1
+        checkpoint_state.char_count += self._checkpoint_char_delta(event)
+
+    def _should_checkpoint_reply(
+        self,
+        checkpoint_state: _ReplyCheckpointState,
+    ) -> bool:
+        """Return whether the current counters require a checkpoint write."""
+        return (
+            checkpoint_state.event_count
+            >= self._REPLY_CHECKPOINT_EVENT_THRESHOLD
+            or checkpoint_state.char_count
+            >= self._REPLY_CHECKPOINT_CHAR_THRESHOLD
+        )
+
+    async def _checkpoint_reply(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        reply_msg: Msg,
+        agent: Agent,
+    ) -> None:
+        """Persist the in-progress reply and current agent state."""
+        await self._storage.upsert_message(
+            user_id,
+            session_id,
+            reply_msg,
+        )
+        await self._storage.update_session_state(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            state=agent.state,
+        )
+
+    async def _maybe_checkpoint_reply(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        reply_msg: Msg | None,
+        agent: Agent,
+        checkpoint_state: _ReplyCheckpointState,
+    ) -> None:
+        """Persist an in-progress reply once the configured thresholds trip."""
+        if reply_msg is None or not self._should_checkpoint_reply(
+            checkpoint_state,
+        ):
+            return
+        await self._checkpoint_reply(
+            user_id=user_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            reply_msg=reply_msg,
+            agent=agent,
+        )
+        checkpoint_state.reset()
 
     async def run(
         self,
@@ -371,6 +476,7 @@ class ChatService:
         needs_followup_wakeup = False
         async with self._message_bus.session_run(session_id):
             reply_msg: Msg | None = None
+            checkpoint_state = _ReplyCheckpointState()
 
             if input_msg is None or isinstance(input_msg, (Msg, list)):
                 # Case A: new reply (user message(s), or retrigger with
@@ -401,6 +507,18 @@ class ChatService:
                         )
                     elif reply_msg is not None:
                         reply_msg.append_event(event)
+                        self._record_checkpoint_event(
+                            checkpoint_state,
+                            event,
+                        )
+                        await self._maybe_checkpoint_reply(
+                            user_id=user_id,
+                            session_id=session_id,
+                            agent_id=agent_id,
+                            reply_msg=reply_msg,
+                            agent=agent,
+                            checkpoint_state=checkpoint_state,
+                        )
 
             elif isinstance(
                 input_msg,
@@ -423,6 +541,18 @@ class ChatService:
                     )
                 elif input_msg:
                     reply_msg.append_event(input_msg)
+                    self._record_checkpoint_event(
+                        checkpoint_state,
+                        input_msg,
+                    )
+                    await self._maybe_checkpoint_reply(
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        reply_msg=reply_msg,
+                        agent=agent,
+                        checkpoint_state=checkpoint_state,
+                    )
 
                 async for event in agent.reply_stream(inputs=input_msg):
                     await self._message_bus.session_publish_event(
@@ -431,6 +561,18 @@ class ChatService:
                     )
                     if reply_msg is not None:
                         reply_msg.append_event(event)
+                        self._record_checkpoint_event(
+                            checkpoint_state,
+                            event,
+                        )
+                        await self._maybe_checkpoint_reply(
+                            user_id=user_id,
+                            session_id=session_id,
+                            agent_id=agent_id,
+                            reply_msg=reply_msg,
+                            agent=agent,
+                            checkpoint_state=checkpoint_state,
+                        )
 
             else:
                 # Case C: session interrupt (interrupt awaiting tool calls
@@ -451,6 +593,18 @@ class ChatService:
                     )
                 elif input_msg:
                     reply_msg.append_event(input_msg)
+                    self._record_checkpoint_event(
+                        checkpoint_state,
+                        input_msg,
+                    )
+                    await self._maybe_checkpoint_reply(
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        reply_msg=reply_msg,
+                        agent=agent,
+                        checkpoint_state=checkpoint_state,
+                    )
 
                 async for event in agent.reply_stream(inputs=input_msg):
                     await self._message_bus.session_publish_event(
@@ -459,6 +613,18 @@ class ChatService:
                     )
                     if reply_msg is not None:
                         reply_msg.append_event(event)
+                        self._record_checkpoint_event(
+                            checkpoint_state,
+                            event,
+                        )
+                        await self._maybe_checkpoint_reply(
+                            user_id=user_id,
+                            session_id=session_id,
+                            agent_id=agent_id,
+                            reply_msg=reply_msg,
+                            agent=agent,
+                            checkpoint_state=checkpoint_state,
+                        )
 
             # Persist the reply Msg (upsert: overwrite if same id, append
             # if new).

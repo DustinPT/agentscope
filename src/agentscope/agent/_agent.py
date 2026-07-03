@@ -1417,7 +1417,9 @@ class Agent:
                     tool_call,
                     message=(
                         "<system-reminder>The execution of tool "
-                        f'"{tool_call.name}" is interrupted by session cancel.'
+                        f'"{tool_call.name}" is interrupted by session cancel. '
+                        "Any previously streamed tool output may be partial "
+                        "and must not be treated as a complete tool result."
                         "</system-reminder>"
                     ),
                     state=ToolResultState.INTERRUPTED,
