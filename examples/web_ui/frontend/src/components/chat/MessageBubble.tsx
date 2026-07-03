@@ -36,6 +36,7 @@ import {
 import { Item, ItemContent } from '@/components/ui/item.tsx';
 import { useAudioBlock, useReplayController } from '@/context/AudioContext';
 import { useTranslation } from '@/i18n/useI18n';
+import { cn } from '@/lib/utils';
 import { formatNumber, formatTime } from '@/utils/common';
 
 interface ToolCallGroupBlock {
@@ -508,6 +509,8 @@ interface MessageBubbleProps {
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => void;
+	containerRef?: (node: HTMLDivElement | null) => void;
+	highlighted?: boolean;
 }
 
 /**
@@ -527,7 +530,12 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
+export function MessageBubble({
+	message,
+	onUserConfirm,
+	containerRef,
+	highlighted = false,
+}: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -565,7 +573,13 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 
 	return (
 		<div
-			className={`flex flex-col w-full max-w-full ${isUser ? 'items-end' : 'items-start'} mb-4`}
+			ref={containerRef}
+			data-message-id={message.id}
+			className={cn(
+				'mb-4 flex w-full max-w-full flex-col rounded-2xl transition-colors',
+				isUser ? 'items-end' : 'items-start',
+				highlighted && 'bg-primary/6 ring-1 ring-primary/20',
+			)}
 		>
 			{showBody && (
 				<div

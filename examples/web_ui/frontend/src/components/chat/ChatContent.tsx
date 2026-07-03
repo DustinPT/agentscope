@@ -23,6 +23,9 @@ interface ChatContentProps {
 	) => void;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
+	scrollTargetMessageId?: string | null;
+	onScrollTargetHandled?: () => void;
+	activeMessageId?: string | null;
 	/** @see TextInputProps.allowedInputTypes */
 	allowedInputTypes: string[];
 	/** @see TextInputProps.fileProcessor */
@@ -40,14 +43,29 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onUserConfirm,
 	autoComplete,
 	className,
+	scrollTargetMessageId,
+	onScrollTargetHandled,
+	activeMessageId,
 	allowedInputTypes,
 	fileProcessor,
 }) => {
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
+	const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const prevScrollHeightRef = useRef<number>(0);
 	const wasNearBottomRef = useRef<boolean>(true);
 	const pendingInitialScrollRef = useRef<boolean>(true);
 	const skipNextScrollCheckRef = useRef<boolean>(false);
+
+	const registerMessageRef = React.useCallback(
+		(messageId: string) => (node: HTMLDivElement | null) => {
+			if (node) {
+				messageRefs.current.set(messageId, node);
+				return;
+			}
+			messageRefs.current.delete(messageId);
+		},
+		[],
+	);
 
 	// When the user opens a different session, force exactly one initial
 	// jump to the latest message after that session's history is rendered.
@@ -119,6 +137,14 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		return () => scrollArea.removeEventListener('scroll', handleScroll);
 	}, []);
 
+	useEffect(() => {
+		if (!scrollTargetMessageId) return;
+		const node = messageRefs.current.get(scrollTargetMessageId);
+		if (!node) return;
+		node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		onScrollTargetHandled?.();
+	}, [scrollTargetMessageId, onScrollTargetHandled, msgs]);
+
 	return (
 		<div className={cn('flex flex-col h-full w-full items-center p-2 gap-4', className)}>
 			<div
@@ -132,6 +158,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 								key={message.id}
 								message={message}
 								onUserConfirm={onUserConfirm}
+								containerRef={registerMessageRef(message.id)}
+								highlighted={activeMessageId === message.id}
 							/>
 						))
 					) : (

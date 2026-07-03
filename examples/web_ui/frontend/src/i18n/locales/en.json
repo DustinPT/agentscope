@@ -403,5 +403,12 @@
 		"running": "Running",
 		"idle": "Idle",
 		"missingSession": "(no session)"
+	},
+	"user-message-directory": {
+		"title": "User Message Directory",
+		"description": "Browse user messages in the current session and jump to them quickly.",
+		"empty": "There are no user messages in this session yet.",
+		"openTooltip": "Open user message directory",
+		"attachmentFallback": "Attachment message {{index}}"
 	}
 }

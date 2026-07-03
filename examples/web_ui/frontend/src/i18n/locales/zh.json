@@ -403,5 +403,12 @@
 		"running": "运行中",
 		"idle": "空闲",
 		"missingSession": "（无会话）"
+	},
+	"user-message-directory": {
+		"title": "用户消息目录",
+		"description": "查看当前会话中的用户消息，并快速跳转到对应位置。",
+		"empty": "当前会话还没有用户消息。",
+		"openTooltip": "打开用户消息目录",
+		"attachmentFallback": "附件消息 {{index}}"
 	}
 }

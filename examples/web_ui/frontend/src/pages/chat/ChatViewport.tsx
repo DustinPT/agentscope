@@ -1,11 +1,13 @@
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { ArrowLeft, Bot, Toolbox } from 'lucide-react';
+import { ArrowLeft, Bot, List, Toolbox } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ChatModelConfig, SessionView, SubAgentSessionView } from '@/api';
 import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { TaskPanel } from '@/components/chat/TaskPanel';
+import { UserMessageDirectory } from '@/components/chat/UserMessageDirectory';
+import { buildUserMessageOutline } from '@/components/chat/userMessageOutline';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { WorkspaceDrawer } from '@/components/drawer/WorkspaceDrawer.tsx';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
@@ -17,6 +19,7 @@ import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
+import { useTranslation } from '@/i18n/useI18n';
 
 interface ChatViewportProps {
 	/**
@@ -81,6 +84,7 @@ export function ChatViewport({
 }: ChatViewportProps) {
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
+	const { t } = useTranslation();
 
 	// When the viewport agent differs from the outer page's selected
 	// agent (i.e. user drilled into a team member), `refetchSessions`
@@ -104,6 +108,8 @@ export function ChatViewport({
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
+	const [outlineOpen, setOutlineOpen] = useState(false);
+	const [scrollTargetMessageId, setScrollTargetMessageId] = useState<string | null>(null);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
@@ -116,8 +122,8 @@ export function ChatViewport({
 		agentId,
 		sessionId,
 		{
-		onTeamUpdated: handleTeamUpdated,
-		onStateUpdated: handleStateUpdated,
+			onTeamUpdated: handleTeamUpdated,
+			onStateUpdated: handleStateUpdated,
 		},
 	);
 	const {
@@ -132,6 +138,14 @@ export function ChatViewport({
 	} = useWorkspace(agentId, sessionId);
 
 	const view = sessionViewOverride ?? sessions.find((v) => v.session.id === sessionId) ?? null;
+
+	const userMessageOutline = useMemo(
+		() =>
+			buildUserMessageOutline(msgs, (index) =>
+				t('user-message-directory.attachmentFallback', { index }),
+			),
+		[msgs, t],
+	);
 
 	// ChatViewport keeps its own `useSessions(agentId)` instance (the
 	// outer page has a separate one). Its built-in fetch only fires on
@@ -156,6 +170,11 @@ export function ChatViewport({
 	useEffect(() => {
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
+	}, [sessionId]);
+
+	useEffect(() => {
+		setOutlineOpen(false);
+		setScrollTargetMessageId(null);
 	}, [sessionId]);
 
 	const selectedModelCard = useMemo(() => {
@@ -307,6 +326,11 @@ export function ChatViewport({
 		await refetchRelatedSessions();
 	};
 
+	const handleDirectorySelect = useCallback((messageId: string) => {
+		setScrollTargetMessageId(messageId);
+		setOutlineOpen(false);
+	}, []);
+
 	return (
 		<>
 			<main className="flex size-full">
@@ -371,6 +395,9 @@ export function ChatViewport({
 							className={'max-w-[var(--chat-content-w)] w-full'}
 							msgs={msgs}
 							sessionKey={sessionId}
+							scrollTargetMessageId={scrollTargetMessageId}
+							activeMessageId={scrollTargetMessageId}
+							onScrollTargetHandled={() => setScrollTargetMessageId(null)}
 							sending={streaming}
 							stoppable={canStop}
 							disabled={selectedModel === null}
@@ -429,6 +456,14 @@ export function ChatViewport({
 					</div>
 				</div>
 				<div className="flex flex-col h-full gap-2 p-2">
+					<Button
+						size="icon-sm"
+						variant="ghost"
+						tooltip={t('user-message-directory.openTooltip')}
+						onClick={() => setOutlineOpen(true)}
+					>
+						<List />
+					</Button>
 					<WorkspaceDrawer
 						mcps={mcps}
 						loading={mcpsLoading}
@@ -449,6 +484,13 @@ export function ChatViewport({
 				open={credentialOpen}
 				onOpenChange={setCredentialOpen}
 				onCreated={() => setCredentialRefetchTrigger((n) => n + 1)}
+			/>
+			<UserMessageDirectory
+				open={outlineOpen}
+				onOpenChange={setOutlineOpen}
+				items={userMessageOutline}
+				activeMessageId={scrollTargetMessageId}
+				onSelect={handleDirectorySelect}
 			/>
 		</>
 	);
