@@ -8,6 +8,7 @@ from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
+from .._reply_state import get_reply_checkpoint_replay_entry_id
 from ..deps import (
     get_current_user_id,
     get_message_bus,
@@ -522,6 +523,7 @@ _HEARTBEAT_INTERVAL_SECS = 30
 async def _iter_session_sse_frames(
     message_bus: MessageBus,
     session_id: str,
+    since: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Yield gap-free SSE frames for a session's event stream.
 
@@ -570,9 +572,10 @@ async def _iter_session_sse_frames(
         # replay read below or by the live queue.
         for entry_id, event in await message_bus.session_read_events(
             session_id,
+            since=since,
         ):
             seen_entry_ids.add(entry_id)
-            yield f"data: {json.dumps(event)}\n\n"
+            yield f"data: {json.dumps({**event, '_entry_id': entry_id})}\n\n"
 
         while True:
             try:
@@ -588,11 +591,6 @@ async def _iter_session_sse_frames(
                     if entry_id in seen_entry_ids:
                         continue
                     seen_entry_ids.add(entry_id)
-                    item = {
-                        key: value
-                        for key, value in item.items()
-                        if key != "_entry_id"
-                    }
 
                 yield f"data: {json.dumps(item)}\n\n"
             except asyncio.TimeoutError:
@@ -613,6 +611,14 @@ async def _iter_session_sse_frames(
 async def stream_session_events(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
+    replay_after: str | None = Query(
+        default=None,
+        description=(
+            "Optional replay-log entry id already folded into the client's "
+            "history snapshot. When provided, replay starts strictly after "
+            "this entry."
+        ),
+    ),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
@@ -653,8 +659,17 @@ async def stream_session_events(
             detail=f"Session '{session_id}' not found.",
         )
 
+    replay_since = replay_after
+    if replay_since is None:
+        current_reply = await storage.get_message(
+            user_id,
+            session_id,
+            existing.state.reply_id,
+        )
+        replay_since = get_reply_checkpoint_replay_entry_id(current_reply)
+
     return StreamingResponse(
-        _iter_session_sse_frames(message_bus, session_id),
+        _iter_session_sse_frames(message_bus, session_id, since=replay_since),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

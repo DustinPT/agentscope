@@ -15,7 +15,10 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException
 
-from .._reply_state import is_reply_awaiting_tool_interaction
+from .._reply_state import (
+    is_reply_awaiting_tool_interaction,
+    set_reply_checkpoint_replay_entry_id,
+)
 from ..message_bus import MessageBus
 from ..storage import StorageBase
 from .._manager import BackgroundTaskManager, SchedulerManager
@@ -57,6 +60,7 @@ class _ReplyCheckpointState:
 
     event_count: int = 0
     char_count: int = 0
+    latest_replay_entry_id: str | None = None
 
     def reset(self) -> None:
         """Clear counters after a checkpoint write."""
@@ -191,8 +195,13 @@ class ChatService:
         agent_id: str,
         reply_msg: Msg,
         agent: Agent,
+        checkpoint_state: _ReplyCheckpointState,
     ) -> None:
         """Persist the in-progress reply and current agent state."""
+        set_reply_checkpoint_replay_entry_id(
+            reply_msg,
+            checkpoint_state.latest_replay_entry_id,
+        )
         await self._storage.upsert_message(
             user_id,
             session_id,
@@ -226,6 +235,7 @@ class ChatService:
             agent_id=agent_id,
             reply_msg=reply_msg,
             agent=agent,
+            checkpoint_state=checkpoint_state,
         )
         checkpoint_state.reset()
 
@@ -495,10 +505,11 @@ class ChatService:
                         )
 
                 async for event in agent.reply_stream(inputs=input_msg):
-                    await self._message_bus.session_publish_event(
+                    entry_id = await self._message_bus.session_publish_event(
                         session_id,
                         event.model_dump(mode="json"),
                     )
+                    checkpoint_state.latest_replay_entry_id = entry_id
                     if isinstance(event, ReplyStartEvent):
                         reply_msg = AssistantMsg(
                             id=event.reply_id,
@@ -555,10 +566,11 @@ class ChatService:
                     )
 
                 async for event in agent.reply_stream(inputs=input_msg):
-                    await self._message_bus.session_publish_event(
+                    entry_id = await self._message_bus.session_publish_event(
                         session_id,
                         event.model_dump(mode="json"),
                     )
+                    checkpoint_state.latest_replay_entry_id = entry_id
                     if reply_msg is not None:
                         reply_msg.append_event(event)
                         self._record_checkpoint_event(
@@ -607,10 +619,11 @@ class ChatService:
                     )
 
                 async for event in agent.reply_stream(inputs=input_msg):
-                    await self._message_bus.session_publish_event(
+                    entry_id = await self._message_bus.session_publish_event(
                         session_id,
                         event.model_dump(mode="json"),
                     )
+                    checkpoint_state.latest_replay_entry_id = entry_id
                     if reply_msg is not None:
                         reply_msg.append_event(event)
                         self._record_checkpoint_event(
@@ -629,6 +642,10 @@ class ChatService:
             # Persist the reply Msg (upsert: overwrite if same id, append
             # if new).
             if reply_msg is not None:
+                set_reply_checkpoint_replay_entry_id(
+                    reply_msg,
+                    checkpoint_state.latest_replay_entry_id,
+                )
                 await self._storage.upsert_message(
                     user_id,
                     session_id,

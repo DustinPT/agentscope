@@ -16,6 +16,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 import { sessionApi } from '@/api';
 import { chatApi } from '@/api';
+import type { StreamAgentEvent } from '@/api/session';
 import { useAudioManager } from '@/context/AudioContext';
 
 type JsonLike =
@@ -25,6 +26,18 @@ type JsonLike =
 	| null
 	| JsonLike[]
 	| { [key: string]: JsonLike };
+
+const REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY = 'checkpoint_replay_entry_id';
+/** Metadata key marking the replay entry already folded into a persisted reply. */
+
+function compareReplayEntryId(a: string, b: string): number {
+	const [aMsRaw = '0', aSeqRaw = '0'] = a.split('-');
+	const [bMsRaw = '0', bSeqRaw = '0'] = b.split('-');
+	const aMs = Number(aMsRaw);
+	const bMs = Number(bMsRaw);
+	if (aMs !== bMs) return aMs - bMs;
+	return Number(aSeqRaw) - Number(bSeqRaw);
+}
 
 /**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
@@ -38,10 +51,12 @@ type JsonLike =
  *   produced by any chat run on this session (user-triggered,
  *   background retrigger, team member message, …).
  *
- * The hook opens the SSE connection immediately after fetching
- * history. User input and human-in-the-loop confirmations are sent
- * via ``POST /chat/`` (fire-and-forget); the resulting events arrive
- * through the already-open SSE connection.
+ * The hook opens the SSE connection first, buffers any incoming
+ * events, then fetches history and applies only the buffered tail that
+ * sits strictly after the last persisted reply checkpoint. User input
+ * and human-in-the-loop confirmations are sent via ``POST /chat/``
+ * (fire-and-forget); the resulting events arrive through the same SSE
+ * connection.
  *
  * ``streaming`` is driven by event content, not HTTP lifecycle:
  * ``true`` after receiving ``ReplyStartEvent``, ``false`` after
@@ -94,6 +109,7 @@ export function useMessages(
 	const currentReplyRef = useRef<Msg | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
+	const pendingEventsRef = useRef<StreamAgentEvent[]>([]);
 
 	const audioManager = useAudioManager();
 
@@ -111,6 +127,15 @@ export function useMessages(
 			...msg.metadata,
 			context_usage: contextUsage as JsonLike,
 		};
+	}, []);
+	const getHistoryReplayBoundary = useCallback((messages: Msg[]): string | null => {
+		for (let i = messages.length - 1; i >= 0; i -= 1) {
+			const entryId = messages[i]?.metadata?.[REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY];
+			if (typeof entryId === 'string' && entryId.length > 0) {
+				return entryId;
+			}
+		}
+		return null;
 	}, []);
 	const scheduleUpdate = useCallback(() => {
 		if (rafRef.current !== null) return;
@@ -182,7 +207,7 @@ export function useMessages(
 
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
-		(event: AgentEvent) => {
+		(event: AgentEvent | StreamAgentEvent) => {
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
@@ -264,6 +289,7 @@ export function useMessages(
 	useEffect(() => {
 		msgsRef.current = [];
 		currentReplyRef.current = null;
+		pendingEventsRef.current = [];
 		setMsgs([]);
 		setError(null);
 		setStreaming(false);
@@ -276,34 +302,87 @@ export function useMessages(
 		let cancelled = false;
 
 		(async () => {
-			// 1. Fetch persisted history
-			setLoading(true);
 			try {
-				const { messages } = await sessionApi.messages(sessionId, agentId);
+				let historyLoaded = false;
+				let historyReplayBoundary: string | null = null;
+				let streamOpened = false;
+				const streamReady = new Promise<void>((resolve, reject) => {
+					void (async () => {
+						try {
+							for await (const event of sessionApi.streamEvents(
+								sessionId,
+								agentId,
+								null,
+								() => {
+									if (!streamOpened) {
+										streamOpened = true;
+										resolve();
+									}
+								},
+								controller.signal,
+							)) {
+								if (cancelled) break;
+								if (!historyLoaded) {
+									pendingEventsRef.current.push(event);
+									continue;
+								}
+								const entryId = event._entry_id;
+								if (
+									historyReplayBoundary &&
+									typeof entryId === 'string' &&
+									compareReplayEntryId(entryId, historyReplayBoundary) <= 0
+								) {
+									continue;
+								}
+								processEvent(event);
+							}
+						} catch (e) {
+							if (!streamOpened) {
+								streamOpened = true;
+								reject(e);
+								return;
+							}
+							if ((e as Error).name !== 'AbortError' && !cancelled) {
+								setError(e as Error);
+							}
+						}
+					})();
+				});
+
+				// 1. Establish the SSE connection first, then fetch history.
+				await streamReady;
+				if (cancelled) return;
+
+				setLoading(true);
+				const { messages } = await sessionApi.messages(
+					sessionId,
+					agentId,
+				);
 				if (cancelled) return;
 				msgsRef.current = messages;
 				scheduleUpdate();
-			} catch (e) {
-				if (!cancelled) setError(e as Error);
-				return;
-			} finally {
-				if (!cancelled) setLoading(false);
-			}
 
-			// 2. Open SSE long connection for live events
-			try {
-				for await (const event of sessionApi.streamEvents(
-					sessionId,
-					agentId,
-					controller.signal,
-				)) {
-					if (cancelled) break;
+				historyReplayBoundary = getHistoryReplayBoundary(messages);
+				historyLoaded = true;
+				const bufferedEvents = pendingEventsRef.current;
+				pendingEventsRef.current = [];
+				for (const event of bufferedEvents) {
+					const entryId = event._entry_id;
+					if (
+						historyReplayBoundary &&
+						typeof entryId === 'string' &&
+						compareReplayEntryId(entryId, historyReplayBoundary) <= 0
+					) {
+						continue;
+					}
 					processEvent(event);
 				}
 			} catch (e) {
 				if ((e as Error).name !== 'AbortError' && !cancelled) {
 					setError(e as Error);
 				}
+			} finally {
+				if (!cancelled) setLoading(false);
 			}
 		})();
 
@@ -312,7 +391,14 @@ export function useMessages(
 			controller.abort();
 			abortRef.current = null;
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager]);
+	}, [
+		agentId,
+		sessionId,
+		scheduleUpdate,
+		processEvent,
+		audioManager,
+		getHistoryReplayBoundary,
+	]);
 
 	/**
 	 * Send a user message. Appends the message to the local list

@@ -1,10 +1,15 @@
 """Regression tests for gap-free session SSE streaming."""
 import json
 from collections.abc import AsyncGenerator
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 
-from agentscope.app._router._session import _iter_session_sse_frames
+from agentscope.app._router._session import (
+    _iter_session_sse_frames,
+    stream_session_events,
+)
 from agentscope.app.message_bus import MessageBus
+from agentscope.message import AssistantMsg
 
 
 def _decode_sse_event(frame: str) -> dict:
@@ -12,7 +17,9 @@ def _decode_sse_event(frame: str) -> dict:
     prefix = "data: "
     if not frame.startswith(prefix):
         raise AssertionError(f"Unexpected SSE frame: {frame!r}")
-    return json.loads(frame[len(prefix) :].strip())
+    payload = json.loads(frame[len(prefix) :].strip())
+    payload.pop("_entry_id", None)
+    return payload
 
 
 class _BaseFakeStreamBus:
@@ -22,6 +29,7 @@ class _BaseFakeStreamBus:
 
     def __init__(self) -> None:
         self._replay_entries = [("1-0", {"phase": "replay"})]
+        self.last_since: str | None = None
 
     async def session_read_events(
         self,
@@ -30,7 +38,14 @@ class _BaseFakeStreamBus:
         max_count: int = 1000,  # pylint: disable=unused-argument
     ) -> list[tuple[str, dict]]:
         """Return the current replay-log snapshot."""
-        return list(self._replay_entries)
+        self.last_since = since
+        if since is None:
+            return list(self._replay_entries)
+        return [
+            (entry_id, payload)
+            for entry_id, payload in self._replay_entries
+            if entry_id > since
+        ]
 
 
 class _LateReplayBus(_BaseFakeStreamBus):
@@ -107,6 +122,87 @@ class TestSessionStreamFrames(IsolatedAsyncioTestCase):
             ],
             [
                 {"phase": "replay"},
+                {"phase": "late"},
+                {"phase": "live"},
+            ],
+        )
+
+    async def test_replay_starts_after_checkpoint_boundary(self) -> None:
+        """Refresh replay skips events already folded into history."""
+        bus = _LateReplayBus()
+        stream = _iter_session_sse_frames(
+            bus,
+            "session-3",
+            since="1-0",
+        )
+
+        first = await anext(stream)
+        second = await anext(stream)
+        await stream.aclose()
+
+        self.assertEqual(bus.last_since, "1-0")
+        self.assertEqual(
+            [
+                _decode_sse_event(first),
+                _decode_sse_event(second),
+            ],
+            [
+                {"phase": "late"},
+                {"phase": "live"},
+            ],
+        )
+
+    async def test_stream_endpoint_prefers_client_history_boundary(self) -> None:
+        """Client history boundary overrides storage's newer checkpoint."""
+
+        class _FakeStorage:
+            async def get_session(
+                self,
+                user_id: str,
+                agent_id: str,
+                session_id: str,
+            ):
+                _ = (user_id, agent_id, session_id)
+                return SimpleNamespace(
+                    state=SimpleNamespace(reply_id="reply-1"),
+                )
+
+            async def get_message(
+                self,
+                user_id: str,
+                session_id: str,
+                message_id: str,
+            ):
+                _ = (user_id, session_id, message_id)
+                return AssistantMsg(
+                    id="reply-1",
+                    name="agent",
+                    content=[],
+                    metadata={"checkpoint_replay_entry_id": "2-0"},
+                )
+
+        bus = _LateReplayBus()
+        response = await stream_session_events(
+            session_id="session-4",
+            agent_id="agent-1",
+            replay_after="1-0",
+            user_id="user-1",
+            storage=_FakeStorage(),
+            message_bus=bus,
+        )
+        stream = response.body_iterator
+
+        first = await anext(stream)
+        second = await anext(stream)
+        await stream.aclose()
+
+        self.assertEqual(bus.last_since, "1-0")
+        self.assertEqual(
+            [
+                _decode_sse_event(first),
+                _decode_sse_event(second),
+            ],
+            [
                 {"phase": "late"},
                 {"phase": "live"},
             ],

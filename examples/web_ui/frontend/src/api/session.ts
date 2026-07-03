@@ -10,6 +10,8 @@ import type {
 	Msg,
 } from './types';
 
+export type StreamAgentEvent = AgentEvent & { _entry_id?: string };
+
 export interface MessagesResponse {
 	messages: Msg[];
 	is_running: boolean;
@@ -57,13 +59,19 @@ export const sessionApi = {
 	streamEvents: async function* (
 		sessionId: string,
 		agentId: string,
+		replayAfter?: string | null,
+		onOpen?: () => void,
 		signal?: AbortSignal,
-	): AsyncGenerator<AgentEvent> {
+	): AsyncGenerator<StreamAgentEvent> {
 		const res = await client.stream(`/sessions/${sessionId}/stream`, {
 			method: 'GET',
-			params: { agent_id: agentId },
+			params: {
+				agent_id: agentId,
+				...(replayAfter ? { replay_after: replayAfter } : {}),
+			},
 			signal,
 		});
+		onOpen?.();
 
 		const reader = res.body!.getReader();
 		const decoder = new TextDecoder();
@@ -81,7 +89,7 @@ export const sessionApi = {
 				for (const line of lines) {
 					if (line.startsWith('data: ')) {
 						const json = line.slice(6).trim();
-						if (json) yield JSON.parse(json) as AgentEvent;
+						if (json) yield JSON.parse(json) as StreamAgentEvent;
 					}
 					// SSE comment frames (`:...\n`) are silently skipped
 					// (used for heartbeats).

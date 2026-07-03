@@ -22,6 +22,9 @@ from agentscope.event import (
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
 )
+from agentscope.app._reply_state import (
+    REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY,
+)
 
 
 class _FakeWorkspaceManager:
@@ -43,6 +46,7 @@ class _FakeMessageBus:
     def __init__(self) -> None:
         self.published_events: list[dict] = []
         self.enqueued_wakeups: list[dict] = []
+        self._next_entry_id = 0
 
     @asynccontextmanager
     async def session_run(self, _session_id: str):
@@ -52,8 +56,10 @@ class _FakeMessageBus:
         self,
         _session_id: str,
         payload: dict,
-    ) -> None:
+    ) -> str:
         self.published_events.append(payload)
+        self._next_entry_id += 1
+        return f"{self._next_entry_id}-0"
 
     async def inbox_length(self, _session_id: str) -> int:
         return 0
@@ -219,6 +225,12 @@ class ChatServiceCheckpointTest(IsolatedAsyncioTestCase):
             storage.saved_replies[0].content[0].input,
             '{"q"',
         )
+        self.assertEqual(
+            storage.saved_replies[0].metadata[
+                REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY
+            ],
+            "2-0",
+        )
 
     async def test_tool_result_delta_does_not_count_toward_chars(self) -> None:
         """Streaming tool results do not contribute to the char threshold."""
@@ -253,6 +265,12 @@ class ChatServiceCheckpointTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(storage.saved_replies), 1)
         self.assertEqual(len(storage.saved_states), 1)
+        self.assertEqual(
+            storage.saved_replies[0].metadata[
+                REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY
+            ],
+            "2-0",
+        )
 
     async def test_event_threshold_allows_checkpoint_for_tool_result_delta(
         self,
@@ -292,4 +310,10 @@ class ChatServiceCheckpointTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             storage.saved_replies[0].content[0].output,
             "partial result",
+        )
+        self.assertEqual(
+            storage.saved_replies[0].metadata[
+                REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY
+            ],
+            "2-0",
         )
