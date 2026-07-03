@@ -3,14 +3,14 @@
 import inspect
 from typing import Any, Dict, TYPE_CHECKING
 
-from ...message import Msg, ToolCallBlock
+from ...message import Msg, HintBlock, ToolCallBlock
 
 from ._attributes import (
     SpanAttributes,
     OperationNameValues,
     ProviderNameValues,
 )
-from ._converter import _convert_block_to_part
+from ._converter import _convert_block_to_part, _convert_hint_to_parts
 from ._utils import _serialize_to_str
 from ...model import ChatResponse, ChatModelBase
 from ...event import (
@@ -283,7 +283,9 @@ def _get_llm_output_messages(
 
         for block in chat_response.content:
             part = _convert_block_to_part(block)
-            if part:
+            if isinstance(part, list):
+                parts.extend(part)
+            elif part:
                 parts.append(part)
 
         output_message = {
@@ -392,16 +394,42 @@ def _get_agent_messages(
         for m in msg:
             parts = []
             for block in m.get_content_blocks():
+                if isinstance(block, HintBlock):
+                    if parts:
+                        formatted_msgs.append(
+                            {
+                                "role": m.role,
+                                "parts": parts,
+                                "name": m.name,
+                                "finish_reason": "stop",
+                            },
+                        )
+                        parts = []
+
+                    hint_parts = _convert_hint_to_parts(block.hint)
+                    if hint_parts:
+                        formatted_msgs.append(
+                            {
+                                "role": "user",
+                                "parts": hint_parts,
+                                "finish_reason": "stop",
+                            },
+                        )
+                    continue
+
                 part = _convert_block_to_part(block)
                 if part:
                     parts.append(part)
-            formatted_msg = {
-                "role": m.role,
-                "parts": parts,
-                "name": m.name,
-                "finish_reason": "stop",
-            }
-            formatted_msgs.append(formatted_msg)
+
+            if parts:
+                formatted_msgs.append(
+                    {
+                        "role": m.role,
+                        "parts": parts,
+                        "name": m.name,
+                        "finish_reason": "stop",
+                    },
+                )
 
         return formatted_msgs
     except Exception:

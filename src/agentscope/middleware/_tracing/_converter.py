@@ -60,6 +60,34 @@ def _convert_media_block(
     return None
 
 
+def _convert_hint_to_parts(
+    hint: str | list[TextBlock | DataBlock],
+) -> list[Dict[str, Any]]:
+    """Convert HintBlock content to OpenTelemetry GenAI parts."""
+    if isinstance(hint, str):
+        return [
+            {
+                "type": "text",
+                "content": hint,
+            },
+        ]
+
+    parts: list[Dict[str, Any]] = []
+    for block in hint:
+        if isinstance(block, TextBlock):
+            parts.append(
+                {
+                    "type": "text",
+                    "content": block.text,
+                },
+            )
+        elif isinstance(block, DataBlock):
+            media_part = _convert_media_block(block.source)
+            if media_part is not None:
+                parts.append(media_part)
+    return parts
+
+
 def _convert_block_to_part(block: ContentBlock) -> Dict[str, Any] | None:
     """Convert content block to OpenTelemetry GenAI part format.
 
