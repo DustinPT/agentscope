@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Reply middleware that reports child-session results back to the parent."""
+"""Middleware implementing the child-session sub-agent protocol."""
 
 from __future__ import annotations
 
@@ -16,6 +16,32 @@ from ...middleware import MiddlewareBase
 
 
 _FINAL_RESULT_MARKER = "[[FINAL_RESULT]]"
+_SUBAGENT_SYSTEM_PROMPT_SUFFIX = """
+How to handle delegated sub-agent tasks:
+- When you receive a message wrapped in `<subagent-task ...>...</subagent-task>`,
+  the content inside that message is the delegated task from the parent agent.
+- Complete that delegated task directly.
+- Make your final result self-contained. Do not refer to earlier messages with
+  phrases like "as explained above" or "see previous analysis" when the
+  missing context can be restated directly in the final result.
+- The parent agent will receive only the content after [[FINAL_RESULT]], so
+  everything needed to understand and use the result must be included there.
+- Your final reply MUST start with [[FINAL_RESULT]].
+- [[FINAL_RESULT]] is the terminal handoff marker for this task. After you
+  output it, do not call tools, do not continue reasoning, and do not send any
+  additional assistant message.
+- If another instruction asks you to do post-task housekeeping such as version
+  checks, telemetry, or optional follow-up actions, do that before
+  [[FINAL_RESULT]] when possible.
+- If such housekeeping would require acting after [[FINAL_RESULT]], skip it
+  instead of sending a second final result.
+- If the final result includes attachments or other data blocks, place them
+  after the [[FINAL_RESULT]] marker.
+
+Use this format in your final reply:
+[[FINAL_RESULT]]
+(complete, self-contained result)
+""".strip()
 
 
 def _has_result_content(blocks: list[TextBlock | DataBlock]) -> bool:
@@ -31,7 +57,13 @@ def _has_result_content(blocks: list[TextBlock | DataBlock]) -> bool:
 def _extract_marked_result_blocks(
     reply_content: str | list[TextBlock | DataBlock],
 ) -> list[TextBlock | DataBlock]:
-    """Extract result blocks after the explicit final result marker."""
+    """Extract result blocks after the explicit final result marker.
+
+    Once the marker is seen, only the contiguous text/data payload immediately
+    following it is treated as the final result. If the model incorrectly
+    continues with tool calls or other block types afterward, keep the already
+    collected result instead of discarding it and falling back to later text.
+    """
     if isinstance(reply_content, str):
         marker_index = reply_content.find(_FINAL_RESULT_MARKER)
         if marker_index < 0:
@@ -63,7 +95,7 @@ def _extract_marked_result_blocks(
             continue
 
         if not isinstance(block, (TextBlock, DataBlock)):
-            return []
+            break
         extracted_blocks.append(deepcopy(block))
 
     if not collecting or not _has_result_content(extracted_blocks):
@@ -98,8 +130,8 @@ def _build_empty_result_text(child_name: str, session_id: str) -> str:
     )
 
 
-class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
-    """Push the final child-session reply into the parent session's inbox."""
+class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
+    """Apply the sub-agent protocol on child-session input and output."""
 
     def __init__(
         self,
@@ -115,6 +147,16 @@ class SubAgentResultMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
         self._user_id = user_id
         self._agent_id = agent_id
         self._session_id = session_id
+
+    async def on_system_prompt(  # type: ignore[override]
+        self,
+        agent: Any,
+        current_prompt: str,
+    ) -> str:
+        """Inject child-session protocol into the system prompt."""
+        if _SUBAGENT_SYSTEM_PROMPT_SUFFIX in current_prompt:
+            return current_prompt
+        return f"{current_prompt}\n\n{_SUBAGENT_SYSTEM_PROMPT_SUFFIX}"
 
     async def on_reply(
         self,

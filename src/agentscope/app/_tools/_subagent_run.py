@@ -23,18 +23,6 @@ if TYPE_CHECKING:
     from ..storage import StorageBase
 
 
-_SUBAGENT_FINAL_RESULT_HINT = """Final output requirements:
-- Your final reply MUST include a complete, self-contained result.
-- Start the complete result with [[FINAL_RESULT]].
-- Do not rely on earlier messages, references, or brief summaries instead of the full result.
-- If you already shared partial results earlier, restate the full result in the final reply.
-- If the final result includes attachments or other data blocks, place them after the [[FINAL_RESULT]] marker.
-
-Use this format in your final reply:
-[[FINAL_RESULT]]
-(complete, self-contained result)
-"""
-
 _SUBAGENT_START_ACK_HINT = (
     "This payload only confirms that the child session has started. It is not "
     "the delegated task result. Wait for the later child-session result "
@@ -198,14 +186,13 @@ Important:
         )
 
     def _build_subagent_task_hint(self, prompt: str, caller_agent_name: str) -> str:
-        """Build the child-session task hint with final result requirements."""
+        """Build the child-session task hint payload."""
         prompt_text = prompt.rstrip()
         return (
             f'<subagent-task parent_agent_id="{self._agent_id}" '
             f'parent_agent_name="{caller_agent_name}" '
             f'parent_session_id="{self._session_id}">\n'
-            f"{prompt_text}\n\n"
-            f"{_SUBAGENT_FINAL_RESULT_HINT}"
+            f"{prompt_text}\n"
             f"</subagent-task>"
         )
 

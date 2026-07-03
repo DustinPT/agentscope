@@ -24,7 +24,7 @@ from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
     StateChangeMiddleware,
-    SubAgentResultMiddleware,
+    SubAgentMiddleware,
     ToolOffloadMiddleware,
 )
 from .._types import (
@@ -391,7 +391,7 @@ class ChatService:
             )
         if session_record.parent_session_id is not None:
             middlewares.append(
-                SubAgentResultMiddleware(
+                SubAgentMiddleware(
                     storage=self._storage,
                     message_bus=self._message_bus,
                     user_id=user_id,
