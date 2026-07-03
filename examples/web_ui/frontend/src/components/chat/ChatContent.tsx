@@ -44,7 +44,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	fileProcessor,
 }) => {
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
-	const prevMsgCountRef = useRef<number>(0);
+	const prevScrollHeightRef = useRef<number>(0);
 	const wasNearBottomRef = useRef<boolean>(true);
 	const pendingInitialScrollRef = useRef<boolean>(true);
 	const skipNextScrollCheckRef = useRef<boolean>(false);
@@ -52,7 +52,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	// When the user opens a different session, force exactly one initial
 	// jump to the latest message after that session's history is rendered.
 	useEffect(() => {
-		prevMsgCountRef.current = 0;
+		prevScrollHeightRef.current = 0;
 		wasNearBottomRef.current = true;
 		pendingInitialScrollRef.current = true;
 		skipNextScrollCheckRef.current = true;
@@ -60,8 +60,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 
 	// Auto-scroll to bottom only if user is already near the bottom
 	useEffect(() => {
-		const currentCount = msgs.length;
-		const prevCount = prevMsgCountRef.current;
+		const scrollArea = scrollAreaRef.current;
+		if (!scrollArea) return;
+
+		const currentScrollHeight = scrollArea.scrollHeight;
+		const prevScrollHeight = prevScrollHeightRef.current;
 
 		// On session switch the first render may still contain the previous
 		// session's messages before `useMessages` clears and reloads them.
@@ -69,26 +72,27 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		// by the newly selected session's content.
 		if (skipNextScrollCheckRef.current) {
 			skipNextScrollCheckRef.current = false;
-			prevMsgCountRef.current = currentCount;
+			prevScrollHeightRef.current = currentScrollHeight;
 			return;
 		}
 
 		const shouldForceInitialScroll =
-			pendingInitialScrollRef.current && (currentCount > 0 || sending);
+			pendingInitialScrollRef.current && (msgs.length > 0 || sending);
+		const contentExpanded =
+			currentScrollHeight > prevScrollHeight &&
+			(prevScrollHeight > 0 || msgs.length > 0);
 
 		const shouldCheck =
 			shouldForceInitialScroll ||
-			(currentCount > prevCount && prevCount > 0) || (sending && prevCount > 0);
+			contentExpanded;
 
-		if (shouldCheck && scrollAreaRef.current) {
-			const { scrollHeight } = scrollAreaRef.current;
-
+		if (shouldCheck) {
 			// Check if user was near bottom before content changed
 			const isNearBottom = shouldForceInitialScroll || wasNearBottomRef.current;
 
 			if (isNearBottom) {
-				scrollAreaRef.current.scrollTo({
-					top: scrollHeight,
+				scrollArea.scrollTo({
+					top: currentScrollHeight,
 					behavior: shouldForceInitialScroll ? 'auto' : 'smooth',
 				});
 			}
@@ -98,7 +102,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			pendingInitialScrollRef.current = false;
 		}
 
-		prevMsgCountRef.current = currentCount;
+		prevScrollHeightRef.current = currentScrollHeight;
 	}, [msgs, sending, sessionKey]);
 
 	// Track if user is near bottom whenever they scroll
