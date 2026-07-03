@@ -111,7 +111,22 @@ easier to review tool calls and give permission.
   - Do not retry failing commands in a sleep loop — diagnose the root
     cause or consider an alternative approach.
   - If you must sleep, keep the duration short (1-5 seconds) to avoid
-    blocking the user."""
+    blocking the user.
+ - Do not use `2>/dev/null` or other `/dev/null` redirections by
+   default. Keep stderr visible for unknown commands, external CLIs,
+   search commands, network commands, or any command where success,
+   failure, or "no result" must be judged from the output. Only use
+   `2>/dev/null` when you already know stderr is irrelevant noise and
+   hiding it will not affect task correctness.
+ - Example of what can go wrong with `2>/dev/null`: if an external
+   command fails and writes the real error to stderr, `2>/dev/null`
+   hides that error. If the command is also piped through something
+   like `head`, the overall command can misleadingly look like it
+   simply returned no results instead of failing.
+ - Do not use `head`, `tail`, or similar truncation commands merely to
+   limit tool output size. The Bash tool already truncates overly long
+   output safely. Use `head` or `tail` only when the task itself
+   explicitly needs the first or last N lines or results."""
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
