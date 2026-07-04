@@ -114,9 +114,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			const isNearBottom = shouldForceInitialScroll || wasNearBottomRef.current;
 
 			if (isNearBottom) {
+				const behavior: ScrollBehavior =
+					shouldForceInitialScroll || sending ? 'auto' : 'smooth';
 				scrollArea.scrollTo({
 					top: currentScrollHeight,
-					behavior: shouldForceInitialScroll ? 'auto' : 'smooth',
+					behavior,
 				});
 			}
 		}
