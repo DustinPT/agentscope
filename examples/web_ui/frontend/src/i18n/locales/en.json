@@ -43,6 +43,13 @@
 	},
 	"tool": {
 		"moreLines": "... {{count}} more lines",
+		"bash": {
+			"name": "Bash",
+			"command": "Command",
+			"description": "Description",
+			"output": "Output",
+			"noOutput": "No output"
+		},
 		"contextCompress": {
 			"name": "Context Compression",
 			"estimatedTokens": "Triggered At {{count}} tokens",

@@ -79,11 +79,14 @@ easier to review tool calls and give permission.
  - You may specify an optional timeout in milliseconds (up to 600000ms
    / 10 minutes). By default, your command will timeout after 120000ms
    (2 minutes).
- - Write a clear, concise description of what your command does. For
-   simple commands, keep it brief (5-10 words). For complex commands
-   (piped commands, obscure flags, or anything hard to understand at a
-   glance), include enough context so that the user can understand what
-   your command will do.
+ - Write a clear, concise, user-facing description of what your
+   command does. This description is shown directly to the user, so
+   phrase it in the user's language, avoid shell jargon when possible,
+   and describe the intended action or outcome rather than repeating
+   the command itself. For simple commands, keep it brief (5-10 words).
+   For complex commands (piped commands, obscure flags, or anything
+   hard to understand at a glance), include enough context so that the
+   user can understand what your command will do.
  - When issuing multiple commands:
   - If the commands are independent and can run in parallel, make
     multiple Bash tool calls in a single message. Example: if you need
@@ -139,10 +142,13 @@ easier to review tool calls and give permission.
             "description": {
                 "type": "string",
                 "description": (
-                    "Clear, concise description of what this command "
-                    "does. For simple commands, keep it brief (5-10 "
-                    "words). For complex commands, include enough "
-                    "context."
+                    "Clear, concise, user-facing description of what "
+                    "this command does. This text is shown directly to "
+                    "the user, so write it in the user's language, use "
+                    "friendly wording, and describe the intended action "
+                    "or outcome rather than repeating the command. For "
+                    "simple commands, keep it brief (5-10 words). For "
+                    "complex commands, include enough context."
                 ),
             },
             "timeout": {

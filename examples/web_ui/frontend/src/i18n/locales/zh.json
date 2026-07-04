@@ -43,6 +43,13 @@
 	},
 	"tool": {
 		"moreLines": "... 还有 {{count}} 行",
+		"bash": {
+			"name": "Bash",
+			"command": "命令",
+			"description": "说明",
+			"output": "输出",
+			"noOutput": "无输出"
+		},
 		"contextCompress": {
 			"name": "上下文压缩",
 			"estimatedTokens": "触发时 {{count}} tokens",
