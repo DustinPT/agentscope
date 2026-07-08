@@ -83,6 +83,11 @@ class CreateSessionRequest(BaseModel):
         description="Fallback model used when the primary model fails. "
         "Can be set later via PATCH.",
     )
+    permission_mode: PermissionMode | None = Field(
+        default=None,
+        description="Initial permission mode for the session. "
+        "If omitted, the default permission context is used.",
+    )
 
 
 class CreateSessionResponse(BaseModel):

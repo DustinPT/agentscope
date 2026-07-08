@@ -20,7 +20,7 @@ import { isMac } from '@/utils/platform';
 /**
  * Represents a file that has been selected and processed (or is being processed).
  */
-interface ProcessedFile {
+export interface ProcessedFile {
 	/** Original file name for display */
 	name: string;
 	/** Processing status */
@@ -59,6 +59,10 @@ interface TextInputProps {
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
+	value?: string;
+	onValueChange?: (value: string) => void;
+	files?: ProcessedFile[];
+	onFilesChange?: (files: ProcessedFile[]) => void;
 }
 
 export interface TextInputRef {
@@ -89,17 +93,41 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			className,
 			allowedInputTypes,
 			fileProcessor,
+			value: controlledValue,
+			onValueChange,
+			files: controlledFiles,
+			onFilesChange,
 		},
 		ref,
 	) => {
 		const { t } = useTranslation();
 		const defaultPlaceholder = placeholder || t('chat.inputPlaceholder');
-		const [value, setValue] = useState('');
-		const [files, setFiles] = useState<ProcessedFile[]>([]);
+		const [internalValue, setInternalValue] = useState('');
+		const [internalFiles, setInternalFiles] = useState<ProcessedFile[]>([]);
 		const [isFocused, setIsFocused] = useState(false);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
+		const value = controlledValue ?? internalValue;
+		const files = controlledFiles ?? internalFiles;
+
+		const setValue = (nextValue: string) => {
+			if (controlledValue === undefined) {
+				setInternalValue(nextValue);
+			}
+			onValueChange?.(nextValue);
+		};
+
+		const setFiles = (
+			nextFiles: ProcessedFile[] | ((prevFiles: ProcessedFile[]) => ProcessedFile[]),
+		) => {
+			const resolvedFiles =
+				typeof nextFiles === 'function' ? nextFiles(files) : nextFiles;
+			if (controlledFiles === undefined) {
+				setInternalFiles(resolvedFiles);
+			}
+			onFilesChange?.(resolvedFiles);
+		};
 
 		// Derive the accept attribute for the hidden file input
 		const acceptAttr =

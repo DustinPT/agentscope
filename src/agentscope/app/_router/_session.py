@@ -37,6 +37,8 @@ from ..storage import (
     StorageBase,
     TeamRecord,
 )
+from ...permission import PermissionContext
+from ...state import AgentState
 
 
 async def _build_team_detail(
@@ -278,6 +280,12 @@ async def create_session(
         body.fallback_chat_model_config,
     )
 
+    state = None
+    if body.permission_mode is not None:
+        state = AgentState(
+            permission_context=PermissionContext(mode=body.permission_mode),
+        )
+
     session_record = await storage.upsert_session(
         user_id=user_id,
         agent_id=body.agent_id,
@@ -287,6 +295,7 @@ async def create_session(
             fallback_chat_model_config=body.fallback_chat_model_config,
             **({"name": body.name} if body.name is not None else {}),
         ),
+        state=state,
     )
     return CreateSessionResponse(session_id=session_record.id)
 

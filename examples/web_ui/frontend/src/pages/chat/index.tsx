@@ -1,3 +1,6 @@
+import type { ContentBlock } from '@agentscope-ai/agentscope/message';
+import type { Msg } from '@agentscope-ai/agentscope/message';
+import { UserMsg } from '@agentscope-ai/agentscope/message';
 import {
 	BotMessageSquare,
 	CalendarClock,
@@ -8,11 +11,17 @@ import {
 	Settings2,
 	Trash2,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { useMatch, useNavigate, useParams } from 'react-router-dom';
 
 import { ChatViewport } from './ChatViewport';
-import type { SessionRecord } from '@/api';
+import { chatApi } from '@/api';
+import type { PermissionMode, SessionRecord, SessionView } from '@/api';
+import { buildTemporarySessionTitle } from '@/components/chat/inputUtils';
+import {
+	SessionDraftComposer,
+	type SessionDraftState,
+} from '@/components/chat/SessionDraftComposer';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
@@ -84,6 +93,7 @@ import { useTranslation } from '@/i18n/useI18n.ts';
  */
 const ChatPageInner = () => {
 	const navigate = useNavigate();
+	const draftMatch = useMatch('/chat/:agentId/new');
 	const {
 		agentId: urlAgentId,
 		sessionId: urlSessionId,
@@ -110,10 +120,40 @@ const ChatPageInner = () => {
 	const [renameSession, setRenameSession] = useState<SessionRecord | null>(null);
 	const [deleteSessionOpen, setDeleteSessionOpen] = useState(false);
 	const [sessionToDelete, setSessionToDelete] = useState<SessionRecord | null>(null);
+	const [draftsByAgentId, setDraftsByAgentId] = useState<Record<string, SessionDraftState>>(
+		{},
+	);
+	const [draftSubmitting, setDraftSubmitting] = useState(false);
+	const [pendingInitialUserMsgs, setPendingInitialUserMsgs] = useState<Record<string, Msg>>({});
 
+	const isDraftRoute = draftMatch !== null && !urlFocusedSessionId;
 	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
-	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
+	const currentView = isDraftRoute
+		? null
+		: (sessions.find((v) => v.session.id === urlSessionId) ?? null);
 	const hasScheduleSessions = sessions.some((v) => v.session.source === 'schedule');
+
+	const getPermissionMode = useCallback((view: SessionView | null): PermissionMode => {
+		const mode = (view?.session.state?.permission_context as Record<string, unknown> | undefined)
+			?.mode;
+		return typeof mode === 'string' ? (mode as PermissionMode) : 'default';
+	}, []);
+
+	const buildDraftSeed = useCallback(
+		(view: SessionView | null): SessionDraftState => ({
+			text: '',
+			files: [],
+			chatModelConfig: view?.session.config.chat_model_config ?? null,
+			fallbackChatModelConfig: view?.session.config.fallback_chat_model_config ?? null,
+			permissionMode: getPermissionMode(view),
+		}),
+		[getPermissionMode],
+	);
+
+	const activeDraft =
+		urlAgentId === undefined
+			? null
+			: (draftsByAgentId[urlAgentId] ?? buildDraftSeed(currentView ?? sessions[0] ?? null));
 
 	// "Inner focus" — when the URL carries a third `:memberId` segment
 	// the user is drilling into a team member's chat. The main sidebar
@@ -165,11 +205,23 @@ const ChatPageInner = () => {
 	// Redirect: URL has an agent but no session, or its sessionId no
 	// longer exists for this agent → pick the first available session.
 	useEffect(() => {
+		if (isDraftRoute) return;
 		if (!urlAgentId || sessions.length === 0) return;
 		const matches = urlSessionId && sessions.some((v) => v.session.id === urlSessionId);
 		if (matches) return;
 		navigate(`/chat/${urlAgentId}/${sessions[0].session.id}`, { replace: true });
-	}, [urlAgentId, urlSessionId, sessions, navigate]);
+	}, [isDraftRoute, urlAgentId, urlSessionId, sessions, navigate]);
+
+	useEffect(() => {
+		if (!isDraftRoute || !urlAgentId) return;
+		setDraftsByAgentId((prev) => {
+			if (prev[urlAgentId]) return prev;
+			return {
+				...prev,
+				[urlAgentId]: buildDraftSeed(sessions[0] ?? null),
+			};
+		});
+	}, [buildDraftSeed, isDraftRoute, urlAgentId, sessions]);
 
 	/**
 	 * Create a new session under the currently selected agent and
@@ -183,17 +235,63 @@ const ChatPageInner = () => {
 	 */
 	const handleCreateSession = async () => {
 		if (!urlAgentId) return;
-		const seedConfig = currentView?.session.config ?? sessions[0]?.session.config;
-		const res = await createSession({
-			agent_id: urlAgentId,
-			...(seedConfig?.chat_model_config
-				? { chat_model_config: seedConfig.chat_model_config }
-				: {}),
-			...(seedConfig?.fallback_chat_model_config
-				? { fallback_chat_model_config: seedConfig.fallback_chat_model_config }
-				: {}),
+		setDraftsByAgentId((prev) => {
+			if (prev[urlAgentId]) return prev;
+			return {
+				...prev,
+				[urlAgentId]: buildDraftSeed(currentView ?? sessions[0] ?? null),
+			};
 		});
-		navigate(`/chat/${urlAgentId}/${res.session_id}`);
+		navigate(`/chat/${urlAgentId}/new`);
+	};
+
+	const handleDraftChange = (
+		updater: SessionDraftState | ((prev: SessionDraftState) => SessionDraftState),
+	) => {
+		if (!urlAgentId) return;
+		setDraftsByAgentId((prev) => {
+			const base = prev[urlAgentId] ?? buildDraftSeed(currentView ?? sessions[0] ?? null);
+			const nextDraft = typeof updater === 'function' ? updater(base) : updater;
+			return {
+				...prev,
+				[urlAgentId]: nextDraft,
+			};
+		});
+	};
+
+	const handleDraftSubmit = async (content: ContentBlock[]) => {
+		if (!urlAgentId || !activeDraft?.chatModelConfig || draftSubmitting) return;
+
+		setDraftSubmitting(true);
+		const tempTitle = buildTemporarySessionTitle(content, t('chat.newSession'));
+		try {
+			const res = await createSession({
+				agent_id: urlAgentId,
+				name: tempTitle,
+				chat_model_config: activeDraft.chatModelConfig,
+				fallback_chat_model_config: activeDraft.fallbackChatModelConfig,
+				permission_mode: activeDraft.permissionMode,
+			});
+			const userMsg = UserMsg({ name: 'user', content });
+			setPendingInitialUserMsgs((prev) => ({
+				...prev,
+				[res.session_id]: userMsg,
+			}));
+			navigate(`/chat/${urlAgentId}/${res.session_id}`);
+			await chatApi.trigger({
+				agent_id: urlAgentId,
+				session_id: res.session_id,
+				input: userMsg,
+			});
+			setDraftsByAgentId((prev) => {
+				if (!(urlAgentId in prev)) return prev;
+				const next = { ...prev };
+				delete next[urlAgentId];
+				return next;
+			});
+		} finally {
+			setDraftSubmitting(false);
+		}
 	};
 
 	const handleAgentDeleted = async () => {
@@ -316,7 +414,7 @@ const ChatPageInner = () => {
 												disabled={!urlAgentId}
 												onClick={handleCreateSession}
 											>
-												Create Session
+												{t('chat.newSession')}
 											</Button>
 										</EmptyContent>
 									</Empty>
@@ -407,18 +505,42 @@ const ChatPageInner = () => {
 				/>
 			)}
 			<div className="flex flex-1 min-w-0">
-				<ChatViewport
-					agentId={effectiveAgentId}
-					sessionId={effectiveSessionId}
-					sessionViewOverride={focusedChildSession}
-					subSessionMeta={subSessionMeta}
-					onReturnToRootSession={
-						urlAgentId && urlSessionId
-							? () => navigate(`/chat/${urlAgentId}/${urlSessionId}`)
-							: undefined
-					}
-					onTeamUpdated={refetchSessions}
-				/>
+				{isDraftRoute && urlAgentId && activeDraft ? (
+					<SessionDraftComposer
+						agentId={urlAgentId}
+						draft={activeDraft}
+						onDraftChange={handleDraftChange}
+						onSubmit={handleDraftSubmit}
+						submitting={draftSubmitting}
+					/>
+				) : (
+					<ChatViewport
+						agentId={effectiveAgentId}
+						sessionId={effectiveSessionId}
+						sessionViewOverride={focusedChildSession}
+						subSessionMeta={subSessionMeta}
+						pendingInitialUserMsg={
+							effectiveSessionId
+								? (pendingInitialUserMsgs[effectiveSessionId] ?? null)
+								: null
+						}
+						onPendingInitialUserMsgConsumed={() => {
+							if (!effectiveSessionId) return;
+							setPendingInitialUserMsgs((prev) => {
+								if (!(effectiveSessionId in prev)) return prev;
+								const next = { ...prev };
+								delete next[effectiveSessionId];
+								return next;
+							});
+						}}
+						onReturnToRootSession={
+							urlAgentId && urlSessionId
+								? () => navigate(`/chat/${urlAgentId}/${urlSessionId}`)
+								: undefined
+						}
+						onTeamUpdated={refetchSessions}
+					/>
+				)}
 			</div>
 			{selectedAgent && (
 				<>

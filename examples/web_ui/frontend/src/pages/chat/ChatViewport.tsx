@@ -1,3 +1,4 @@
+import type { Msg } from '@agentscope-ai/agentscope/message';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import { ArrowDownToLine, ArrowLeft, ArrowUpToLine, Bot, List, Toolbox } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -5,6 +6,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChatModelConfig, SessionView, SubAgentSessionView } from '@/api';
 import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
+import {
+	buildContentBlockFromFile,
+	getSupportedInputTypes,
+} from '@/components/chat/inputUtils';
 import { TaskPanel } from '@/components/chat/TaskPanel';
 import { UserMessageDirectory } from '@/components/chat/UserMessageDirectory';
 import { buildUserMessageOutline } from '@/components/chat/userMessageOutline';
@@ -45,6 +50,8 @@ interface ChatViewportProps {
 		parentSessionName: string;
 	} | null;
 	onReturnToRootSession?: () => void;
+	pendingInitialUserMsg?: Msg | null;
+	onPendingInitialUserMsgConsumed?: () => void;
 	/**
 	 * Optional hook invoked when a team membership change arrives on
 	 * this viewport's SSE stream. The outer page owns the session list
@@ -80,6 +87,8 @@ export function ChatViewport({
 	sessionViewOverride,
 	subSessionMeta,
 	onReturnToRootSession,
+	pendingInitialUserMsg,
+	onPendingInitialUserMsgConsumed,
 	onTeamUpdated,
 }: ChatViewportProps) {
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
@@ -127,6 +136,9 @@ export function ChatViewport({
 		sessionId,
 		{
 			onTeamUpdated: handleTeamUpdated,
+			onSessionUpdated: refetchRelatedSessions,
+			pendingInitialUserMsg,
+			onPendingInitialUserMsgConsumed,
 			onStateUpdated: handleStateUpdated,
 		},
 	);
@@ -414,54 +426,10 @@ export function ChatViewport({
 							onSend={send}
 							onStop={cancelCurrentRun}
 							onUserConfirm={onUserConfirm}
-							allowedInputTypes={(selectedModelCard?.input_types ?? []).filter(
-								(t) =>
-									/^(image|video|audio|text)\/.+/.test(t) ||
-									t === 'application/pdf' ||
-									t.startsWith('application/vnd.') ||
-									t.startsWith('application/msword') ||
-									t.startsWith('application/vnd.openxmlformats'),
+							allowedInputTypes={getSupportedInputTypes(
+								selectedModelCard?.input_types,
 							)}
-							fileProcessor={async (file) => {
-								const filePath = (file as File & { path?: string }).path;
-								if (filePath) {
-									return {
-										id: crypto.randomUUID(),
-										type: 'data' as const,
-										source: {
-											type: 'url' as const,
-											url: `file://${filePath}`,
-											media_type: file.type || 'application/octet-stream',
-										},
-										name: file.name,
-									};
-								}
-								if (file.type === 'text/plain') {
-									const text = await file.text();
-									return {
-										id: crypto.randomUUID(),
-										type: 'text' as const,
-										text: `[File: ${file.name}]\n${text}`,
-									};
-								}
-								const buffer = await file.arrayBuffer();
-								const bytes = new Uint8Array(buffer);
-								let binary = '';
-								for (let i = 0; i < bytes.byteLength; i++) {
-									binary += String.fromCharCode(bytes[i]);
-								}
-								const base64 = btoa(binary);
-								return {
-									id: crypto.randomUUID(),
-									type: 'data' as const,
-									source: {
-										type: 'base64' as const,
-										media_type: file.type || 'application/octet-stream',
-										data: base64,
-									},
-									name: file.name,
-								};
-							}}
+							fileProcessor={buildContentBlockFromFile}
 						/>
 					</div>
 				</div>

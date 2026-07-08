@@ -11,6 +11,7 @@ Events produced by the agent are not exposed back through this method
 that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
+import asyncio
 from dataclasses import dataclass
 
 from fastapi import HTTPException
@@ -20,7 +21,7 @@ from .._reply_state import (
     set_reply_checkpoint_replay_entry_id,
 )
 from ..message_bus import MessageBus
-from ..storage import StorageBase
+from ..storage import SessionConfig, SessionSource, StorageBase
 from .._manager import BackgroundTaskManager, SchedulerManager
 from .._manager import ChatRunRegistry
 from ..workspace_manager import WorkspaceManagerBase
@@ -36,11 +37,13 @@ from .._types import (
     SubAgentTemplate,
 )
 from ._model import get_model
+from ._session_title import generate_session_title
 from ._toolkit import get_toolkit
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...event import (
+    CustomEvent,
     DataBlockDeltaEvent,
     ExternalExecutionResultEvent,
     ReplyStartEvent,
@@ -239,6 +242,135 @@ class ChatService:
         )
         checkpoint_state.reset()
 
+    @staticmethod
+    def _extract_first_user_message(
+        input_msg: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | SessionInterruptEvent
+        | None,
+    ) -> Msg | None:
+        """Return the first user message from a new-turn input payload."""
+        if isinstance(input_msg, Msg):
+            return input_msg if input_msg.role == "user" else None
+        if isinstance(input_msg, list):
+            for msg in input_msg:
+                if msg.role == "user":
+                    return msg
+        return None
+
+    async def _maybe_update_session_title(
+        self,
+        *,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        current_name: str,
+        model_cfg,
+        first_user_msg: Msg | None,
+        first_reply_msg: Msg | None,
+    ) -> None:
+        """Best-effort async title generation for a newly created session."""
+        if not current_name or first_user_msg is None or first_reply_msg is None:
+            return
+
+        latest_session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if latest_session is None:
+            return
+        if latest_session.source != SessionSource.USER:
+            return
+        if latest_session.parent_session_id is not None:
+            return
+        if latest_session.config.name != current_name:
+            return
+
+        try:
+            title_model = await get_model(user_id, model_cfg, self._storage)
+            title = await generate_session_title(
+                title_model,
+                first_user_msg=first_user_msg,
+                first_reply_msg=first_reply_msg,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to generate session title for session %s: %s",
+                session_id,
+                exc,
+            )
+            return
+
+        if not title or title == current_name:
+            return
+
+        latest_session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if latest_session is None or latest_session.config.name != current_name:
+            return
+
+        await self._storage.upsert_session(
+            user_id=user_id,
+            agent_id=agent_id,
+            config=SessionConfig.model_validate(
+                {
+                    **latest_session.config.model_dump(mode="json"),
+                    "name": title,
+                },
+            ),
+            state=latest_session.state,
+            session_id=session_id,
+        )
+
+        event = CustomEvent(name="session_updated", value={"name": title})
+        await self._message_bus.session_publish_event(
+            session_id,
+            event.model_dump(mode="json"),
+        )
+
+    def _schedule_session_title_update(
+        self,
+        *,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        current_name: str,
+        model_cfg,
+        first_user_msg: Msg | None,
+        first_reply_msg: Msg | None,
+    ) -> None:
+        """Run best-effort title generation outside the active chat run."""
+        task = asyncio.create_task(
+            self._maybe_update_session_title(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                current_name=current_name,
+                model_cfg=model_cfg,
+                first_user_msg=first_user_msg,
+                first_reply_msg=first_reply_msg,
+            ),
+            name=f"session-title:{session_id}",
+        )
+
+        def _log_exception(completed_task: asyncio.Task) -> None:
+            try:
+                completed_task.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Background session title generation failed for session %s: %s",
+                    session_id,
+                    exc,
+                )
+
+        task.add_done_callback(_log_exception)
+
     async def run(
         self,
         user_id: str,
@@ -340,6 +472,19 @@ class ChatService:
                     f"agent {agent_id!r}."
                 ),
             )
+        existing_messages = await self._storage.list_messages(
+            user_id,
+            session_id,
+            limit=1,
+        )
+        first_user_msg = self._extract_first_user_message(input_msg)
+        should_attempt_session_title = (
+            not existing_messages
+            and first_user_msg is not None
+            and session_record.source == SessionSource.USER
+            and session_record.parent_session_id is None
+        )
+        initial_session_name = session_record.config.name
         workspace = await self._workspace_manager.get_workspace(
             user_id,
             agent_id,
@@ -484,8 +629,8 @@ class ChatService:
         # 7. Run the agent inside the bus's distributed session lock
         # ----------------------------------------------------------------
         needs_followup_wakeup = False
+        reply_msg: Msg | None = None
         async with self._message_bus.session_run(session_id):
-            reply_msg: Msg | None = None
             checkpoint_state = _ReplyCheckpointState()
 
             if input_msg is None or isinstance(input_msg, (Msg, list)):
@@ -688,4 +833,14 @@ class ChatService:
                 user_id=user_id,
                 session_id=session_id,
                 agent_id=agent_id,
+            )
+        if should_attempt_session_title:
+            self._schedule_session_title_update(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                current_name=initial_session_name,
+                model_cfg=model_cfg,
+                first_user_msg=first_user_msg,
+                first_reply_msg=reply_msg,
             )

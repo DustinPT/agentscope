@@ -128,7 +128,7 @@
 			"label": "会话",
 			"emptyTitle": "暂无会话",
 			"emptyNoAgent": "请先选择一个 Agent。",
-			"emptyHasAgent": "创建会话开始对话。"
+			"emptyHasAgent": "点击 + 编写首条消息开始对话。"
 		},
 		"toolbar": {
 			"scrollToTop": "滚动到顶部",
@@ -385,7 +385,7 @@
 		},
 		"createSession": {
 			"title": "创建会话",
-			"content": "点 + 新建会话，开始对话。"
+			"content": "点 + 进入草稿态，填写首条消息后创建会话。"
 		},
 		"llmSelect": {
 			"title": "选择模型",

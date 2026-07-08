@@ -128,7 +128,7 @@
 			"label": "Session",
 			"emptyTitle": "No sessions",
 			"emptyNoAgent": "Select an agent first.",
-			"emptyHasAgent": "Create a session to start chatting."
+			"emptyHasAgent": "Click +, draft your first message, then start chatting."
 		},
 		"toolbar": {
 			"scrollToTop": "Scroll to top",
@@ -385,7 +385,7 @@
 		},
 		"createSession": {
 			"title": "Create a session",
-			"content": "Click + to start a new session."
+			"content": "Click + to open a draft, then send the first message to create the session."
 		},
 		"llmSelect": {
 			"title": "Pick a model",

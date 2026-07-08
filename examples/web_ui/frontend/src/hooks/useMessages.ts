@@ -80,6 +80,23 @@ export function useMessages(
 		 */
 		onTeamUpdated?: () => void;
 		/**
+		 * Called when a ``CUSTOM`` event with ``name="session_updated"``
+		 * arrives — typically after the backend rewrote the session title.
+		 * The chat page uses this to refresh the session list and visible
+		 * session snapshot.
+		 */
+		onSessionUpdated?: () => void;
+		/**
+		 * Optimistic first user message injected by the draft page when a
+		 * brand-new session is created and opened before history catches up.
+		 */
+		pendingInitialUserMsg?: Msg | null;
+		/**
+		 * Called after the hook has consumed ``pendingInitialUserMsg`` during
+		 * its initial history load for the current session.
+		 */
+		onPendingInitialUserMsgConsumed?: () => void;
+		/**
 		 * Called when a ``CUSTOM`` event with ``name="state_updated"``
 		 * arrives — agent state (tasks / permission) changed during a
 		 * tool call. The ``value`` payload contains the latest
@@ -136,6 +153,15 @@ export function useMessages(
 			}
 		}
 		return null;
+	}, []);
+	const hasEquivalentUserMsg = useCallback((messages: Msg[], candidate: Msg | null | undefined) => {
+		if (!candidate || candidate.role !== 'user') return false;
+		const candidateContent = JSON.stringify(candidate.content);
+		return messages.some(
+			(message) =>
+				message.role === 'user' &&
+				JSON.stringify(message.content) === candidateContent,
+		);
 	}, []);
 	const scheduleUpdate = useCallback(() => {
 		if (rafRef.current !== null) return;
@@ -217,6 +243,8 @@ export function useMessages(
 					custom.name === 'subagent_sessions_updated'
 				) {
 					optionsRef.current?.onTeamUpdated?.();
+				} else if (custom.name === 'session_updated') {
+					optionsRef.current?.onSessionUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
 				}
@@ -296,6 +324,11 @@ export function useMessages(
 		audioManager?.disposeAll();
 
 		if (!agentId || !sessionId) return;
+		const pendingInitialUserMsg = optionsRef.current?.pendingInitialUserMsg ?? null;
+		if (pendingInitialUserMsg && pendingInitialUserMsg.role === 'user') {
+			msgsRef.current = [pendingInitialUserMsg];
+			scheduleUpdate();
+		}
 
 		const controller = new AbortController();
 		abortRef.current = controller;
@@ -359,8 +392,12 @@ export function useMessages(
 					agentId,
 				);
 				if (cancelled) return;
-				msgsRef.current = messages;
+				msgsRef.current =
+					pendingInitialUserMsg && !hasEquivalentUserMsg(messages, pendingInitialUserMsg)
+						? [pendingInitialUserMsg, ...messages]
+						: messages;
 				scheduleUpdate();
+				optionsRef.current?.onPendingInitialUserMsgConsumed?.();
 
 				historyReplayBoundary = getHistoryReplayBoundary(messages);
 				historyLoaded = true;
@@ -398,6 +435,7 @@ export function useMessages(
 		processEvent,
 		audioManager,
 		getHistoryReplayBoundary,
+		hasEquivalentUserMsg,
 	]);
 
 	/**
