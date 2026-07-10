@@ -291,6 +291,7 @@ class ChatModelBase:
 
         return {
             "context_size": card.context_size,
+            **card.runtime_init_kwargs,
         }
 
     @classmethod

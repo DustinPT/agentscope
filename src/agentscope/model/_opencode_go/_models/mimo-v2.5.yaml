@@ -1,0 +1,28 @@
+name: mimo-v2.5
+label: MiMo-V2.5
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - audio/mp3
+  - audio/wav
+  - video/mp4
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 128000
+
+runtime_init_kwargs:
+  api_style: chat_completions
+
+parameter_overrides:
+  max_tokens:
+    maximum: 128000

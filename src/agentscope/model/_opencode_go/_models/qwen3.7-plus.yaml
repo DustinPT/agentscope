@@ -1,0 +1,34 @@
+name: qwen3.7-plus
+label: Qwen3.7 Plus
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/bmp
+  - image/jpeg
+  - image/png
+  - image/tiff
+  - image/webp
+  - image/heic
+  - video/mp4
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 65536
+
+runtime_init_kwargs:
+  api_style: anthropic_messages
+
+parameter_overrides:
+  max_tokens:
+    maximum: 65536
+  temperature:
+    hidden: true
+  top_p:
+    hidden: true
+  reasoning_effort:
+    hidden: true

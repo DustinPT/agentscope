@@ -1,0 +1,23 @@
+name: deepseek-v4-flash
+label: DeepSeek V4 Flash
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 384000
+
+runtime_init_kwargs:
+  api_style: chat_completions
+
+parameter_overrides:
+  max_tokens:
+    maximum: 384000
+  thinking_budget:
+    hidden: true

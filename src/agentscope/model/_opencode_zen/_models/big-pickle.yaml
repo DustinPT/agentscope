@@ -1,0 +1,23 @@
+name: big-pickle
+label: Big Pickle
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+
+context_size: 128000
+output_size: 32768
+
+runtime_init_kwargs:
+  api_style: chat_completions
+
+parameter_overrides:
+  max_tokens:
+    maximum: 32768
+  thinking_enable:
+    hidden: true
+  reasoning_effort:
+    hidden: true

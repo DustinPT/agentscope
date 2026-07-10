@@ -1,0 +1,25 @@
+name: kimi-k2.7-code
+label: Kimi K2.7 Code
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 262144
+output_size: 32768
+
+runtime_init_kwargs:
+  api_style: chat_completions
+
+parameter_overrides:
+  max_tokens:
+    maximum: 32768

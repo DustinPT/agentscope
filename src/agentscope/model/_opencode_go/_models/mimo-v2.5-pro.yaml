@@ -1,0 +1,21 @@
+name: mimo-v2.5-pro
+label: MiMo-V2.5-Pro
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 128000
+
+runtime_init_kwargs:
+  api_style: chat_completions
+
+parameter_overrides:
+  max_tokens:
+    maximum: 128000

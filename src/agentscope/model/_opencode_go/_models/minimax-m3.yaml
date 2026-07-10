@@ -1,0 +1,31 @@
+name: minimax-m3
+label: MiniMax M3
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 524288
+
+runtime_init_kwargs:
+  api_style: anthropic_messages
+
+parameter_overrides:
+  max_tokens:
+    maximum: 524288
+  temperature:
+    hidden: true
+  top_p:
+    hidden: true
+  reasoning_effort:
+    hidden: true

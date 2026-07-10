@@ -69,6 +69,15 @@ class ModelCard(BaseModel):
     """The parameter overrides, which will be merged into the parameter schema.
     """
 
+    runtime_init_kwargs: dict[str, object] = Field(
+        default_factory=dict,
+        description=(
+            "Extra keyword arguments that should be forwarded to the "
+            "runtime model constructor."
+        ),
+    )
+    """Extra runtime init kwargs derived from the model card."""
+
     @classmethod
     def from_yaml(
         cls,
@@ -156,4 +165,5 @@ class ModelCard(BaseModel):
             output_size=config["output_size"],
             parameter_schema=final_schema,
             parameters_overrides=config.get("parameter_overrides", {}),
+            runtime_init_kwargs=config.get("runtime_init_kwargs", {}),
         )

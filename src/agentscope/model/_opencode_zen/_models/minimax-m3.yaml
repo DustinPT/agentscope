@@ -1,0 +1,21 @@
+name: minimax-m3
+label: MiniMax M3
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 524288
+
+runtime_init_kwargs:
+  api_style: chat_completions
+
+parameter_overrides:
+  max_tokens:
+    maximum: 524288

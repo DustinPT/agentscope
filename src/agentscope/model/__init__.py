@@ -10,6 +10,8 @@ from ._dashscope import DashScopeChatModel
 from ._deepseek import DeepSeekChatModel
 from ._gemini import GeminiChatModel
 from ._ollama import OllamaChatModel
+from ._opencode_go import OpenCodeGoChatModel
+from ._opencode_zen import OpenCodeZenChatModel
 from ._openai_chat import OpenAIChatModel
 from ._xai import XAIChatModel
 from ._moonshot import MoonshotChatModel
@@ -26,6 +28,8 @@ __all__ = [
     "DeepSeekChatModel",
     "GeminiChatModel",
     "OllamaChatModel",
+    "OpenCodeGoChatModel",
+    "OpenCodeZenChatModel",
     "OpenAIChatModel",
     "XAIChatModel",
     "MoonshotChatModel",

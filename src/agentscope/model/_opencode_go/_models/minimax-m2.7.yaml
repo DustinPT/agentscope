@@ -1,0 +1,27 @@
+name: minimax-m2.7
+label: MiniMax M2.7
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 204800
+output_size: 204800
+
+runtime_init_kwargs:
+  api_style: anthropic_messages
+
+parameter_overrides:
+  max_tokens:
+    maximum: 204800
+  temperature:
+    hidden: true
+  top_p:
+    hidden: true
+  reasoning_effort:
+    hidden: true
