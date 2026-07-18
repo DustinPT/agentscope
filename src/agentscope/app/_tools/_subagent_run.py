@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
@@ -307,7 +308,7 @@ Important:
                 user_id=self._user_id,
                 agent_id=agent_id,
                 config=SessionConfig(
-                    workspace_id=caller_session.config.workspace_id,
+                    workspace_id=uuid.uuid4().hex,
                     name=session_name_value,
                     chat_model_config=chat_model_config,
                     fallback_chat_model_config=fallback_chat_model_config,
