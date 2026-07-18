@@ -22,6 +22,12 @@ import {
 	type SubAgentConfigValue,
 } from '@/components/form/subAgentConfig';
 import {
+	createReActToolGroupConfigValue,
+	parseReActToolGroupConfigValue,
+	type ReActToolGroupConfigValue,
+} from '@/components/form/reactToolGroupConfig';
+import { ReActToolGroupFields } from '@/components/form/ReActToolGroupFields';
+import {
 	SubAgentConfigFields,
 } from '@/components/form/SubAgentConfigFields';
 import { Button } from '@/components/ui/button';
@@ -55,6 +61,9 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 	const [subAgentValue, setSubAgentValue] = useState<SubAgentConfigValue>(
 		createSubAgentConfigValue(agent),
 	);
+	const [reactToolGroupValue, setReactToolGroupValue] = useState<ReActToolGroupConfigValue>(
+		createReActToolGroupConfigValue(agent),
+	);
 
 	useEffect(() => {
 		if (!open || !schema) {
@@ -65,6 +74,10 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 		// any unset fields fall back to defaults rather than empty.
 		const base = defaultAgentFormValues(schema);
 		const d = agent.data;
+		const {
+			enabled_builtin_tool_groups: _enabledBuiltinToolGroups,
+			...reactConfigFields
+		} = d.react_config ?? {};
 		setValues({
 			identity: {
 				...base.identity,
@@ -73,10 +86,11 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 				system_prompt: d.system_prompt,
 			},
 			context_config: { ...base.context_config, ...(d.context_config ?? {}) },
-			react_config: { ...base.react_config, ...(d.react_config ?? {}) },
+			react_config: { ...base.react_config, ...reactConfigFields },
 		});
 		setModelConfigValue(createAgentModelConfigValue(agent));
 		setSubAgentValue(createSubAgentConfigValue(agent));
+		setReactToolGroupValue(createReActToolGroupConfigValue(agent));
 	}, [open, schema, agent]);
 
 	const handleChange = (section: AgentSection, key: string, value: SchemaFormValue) => {
@@ -93,12 +107,16 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 		try {
 			const modelConfig = parseAgentModelConfigValue(modelConfigValue);
 			const subAgentConfig = parseSubAgentConfigValue(subAgentValue);
+			const reactToolGroupConfig = parseReActToolGroupConfigValue(reactToolGroupValue);
 			await update(agent.id, {
 				name,
 				description: values.identity.description as string | undefined,
 				system_prompt: values.identity.system_prompt as string | undefined,
 				context_config: values.context_config as unknown as ContextConfig,
-				react_config: values.react_config as unknown as ReActConfig,
+				react_config: {
+					...(values.react_config as unknown as ReActConfig),
+					...reactToolGroupConfig,
+				},
 				...modelConfig,
 				...subAgentConfig,
 			});
@@ -127,6 +145,14 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 								schema={schema}
 								values={values}
 								onChange={handleChange}
+								renderInSection={(section) =>
+									section === 'react_config' ? (
+										<ReActToolGroupFields
+											value={reactToolGroupValue}
+											onChange={setReactToolGroupValue}
+										/>
+									) : null
+								}
 								renderAfterSection={(section) =>
 									section === 'identity' ? (
 										<AgentModelConfigFields

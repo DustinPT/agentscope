@@ -21,6 +21,7 @@ interface Props {
 	schema: AgentSchemaResponse;
 	values: AgentFormValues;
 	onChange: (section: AgentSection, key: string, value: SchemaFormValue) => void;
+	renderInSection?: (section: AgentSection) => ReactNode;
 	renderAfterSection?: (section: AgentSection) => ReactNode;
 }
 
@@ -33,7 +34,15 @@ const SECTIONS: { key: AgentSection; i18n: string }[] = [
 const toKebab = (s: string) => s.replace(/_/g, '-');
 const fieldI18nKey = (s: string) => (s === 'description' ? 'description-field' : toKebab(s));
 
-export function AgentFormFields({ schema, values, onChange, renderAfterSection }: Props) {
+const REACT_CONFIG_SKIP_FIELDS = new Set(['enabled_builtin_tool_groups']);
+
+export function AgentFormFields({
+	schema,
+	values,
+	onChange,
+	renderInSection,
+	renderAfterSection,
+}: Props) {
 	const { t } = useTranslation();
 
 	return (
@@ -56,6 +65,9 @@ export function AgentFormFields({ schema, values, onChange, renderAfterSection }
 								schema={sectionSchema}
 								values={values[sectionKey]}
 								onChange={(k, v) => onChange(sectionKey, k, v)}
+								skipFields={
+									sectionKey === 'react_config' ? REACT_CONFIG_SKIP_FIELDS : undefined
+								}
 								idPrefix={`agent-form-${sectionI18n}`}
 								labelFor={(k, prop) =>
 									t(`agent-form.${sectionI18n}.${fieldI18nKey(k)}.label`, {
@@ -68,6 +80,7 @@ export function AgentFormFields({ schema, values, onChange, renderAfterSection }
 									}) || undefined
 								}
 							/>
+							{renderInSection?.(sectionKey)}
 						</FieldSet>
 						{renderAfterSection?.(sectionKey)}
 					</div>
@@ -84,6 +97,7 @@ export function defaultAgentFormValues(schema: AgentSchemaResponse): AgentFormVa
 	): Record<string, SchemaFormValue> => {
 		const out: Record<string, SchemaFormValue> = {};
 		for (const [k, prop] of Object.entries(section.properties ?? {})) {
+			if (section === schema.react_config && REACT_CONFIG_SKIP_FIELDS.has(k)) continue;
 			if (prop.const !== undefined) continue;
 			if (prop.default !== undefined) out[k] = prop.default as SchemaFormValue;
 		}

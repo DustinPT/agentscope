@@ -22,6 +22,12 @@ import {
 	type SubAgentConfigValue,
 } from '@/components/form/subAgentConfig';
 import {
+	createReActToolGroupConfigValue,
+	parseReActToolGroupConfigValue,
+	type ReActToolGroupConfigValue,
+} from '@/components/form/reactToolGroupConfig';
+import { ReActToolGroupFields } from '@/components/form/ReActToolGroupFields';
+import {
 	SubAgentConfigFields,
 } from '@/components/form/SubAgentConfigFields';
 import { Button } from '@/components/ui/button';
@@ -55,17 +61,22 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 	const [subAgentValue, setSubAgentValue] = useState<SubAgentConfigValue>(
 		createSubAgentConfigValue(),
 	);
+	const [reactToolGroupValue, setReactToolGroupValue] = useState<ReActToolGroupConfigValue>(
+		createReActToolGroupConfigValue(),
+	);
 
 	useEffect(() => {
 		if (open && schema && !values) {
 			setValues(defaultAgentFormValues(schema));
 			setModelConfigValue(createAgentModelConfigValue());
 			setSubAgentValue(createSubAgentConfigValue());
+			setReactToolGroupValue(createReActToolGroupConfigValue());
 		}
 		if (!open) {
 			setValues(null);
 			setModelConfigValue(createAgentModelConfigValue());
 			setSubAgentValue(createSubAgentConfigValue());
+			setReactToolGroupValue(createReActToolGroupConfigValue());
 		}
 	}, [open, schema, values]);
 
@@ -83,12 +94,16 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 		try {
 			const modelConfig = parseAgentModelConfigValue(modelConfigValue);
 			const subAgentConfig = parseSubAgentConfigValue(subAgentValue);
+			const reactToolGroupConfig = parseReActToolGroupConfigValue(reactToolGroupValue);
 			await create({
 				name,
 				description: values.identity.description as string | undefined,
 				system_prompt: values.identity.system_prompt as string | undefined,
 				context_config: values.context_config as unknown as ContextConfig,
-				react_config: values.react_config as unknown as ReActConfig,
+				react_config: {
+					...(values.react_config as unknown as ReActConfig),
+					...reactToolGroupConfig,
+				},
 				...modelConfig,
 				...subAgentConfig,
 			});
@@ -123,6 +138,14 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 								schema={schema}
 								values={values}
 								onChange={handleChange}
+								renderInSection={(section) =>
+									section === 'react_config' ? (
+										<ReActToolGroupFields
+											value={reactToolGroupValue}
+											onChange={setReactToolGroupValue}
+										/>
+									) : null
+								}
 								renderAfterSection={(section) =>
 									section === 'identity' ? (
 										<AgentModelConfigFields

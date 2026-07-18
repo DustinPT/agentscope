@@ -165,7 +165,31 @@
 			"description": "Controls the reasoning and action loop behaviour.",
 			"max-iters": { "label": "Max iterations" },
 			"stop-on-reject": { "label": "Stop on reject" },
-			"enable-tool-offload": { "label": "Enable tool offload" }
+			"enable-tool-offload": { "label": "Enable tool offload" },
+			"builtin-tool-groups": {
+				"label": "Builtin Tools",
+				"description": "Control which builtin tools this agent can use by capability group.",
+				"read": {
+					"label": "Read",
+					"description": "Search and inspect files with Glob, Grep, and Read."
+				},
+				"edit": {
+					"label": "Edit",
+					"description": "Create, delete, and modify files with Edit and Write."
+				},
+				"schedule": {
+					"label": "Schedules",
+					"description": "Manage CRON schedules with all tools from schedule_tools."
+				},
+				"terminal": {
+					"label": "Terminal",
+					"description": "Run terminal commands and inspect their results with Bash."
+				},
+				"team": {
+					"label": "Team",
+					"description": "Manage agent teams and communication with TeamCreate, AgentCreate, TeamSay, and TeamDelete."
+				}
+			}
 		},
 		"model-config": {
 			"legend": "Default Model",

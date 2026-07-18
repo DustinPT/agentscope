@@ -2,9 +2,9 @@
 """Toolkit assembly for an (agent, session) pair.
 
 The single entry point :func:`get_toolkit` gathers every tool source —
-workspace builtins, MCPs, skills, planning tools (Task*), background-task
-control (TaskStop), schedule control (Schedule*), team participation
-tools, and caller-supplied extras — into one :class:`Toolkit`.
+workspace builtins, skills, MCPs, planning tools (Task*), schedule
+control (Schedule*), team participation tools, and caller-supplied extras
+— into one :class:`Toolkit`.
 """
 from typing import Any
 
@@ -22,7 +22,6 @@ from ...tool import (
     TaskList,
     TaskUpdate,
     Toolkit,
-    ToolGroup,
 )
 from ...workspace import WorkspaceBase
 
@@ -47,19 +46,19 @@ async def get_toolkit(
     1. Workspace builtins (Bash / Read / Write / Grep / …)
     2. Planning tools (:class:`TaskCreate` / :class:`TaskList` /
        :class:`TaskGet` / :class:`TaskUpdate`)
-    3. Background-task control (:class:`TaskStop`, from
-       :meth:`BackgroundTaskManager.list_tools`)
-    4. Schedule control (:class:`ScheduleCreate` / :class:`ScheduleView`
+    3. Schedule control (:class:`ScheduleCreate` / :class:`ScheduleView`
        / :class:`ScheduleDelete` / :class:`ScheduleList`, from
-       :meth:`SchedulerManager.list_tools`). Only attached when the
-       session has a model configured (Schedule tools need a model to
-       fire new chats with).
-    5. Team tools — selected inline by ``agent_record.source``:
+       :meth:`SchedulerManager.list_tools`). Only attached when enabled in
+       ``react_config.enabled_builtin_tool_groups`` and the session has a
+       model configured (Schedule tools need a model to fire new chats
+       with).
+    4. Team tools — selected inline by ``agent_record.source`` and the
+       ``team`` builtin-tool-group switch:
        worker (``"team"``) gets only ``TeamSay``; everyone else gets
        the full leader-side toolset
        (``TeamCreate / AgentCreate / TeamSay / TeamDelete``)
-    6. Sub-agent execution (`SubAgentRun`) when enabled by agent config
-    7. Caller-supplied extras (``extra_factory``)
+    5. Sub-agent execution (`SubAgentRun`) when enabled by agent config
+    6. Caller-supplied extras (``extra_factory``)
 
     Plus the workspace's skills and MCPs, which become the toolkit's
     ``skills_or_loaders`` and ``mcps`` parameters.
@@ -77,8 +76,8 @@ async def get_toolkit(
             Application scheduler. Provides the four schedule tools and
             persists schedules through it.
         background_task_manager (`BackgroundTaskManager`):
-            Application background-task registry. Provides the
-            :class:`TaskStop` tool bound to its live task dict.
+            Application background-task registry. Currently unused here;
+            kept in the signature for caller compatibility.
         message_bus (`MessageBus`):
             Application message bus; passed to team tools so they can
             push HintBlocks + wakeups when delivering inter-session
@@ -104,42 +103,47 @@ optional):
     Returns:
         `Toolkit`: Fully populated toolkit (tools + skills + MCPs).
     """
+    _ = background_task_manager
 
-    tool_groups = []
 
-    # The general tools running in the workspace
-    tools = await workspace.list_tools()
+    enabled_builtin_tool_groups = set(
+        agent_record.data.react_config.enabled_builtin_tool_groups,
+    )
+
+    builtin_tool_groups = {
+        "read": {"Glob", "Grep", "Read"},
+        "edit": {"Edit", "Write"},
+        "terminal": {"Bash"},
+    }
+
+    # The general tools running in the workspace.
+    tools = []
+    for tool in await workspace.list_tools():
+        group_name = next(
+            (
+                name
+                for name, tool_names in builtin_tool_groups.items()
+                if tool.name in tool_names
+            ),
+            None,
+        )
+        if group_name is None or group_name in enabled_builtin_tool_groups:
+            tools.append(tool)
 
     # Planning tools — always on.
     tools += [TaskCreate(), TaskList(), TaskGet(), TaskUpdate()]
 
-    # Background-task control.
-    tools += await background_task_manager.list_tools()
-
     # Schedule control. Requires a model config on this session because
     # ``ScheduleCreate`` records it into new ``ScheduleRecord`` instances.
-    if session_record.config.chat_model_config is not None:
-        # Add schedule tools as a tool group
-        tool_groups.append(
-            ToolGroup(
-                name="schedule_tools",
-                description=(
-                    """Tools for managing cron schedules. A cron schedule is \
-a recurring task that fires at a specified time — at that point, a new \
-session is created and an agent will be invoked to complete the given task \
-autonomously.
-
-## When to Use This Tool Group
-- When you need to create a new cron schedule that triggers at a specific \
-time or interval"
-- When you're asked to list, inspect, stop, or delete existing cron schedules
-"""
-                ),
-                tools=await scheduler_manager.list_tools(
-                    user_id=user_id,
-                    agent_id=agent_record.id,
-                    chat_model_config=session_record.config.chat_model_config,
-                ),
+    if (
+        "schedule" in enabled_builtin_tool_groups
+        and session_record.config.chat_model_config is not None
+    ):
+        tools.extend(
+            await scheduler_manager.list_tools(
+                user_id=user_id,
+                agent_id=agent_record.id,
+                chat_model_config=session_record.config.chat_model_config,
             ),
         )
 
@@ -156,9 +160,9 @@ time or interval"
         "session_id": session_record.id,
         "agent_id": agent_record.id,
     }
-    if agent_record.source == "team":
+    if "team" in enabled_builtin_tool_groups and agent_record.source == "team":
         tools.append(TeamSay(**team_tool_kwargs, role="worker"))
-    else:
+    elif "team" in enabled_builtin_tool_groups:
         allowed_subagents = []
         for subagent_id in agent_record.data.allowed_subagent_ids:
             subagent_record = await storage.get_agent(user_id, subagent_id)
@@ -204,5 +208,4 @@ time or interval"
         tools=tools,
         skills_or_loaders=await workspace.list_skills(),
         mcps=await workspace.list_mcps(),
-        tool_groups=tool_groups,
     )

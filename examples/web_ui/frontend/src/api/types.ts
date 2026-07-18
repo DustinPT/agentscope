@@ -25,6 +25,9 @@ export interface ReActConfig {
 	max_iters?: number;
 	stop_on_reject?: boolean;
 	enable_tool_offload?: boolean;
+	enabled_builtin_tool_groups?: Array<
+		'read' | 'edit' | 'schedule' | 'terminal' | 'team'
+	>;
 }
 
 // ─── Agent ────────────────────────────────────────────────────────────────────

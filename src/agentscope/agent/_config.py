@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ..model import ChatModelBase
@@ -154,6 +156,25 @@ class ReActConfig(BaseModel):
         ),
     )
     """Whether long-running tool calls can be offloaded to the background."""
+
+    enabled_builtin_tool_groups: list[
+        Literal["read", "edit", "schedule", "terminal", "team"]
+    ] = Field(
+        title="Enabled Builtin Tool Groups",
+        default_factory=lambda: [
+            "read",
+            "edit",
+            "schedule",
+            "terminal",
+            "team",
+        ],
+        description=(
+            "Builtin tool groups enabled for this agent. Controls file "
+            "reading, file editing, schedule management, terminal access, "
+            "and team collaboration tools."
+        ),
+    )
+    """Builtin tool groups enabled for this agent."""
 
 
 class ModelConfig(BaseModel):

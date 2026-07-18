@@ -8,12 +8,13 @@ Verifies the assembly rules:
 
 - workspace builtins are always included;
 - the four ``Task*`` planning tools are always included;
-- :class:`TaskStop` (from ``BackgroundTaskManager``) is always included;
 - the four ``Schedule*`` tools only when ``session.config.chat_model_config``
-  is set (they need a model to fire new runs with);
-- team tools are role-gated by ``agent_record.source``: ``"team"`` →
-  one ``TeamSay`` (worker variant); anything else → the full
-  leader-side toolset of four;
+  is set and the ``schedule`` builtin tool group is enabled;
+- team tools are gated by the ``team`` builtin tool group and then by
+  ``agent_record.source``: ``"team"`` → one ``TeamSay`` (worker variant);
+  anything else → the full leader-side toolset of four;
+- ``TaskStop`` and ``reset_tools`` are not exposed;
+- ``SubAgentRun`` still follows the existing sub-agent permissions config;
 - caller-supplied ``extra_factory`` results land at the end.
 """
 from typing import Any
@@ -67,7 +68,29 @@ class _NullBus:
     nothing in :func:`get_toolkit` actually awaits it."""
 
 
-def _make_agent(*, source: str = "user", name: str = "A") -> AgentRecord:
+class _NoOpStorage:
+    """Storage placeholder used during toolkit assembly."""
+
+    def __init__(self, agents: dict[str, AgentRecord] | None = None) -> None:
+        self._agents = agents or {}
+
+    async def get_agent(
+        self,
+        _user_id: str,
+        agent_id: str,
+    ) -> AgentRecord | None:
+        """Return a configured agent record if present."""
+        return self._agents.get(agent_id)
+
+
+def _make_agent(
+    *,
+    source: str = "user",
+    name: str = "A",
+    enabled_builtin_tool_groups: list[str] | None = None,
+    allow_subagent_calls: bool = False,
+    allowed_subagent_ids: list[str] | None = None,
+) -> AgentRecord:
     """Build a minimal :class:`AgentRecord`."""
     return AgentRecord(
         user_id="u",
@@ -76,7 +99,12 @@ def _make_agent(*, source: str = "user", name: str = "A") -> AgentRecord:
             name=name,
             system_prompt=f"You are {name}.",
             context_config=ContextConfig(),
-            react_config=ReActConfig(),
+            react_config=ReActConfig(
+                enabled_builtin_tool_groups=enabled_builtin_tool_groups
+                or ["read", "edit", "schedule", "terminal", "team"],
+            ),
+            allow_subagent_calls=allow_subagent_calls,
+            allowed_subagent_ids=allowed_subagent_ids or [],
         ),
     )
 
@@ -103,11 +131,6 @@ def _make_session(
         ),
     )
     return SessionRecord(user_id=user_id, agent_id=agent_id, config=cfg)
-
-
-class _NoOpStorage:
-    """Storage placeholder. ``get_toolkit`` itself does not call any
-    storage method — the team tools bind a reference for later use."""
 
 
 def _tool_names(toolkit: Any) -> list[str]:
@@ -141,27 +164,40 @@ class _StubTool(ToolBase):
         """No-op invocation — the tests never execute the tool."""
 
 
-class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
-    """User-owned agent (``source="user"``) gets the full set."""
+def _make_named_tool(name: str, description: str = "stub tool") -> ToolBase:
+    """Create a stub tool instance with a custom name."""
 
-    async def test_user_agent_gets_all_sources(self) -> None:
-        """A user-owned agent receives workspace, planning, scheduling,
-        TaskStop, and the four leader-side team tools."""
+    class _NamedTool(_StubTool):
+        pass
+
+    _NamedTool.name = name
+    _NamedTool.description = description
+    return _NamedTool()
+
+
+class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
+    """User-owned agent (``source="user"``) gets the expected tools."""
+
+    async def test_user_agent_gets_enabled_sources_without_taskstop(self) -> None:
+        """A user-owned agent receives enabled workspace, planning,
+        scheduling, and leader-side team tools, but not TaskStop."""
         agent = _make_agent(source="user")
         session = _make_session(
             user_id="u",
             agent_id=agent.id,
             with_model=True,
         )
-
-        class _WsTool(_StubTool):
-            """Stub workspace tool registered through ``_FakeWorkspace``."""
-
-            name: str = "ws-bash"
-            description: str = "stub workspace tool"
-
-        ws_tool = _WsTool()
-        workspace = _FakeWorkspace(tools=[ws_tool])
+        workspace = _FakeWorkspace(
+            tools=[
+                _make_named_tool("Bash"),
+                _make_named_tool("Glob"),
+                _make_named_tool("Grep"),
+                _make_named_tool("Read"),
+                _make_named_tool("Edit"),
+                _make_named_tool("Write"),
+                _make_named_tool("ws-extra"),
+            ],
+        )
 
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
@@ -179,14 +215,16 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         )
 
         names = set(_tool_names(toolkit))
-        # Workspace tool present.
-        self.assertIn("ws-bash", names)
+        self.assertTrue(
+            {"Bash", "Glob", "Grep", "Read", "Edit", "Write", "ws-extra"}
+            <= names,
+        )
         # Planning tools present.
         self.assertTrue(
             {"TaskCreate", "TaskList", "TaskGet", "TaskUpdate"} <= names,
         )
-        # Background task control present.
-        self.assertIn("TaskStop", names)
+        # Background task control removed.
+        self.assertNotIn("TaskStop", names)
         # Schedule control present (model_config is set).
         self.assertTrue(
             {
@@ -201,6 +239,61 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         self.assertTrue(
             {"TeamCreate", "AgentCreate", "TeamSay", "TeamDelete"} <= names,
         )
+        schema_names = {
+            schema["function"]["name"]
+            for schema in await toolkit.get_tool_schemas()
+        }
+        self.assertNotIn("reset_tools", schema_names)
+
+    async def test_workspace_tools_follow_group_toggles(self) -> None:
+        """Workspace builtin tools are filtered by the configured groups."""
+        agent = _make_agent(
+            enabled_builtin_tool_groups=["read"],
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        workspace = _FakeWorkspace(
+            tools=[
+                _make_named_tool("Bash"),
+                _make_named_tool("Glob"),
+                _make_named_tool("Grep"),
+                _make_named_tool("Read"),
+                _make_named_tool("Edit"),
+                _make_named_tool("Write"),
+                _make_named_tool("ws-extra"),
+            ],
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            workspace=workspace,  # type: ignore[arg-type]
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            background_task_manager=BackgroundTaskManager(),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+        )
+
+        names = set(_tool_names(toolkit))
+        self.assertTrue({"Glob", "Grep", "Read", "ws-extra"} <= names)
+        for missing in (
+            "Bash",
+            "Edit",
+            "Write",
+            "ScheduleCreate",
+            "TeamCreate",
+            "AgentCreate",
+            "TeamSay",
+            "TeamDelete",
+        ):
+            self.assertNotIn(missing, names)
 
 
 class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
@@ -234,6 +327,35 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
         self.assertIn("TeamSay", names)
         for missing in ("TeamCreate", "AgentCreate", "TeamDelete"):
             self.assertNotIn(missing, names)
+
+    async def test_worker_gets_no_team_tools_when_team_group_disabled(self) -> None:
+        """Disabling the team group removes TeamSay for workers as well."""
+        agent = _make_agent(
+            source="team",
+            name="worker",
+            enabled_builtin_tool_groups=["read", "edit", "schedule", "terminal"],
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            background_task_manager=BackgroundTaskManager(),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+        )
+        names = set(_tool_names(toolkit))
+        self.assertNotIn("TeamSay", names)
 
 
 class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
@@ -271,6 +393,72 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
             "ScheduleList",
         ):
             self.assertNotIn(missing, names)
+
+    async def test_schedule_group_disabled_hides_schedule_tools(self) -> None:
+        """Disabling the schedule group omits schedule tools even with a model."""
+        agent = _make_agent(
+            enabled_builtin_tool_groups=["read", "edit", "terminal", "team"],
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            background_task_manager=BackgroundTaskManager(),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+        )
+        names = set(_tool_names(toolkit))
+        for missing in (
+            "ScheduleCreate",
+            "ScheduleView",
+            "ScheduleDelete",
+            "ScheduleList",
+        ):
+            self.assertNotIn(missing, names)
+
+
+class TestGetToolkitSubAgentRun(IsolatedAsyncioTestCase):
+    """Sub-agent execution follows the existing allow-list strategy."""
+
+    async def test_subagentrun_enabled_strategy_unchanged(self) -> None:
+        """SubAgentRun still depends on allow_subagent_calls, not team group."""
+        allowed_agent = _make_agent(name="child")
+        agent = _make_agent(
+            enabled_builtin_tool_groups=["read"],
+            allow_subagent_calls=True,
+            allowed_subagent_ids=[allowed_agent.id],
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage({allowed_agent.id: allowed_agent}),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            background_task_manager=BackgroundTaskManager(),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+        )
+        self.assertIn("SubAgentRun", set(_tool_names(toolkit)))
 
 
 class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):

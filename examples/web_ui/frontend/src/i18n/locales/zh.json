@@ -165,7 +165,31 @@
 			"description": "控制推理和行动循环的行为。",
 			"max-iters": { "label": "最大迭代次数" },
 			"stop-on-reject": { "label": "拒绝时停止" },
-			"enable-tool-offload": { "label": "开启工具卸载" }
+			"enable-tool-offload": { "label": "开启工具卸载" },
+			"builtin-tool-groups": {
+				"label": "内置工具",
+				"description": "按能力分组控制该 Agent 可用的内置工具。",
+				"read": {
+					"label": "阅读",
+					"description": "对文件进行检索和查看，包含 Glob、Grep、Read。"
+				},
+				"edit": {
+					"label": "编辑",
+					"description": "对文件进行增删和编辑，包含 Edit、Write。"
+				},
+				"schedule": {
+					"label": "定时任务",
+					"description": "管理 CRON 计划任务，包含 schedule_tools 中的全部工具。"
+				},
+				"terminal": {
+					"label": "终端",
+					"description": "在终端运行命令并获取状态和结果，包含 Bash。"
+				},
+				"team": {
+					"label": "团队",
+					"description": "管理智能体团队及通信，包含 TeamCreate、AgentCreate、TeamSay、TeamDelete。"
+				}
+			}
 		},
 		"model-config": {
 			"legend": "默认模型",
