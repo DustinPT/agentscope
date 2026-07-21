@@ -86,6 +86,7 @@ class OpenCodeZenChatModel(ChatModelBase):
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 200000,
+        formatter_input_types: list[str] | None = None,
         api_style: Literal["responses", "chat_completions"] = (
             _API_STYLE_CHAT_COMPLETIONS
         ),
@@ -105,10 +106,30 @@ class OpenCodeZenChatModel(ChatModelBase):
                 f"Unsupported OpenCode Zen api_style: {api_style!r}.",
             )
         self.api_style = api_style
+        self.formatter_input_types = formatter_input_types
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         return OpenAIChatModel._get_retryable_exceptions()
+
+    @classmethod
+    def get_runtime_init_kwargs(
+        cls,
+        model_name: str,
+        custom_yaml_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Include formatter capabilities derived from the model card."""
+        runtime_init_kwargs = super().get_runtime_init_kwargs(
+            model_name=model_name,
+            custom_yaml_dir=custom_yaml_dir,
+        )
+        card = cls.get_model_card(
+            model_name=model_name,
+            custom_yaml_dir=custom_yaml_dir,
+        )
+        if card is not None:
+            runtime_init_kwargs["formatter_input_types"] = card.input_types
+        return runtime_init_kwargs
 
     def _to_openai_credential(self) -> OpenAICredential:
         """Build an OpenAI-compatible credential for delegate models."""
@@ -153,6 +174,7 @@ class OpenCodeZenChatModel(ChatModelBase):
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
             context_size=self.context_size,
+            formatter_input_types=self.formatter_input_types,
         )
 
     def _build_generate_kwargs(

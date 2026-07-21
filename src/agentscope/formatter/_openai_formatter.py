@@ -28,6 +28,11 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
     """Base class for OpenAI formatters, providing shared data block
     formatting logic."""
 
+    @property
+    def supports_thinking_input(self) -> bool:
+        """Return ``True`` when the model accepts historical thinking."""
+        return "application/x-thinking" in self.input_types
+
     def _format_openai_data_block(
         self,
         block: DataBlock,
@@ -223,6 +228,10 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
             msg = msgs[i]
             content_blocks = []
             tool_calls = []
+            reasoning_parts = []
+            can_emit_reasoning = (
+                msg.role == "assistant" and self.supports_thinking_input
+            )
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
@@ -236,17 +245,26 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                         content_blocks.append(formatted)
 
                 elif isinstance(block, HintBlock):
-                    if content_blocks or tool_calls:
+                    if (
+                        content_blocks
+                        or tool_calls
+                        or (can_emit_reasoning and reasoning_parts)
+                    ):
                         msg_openai = {
                             "role": msg.role,
                             "name": msg.name,
                             "content": content_blocks or None,
                         }
+                        if can_emit_reasoning and reasoning_parts:
+                            msg_openai["reasoning_content"] = "\n".join(
+                                reasoning_parts,
+                            )
                         if tool_calls:
                             msg_openai["tool_calls"] = tool_calls
                         messages.append(msg_openai)
                         content_blocks = []
                         tool_calls = []
+                        reasoning_parts = []
 
                     if isinstance(block.hint, str):
                         messages.append(
@@ -288,17 +306,26 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     )
 
                 elif isinstance(block, ToolResultBlock):
-                    if content_blocks or tool_calls:
+                    if (
+                        content_blocks
+                        or tool_calls
+                        or (can_emit_reasoning and reasoning_parts)
+                    ):
                         msg_openai_flush = {
                             "role": msg.role,
                             "name": msg.name,
                             "content": content_blocks or None,
                         }
+                        if can_emit_reasoning and reasoning_parts:
+                            msg_openai_flush["reasoning_content"] = "\n".join(
+                                reasoning_parts,
+                            )
                         if tool_calls:
                             msg_openai_flush["tool_calls"] = tool_calls
                         messages.append(msg_openai_flush)
                         content_blocks = []
                         tool_calls = []
+                        reasoning_parts = []
 
                     (
                         textual_output,
@@ -337,9 +364,8 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             )
 
                 elif isinstance(block, ThinkingBlock):
-                    # OpenAI API does not accept reasoning/thinking content
-                    # in conversation history — skip thinking blocks silently.
-                    pass
+                    if can_emit_reasoning:
+                        reasoning_parts.append(block.thinking)
 
                 else:
                     logger.warning(
@@ -353,11 +379,20 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                 "content": content_blocks or None,
             }
 
+            if can_emit_reasoning and reasoning_parts:
+                msg_openai["reasoning_content"] = "\n".join(
+                    reasoning_parts,
+                )
             if tool_calls:
                 msg_openai["tool_calls"] = tool_calls
 
-            # When both content and tool_calls are None, skipped
-            if msg_openai["content"] or msg_openai.get("tool_calls"):
+            # When neither content nor tool calls nor reasoning is present,
+            # the message is skipped.
+            if (
+                msg_openai["content"]
+                or msg_openai.get("tool_calls")
+                or msg_openai.get("reasoning_content")
+            ):
                 messages.append(msg_openai)
 
             # Move to next message

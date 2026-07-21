@@ -121,6 +121,7 @@ class OpenAIChatModel(ChatModelBase):
         retry_delay: float = 1.0,
         context_size: int = 128000,
         formatter: FormatterBase | None = None,
+        formatter_input_types: list[str] | None = None,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the OpenAI chat model.
@@ -146,6 +147,9 @@ class OpenAIChatModel(ChatModelBase):
                 The formatter that converts ``Msg`` objects to the format
                 required by the OpenAI API. When ``None``, an
                 ``OpenAIChatFormatter`` instance will be used.
+            formatter_input_types (`list[str] | None`, defaults to `None`):
+                Optional input capability list sourced from the model card and
+                forwarded to the default formatter.
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
@@ -159,7 +163,12 @@ class OpenAIChatModel(ChatModelBase):
             retry_delay=retry_delay,
             context_size=context_size,
         )
-        self.formatter = formatter or OpenAIChatFormatter()
+        if formatter is None:
+            formatter_kwargs: dict[str, Any] = {}
+            if formatter_input_types is not None:
+                formatter_kwargs["input_types"] = formatter_input_types
+            formatter = OpenAIChatFormatter(**formatter_kwargs)
+        self.formatter = formatter
         self.client_kwargs = client_kwargs or {}
 
     @classmethod
@@ -172,6 +181,25 @@ class OpenAIChatModel(ChatModelBase):
             openai.RateLimitError,
             openai.InternalServerError,
         )
+
+    @classmethod
+    def get_runtime_init_kwargs(
+        cls,
+        model_name: str,
+        custom_yaml_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Include formatter capabilities derived from the model card."""
+        runtime_init_kwargs = super().get_runtime_init_kwargs(
+            model_name=model_name,
+            custom_yaml_dir=custom_yaml_dir,
+        )
+        card = cls.get_model_card(
+            model_name=model_name,
+            custom_yaml_dir=custom_yaml_dir,
+        )
+        if card is not None:
+            runtime_init_kwargs["formatter_input_types"] = card.input_types
+        return runtime_init_kwargs
 
     async def _call_api(
         self,
