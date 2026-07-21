@@ -23,13 +23,16 @@ interface RequestOptions {
 	method?: string;
 	body?: unknown;
 	params?: Record<string, string>;
+	responseType?: 'json' | 'blob' | 'response';
 	/** When true, suppresses the automatic error toast. Useful when the caller shows its own inline error UI. */
 	silent?: boolean;
 }
 
-function buildHeaders(hasBody: boolean): Record<string, string> {
+function buildHeaders(body: unknown): Record<string, string> {
 	const headers: Record<string, string> = { 'X-User-ID': getUserId() };
-	if (hasBody) headers['Content-Type'] = 'application/json';
+	if (body !== undefined && !(body instanceof FormData)) {
+		headers['Content-Type'] = 'application/json';
+	}
 	return headers;
 }
 
@@ -47,7 +50,7 @@ async function extractErrorDetail(res: Response): Promise<string> {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, params, silent = false } = options;
+	const { method = 'GET', body, params, responseType = 'json', silent = false } = options;
 	const url = new URL(path, getBaseUrl());
 	if (params) {
 		Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
@@ -55,8 +58,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 	const res = await fetch(url.toString(), {
 		method,
-		headers: buildHeaders(body !== undefined),
-		body: body ? JSON.stringify(body) : undefined,
+		headers: buildHeaders(body),
+		body:
+			body instanceof FormData || body === undefined ? (body as BodyInit | undefined) : JSON.stringify(body),
 	});
 
 	if (!res.ok) {
@@ -67,6 +71,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 	}
 
 	if (res.status === 204) return undefined as T;
+	if (responseType === 'blob') return (await res.blob()) as T;
+	if (responseType === 'response') return res as T;
 	return res.json() as Promise<T>;
 }
 
@@ -82,8 +88,9 @@ async function streamRequest(
 
 	const res = await fetch(url.toString(), {
 		method,
-		headers: buildHeaders(body !== undefined),
-		body: body ? JSON.stringify(body) : undefined,
+		headers: buildHeaders(body),
+		body:
+			body instanceof FormData || body === undefined ? (body as BodyInit | undefined) : JSON.stringify(body),
 		signal,
 	});
 
@@ -102,10 +109,18 @@ export const client = {
 		request<T>(path, { method: 'GET', params }),
 	post: <T>(path: string, body?: unknown, params?: Record<string, string>) =>
 		request<T>(path, { method: 'POST', body, params }),
+	put: <T>(path: string, body?: unknown, params?: Record<string, string>) =>
+		request<T>(path, { method: 'PUT', body, params }),
 	patch: <T>(path: string, body?: unknown, params?: Record<string, string>) =>
 		request<T>(path, { method: 'PATCH', body, params }),
 	delete: <T = void>(path: string, params?: Record<string, string>) =>
 		request<T>(path, { method: 'DELETE', params }),
+	postForm: <T>(path: string, body: FormData, params?: Record<string, string>) =>
+		request<T>(path, { method: 'POST', body, params }),
+	putForm: <T>(path: string, body: FormData, params?: Record<string, string>) =>
+		request<T>(path, { method: 'PUT', body, params }),
+	getBlob: (path: string, params?: Record<string, string>) =>
+		request<Blob>(path, { method: 'GET', params, responseType: 'blob' }),
 	stream: (path: string, options?: RequestOptions & { signal?: AbortSignal }) =>
 		streamRequest(path, options),
 };

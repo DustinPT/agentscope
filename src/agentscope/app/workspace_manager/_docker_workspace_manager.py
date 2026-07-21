@@ -37,6 +37,8 @@ from agentscope.workspace._docker._make_dockerfile import (
     DEFAULT_BASE_IMAGE,
     DEFAULT_GATEWAY_PORT,
 )
+from .._service._workspace_seed import sync_workspace_state
+from ..storage import AgentSkillAsset
 from ._base import WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
@@ -170,6 +172,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
         workspace_id: str,
+        default_mcps: list[MCPClient] | None = None,
+        skill_assets: list[AgentSkillAsset] | None = None,
     ) -> DockerWorkspace:
         """Return an initialised workspace, building one on cache miss.
 
@@ -205,6 +209,11 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             if cached is not None:
                 ws, _ = cached
                 self._cache[workspace_id] = (ws, time.monotonic())
+                await sync_workspace_state(
+                    ws,
+                    expected_mcps=default_mcps or [],
+                    expected_skills=skill_assets or [],
+                )
                 return ws
 
         # Cache miss: build under the lock to prevent two concurrent
@@ -215,12 +224,22 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             if cached is not None:
                 ws, _ = cached
                 self._cache[workspace_id] = (ws, time.monotonic())
+                await sync_workspace_state(
+                    ws,
+                    expected_mcps=default_mcps or [],
+                    expected_skills=skill_assets or [],
+                )
                 return ws
 
             ws = await self._build_and_start(
                 workspace_id=workspace_id,
                 user_id=user_id,
                 agent_id=agent_id,
+            )
+            await sync_workspace_state(
+                ws,
+                expected_mcps=default_mcps or [],
+                expected_skills=skill_assets or [],
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws

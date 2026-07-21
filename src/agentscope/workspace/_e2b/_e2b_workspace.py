@@ -33,6 +33,8 @@ Docker engine for the E2B SDK (``e2b.AsyncSandbox``):
 Configuration is per-instance: every workspace owns one sandbox. The
 manager handles cache, TTL eviction and metadata-based reattachment.
 """
+import hashlib
+
 
 import asyncio
 import base64
@@ -453,7 +455,7 @@ class E2BWorkspace(WorkspaceBase):
                         description=str(desc),
                         dir=posixpath.dirname(md_path),
                         markdown=doc.content or "",
-                        updated_at=0.0,
+                        content_hash=hashlib.sha256(raw).hexdigest(),
                     ),
                 )
             except Exception as e:

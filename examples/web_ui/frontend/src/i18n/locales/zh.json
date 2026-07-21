@@ -11,6 +11,7 @@
 		"credential": "凭证",
 		"date": "日期",
 		"delete": "删除",
+		"download": "下载",
 		"deleting": "删除中…",
 		"disabled": "已禁用",
 		"edit": "编辑",
@@ -139,6 +140,23 @@
 		"title": "创建 Agent",
 		"description": "定义新 Agent 的身份与行为。",
 		"trigger": "创建 Agent"
+	},
+	"agent-workspace": {
+		"legend": "工作区配置",
+		"description": "配置该智能体默认可用的技能和 MCP 服务。",
+		"skills": {
+			"title": "技能",
+			"description": "通过上传技能 ZIP 包添加，支持删除和下载已保存技能。",
+			"upload": "上传 ZIP",
+			"empty": "暂无技能",
+			"pending": "待保存"
+		},
+		"mcps": {
+			"title": "MCP",
+			"description": "维护该智能体默认可用的 MCP 服务器列表。",
+			"add": "添加 MCP",
+			"empty": "暂无 MCP 服务器"
+		}
 	},
 	"agent-form": {
 		"identity": {

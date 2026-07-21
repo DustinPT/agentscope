@@ -6,6 +6,9 @@ import os
 import time
 
 from ..._logging import logger
+from .._service._workspace_seed import sync_workspace_state
+from ..storage import AgentSkillAsset
+from ...mcp import MCPClient
 from ...workspace import LocalWorkspace
 from ._base import WorkspaceManagerBase
 
@@ -65,6 +68,8 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
         workspace_id: str,
+        default_mcps: list[MCPClient] | None = None,
+        skill_assets: list[AgentSkillAsset] | None = None,
     ) -> LocalWorkspace:
         """Return an initialized workspace, reconstructing from
         disk on cache miss.
@@ -100,6 +105,11 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             )
 
         if hit is not None:
+            await sync_workspace_state(
+                hit,
+                expected_mcps=default_mcps or [],
+                expected_skills=skill_assets or [],
+            )
             return hit
 
         # Phase 3: build under the lock to prevent two concurrent
@@ -121,6 +131,11 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 skill_paths=self._skill_paths,
             )
             await ws.initialize()
+            await sync_workspace_state(
+                ws,
+                expected_mcps=default_mcps or [],
+                expected_skills=skill_assets or [],
+            )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 

@@ -16,8 +16,8 @@ class Skill:
     """The directory of the agent skill."""
     markdown: str
     """The markdown content of the agent skill."""
-    updated_at: float
-    """The last updated time of the skill."""
+    content_hash: str
+    """Content hash computed from the skill's SKILL.md file."""
 
 
 class SkillLoaderBase(ABC):

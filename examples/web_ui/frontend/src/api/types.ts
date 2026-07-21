@@ -42,6 +42,8 @@ export interface AgentData {
 	default_chat_model_config: ChatModelConfig | null;
 	allow_subagent_calls: boolean;
 	allowed_subagent_ids: string[];
+	mcps: MCPClient[];
+	skills: AgentSkillAsset[];
 }
 
 export interface AgentRecord extends RecordBase {
@@ -58,6 +60,7 @@ export interface CreateAgentRequest {
 	default_chat_model_config?: ChatModelConfig | null;
 	allow_subagent_calls?: boolean;
 	allowed_subagent_ids?: string[];
+	mcps?: MCPClient[];
 }
 
 export interface CreateAgentResponse {
@@ -73,6 +76,20 @@ export interface UpdateAgentRequest {
 	default_chat_model_config?: ChatModelConfig | null;
 	allow_subagent_calls?: boolean;
 	allowed_subagent_ids?: string[];
+	mcps?: MCPClient[];
+}
+
+export interface AgentComposeConfig extends CreateAgentRequest {
+	mcps?: MCPClient[];
+}
+
+export interface AgentComposeUpdateConfig extends CreateAgentRequest {
+	mcps?: MCPClient[];
+	retained_skill_names: string[];
+}
+
+export interface AgentComposeResponse {
+	agent: AgentRecord;
 }
 
 export interface AgentListResponse {
@@ -357,6 +374,14 @@ export interface MCPClientStatus extends MCPClient {
 	tools: ToolInfo[];
 }
 
+export interface AgentSkillAsset {
+	name: string;
+	description: string;
+	archive_name: string;
+	dir: string;
+	content_hash: string;
+}
+
 // ─── Skill ────────────────────────────────────────────────────────────────────
 
 export interface Skill {
@@ -364,7 +389,7 @@ export interface Skill {
 	description: string;
 	dir: string;
 	markdown: string;
-	updated_at: number;
+	content_hash: string;
 }
 
 export interface AddSkillRequest {

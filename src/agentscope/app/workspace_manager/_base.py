@@ -4,7 +4,9 @@
 from abc import ABC, abstractmethod
 from typing import Self
 
+from ...mcp import MCPClient
 from ...workspace import WorkspaceBase
+from ..storage import AgentSkillAsset
 
 
 class WorkspaceManagerBase(ABC):
@@ -28,6 +30,8 @@ class WorkspaceManagerBase(ABC):
         agent_id: str,
         session_id: str,
         workspace_id: str,
+        default_mcps: list[MCPClient] | None = None,
+        skill_assets: list[AgentSkillAsset] | None = None,
     ) -> WorkspaceBase:
         """Return an initialized workspace.
 

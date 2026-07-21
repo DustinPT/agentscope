@@ -3,6 +3,7 @@
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
+from ._service import AgentAssetStore
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
@@ -34,6 +35,7 @@ def create_app(
     message_bus: MessageBus,
     workspace_manager: WorkspaceManagerBase,
     *,
+    agent_asset_root: str | None = None,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
     extra_agent_middlewares: AgentMiddlewareFactory | None = None,
@@ -141,6 +143,9 @@ def create_app(
     app.state.storage = storage
     app.state.message_bus = message_bus
     app.state.workspace_manager = workspace_manager
+    app.state.agent_asset_store = AgentAssetStore(
+        agent_asset_root or ".agent_assets",
+    )
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls

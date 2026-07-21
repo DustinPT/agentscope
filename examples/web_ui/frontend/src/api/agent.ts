@@ -1,5 +1,6 @@
 import { client } from './client';
 import type {
+	AgentComposeResponse,
 	AgentListResponse,
 	AgentRecord,
 	AgentSchemaResponse,
@@ -17,6 +18,15 @@ export const agentApi = {
 
 	update: (agentId: string, body: UpdateAgentRequest) =>
 		client.patch<AgentRecord>(`/agent/${agentId}`, body),
+
+	composeCreate: (body: FormData) =>
+		client.postForm<AgentComposeResponse>('/agent/compose', body),
+
+	composeUpdate: (agentId: string, body: FormData) =>
+		client.putForm<AgentComposeResponse>(`/agent/${agentId}/compose`, body),
+
+	downloadSkill: (agentId: string, skillName: string) =>
+		client.getBlob(`/agent/${agentId}/skills/${encodeURIComponent(skillName)}/download`),
 
 	delete: (agentId: string) => client.delete(`/agent/${agentId}`),
 };

@@ -2,13 +2,15 @@ import { CircleAlert, Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { AgentRecord, ContextConfig, ReActConfig } from '@/api';
+import { agentApi } from '@/api';
+import type { AgentRecord, AgentSkillAsset, ContextConfig, MCPClient, ReActConfig } from '@/api';
 import {
 	AgentFormFields,
 	defaultAgentFormValues,
 	type AgentFormValues,
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
+import { AgentWorkspaceConfigFields } from '@/components/form/AgentWorkspaceConfigFields';
 import {
 	createAgentModelConfigValue,
 	parseAgentModelConfigValue,
@@ -50,7 +52,7 @@ interface Props {
 }
 
 export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props) {
-	const { agents, update } = useAgents();
+	const { agents, composeUpdate } = useAgents();
 	const { t } = useTranslation();
 	const { schema } = useAgentSchema();
 	const [submitting, setSubmitting] = useState(false);
@@ -64,6 +66,9 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 	const [reactToolGroupValue, setReactToolGroupValue] = useState<ReActToolGroupConfigValue>(
 		createReActToolGroupConfigValue(agent),
 	);
+	const [mcps, setMcps] = useState<MCPClient[]>(agent.data.mcps ?? []);
+	const [persistedSkills, setPersistedSkills] = useState<AgentSkillAsset[]>(agent.data.skills ?? []);
+	const [pendingSkillFiles, setPendingSkillFiles] = useState<File[]>([]);
 
 	useEffect(() => {
 		if (!open || !schema) {
@@ -91,6 +96,9 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 		setModelConfigValue(createAgentModelConfigValue(agent));
 		setSubAgentValue(createSubAgentConfigValue(agent));
 		setReactToolGroupValue(createReActToolGroupConfigValue(agent));
+		setMcps(agent.data.mcps ?? []);
+		setPersistedSkills(agent.data.skills ?? []);
+		setPendingSkillFiles([]);
 	}, [open, schema, agent]);
 
 	const handleChange = (section: AgentSection, key: string, value: SchemaFormValue) => {
@@ -108,7 +116,8 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 			const modelConfig = parseAgentModelConfigValue(modelConfigValue);
 			const subAgentConfig = parseSubAgentConfigValue(subAgentValue);
 			const reactToolGroupConfig = parseReActToolGroupConfigValue(reactToolGroupValue);
-			await update(agent.id, {
+			const formData = new FormData();
+			const config = {
 				name,
 				description: values.identity.description as string | undefined,
 				system_prompt: values.identity.system_prompt as string | undefined,
@@ -119,12 +128,39 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 				},
 				...modelConfig,
 				...subAgentConfig,
-			});
+				mcps,
+				retained_skill_names: persistedSkills.map((skill) => skill.name),
+			};
+			formData.append('config', JSON.stringify(config));
+			for (const file of pendingSkillFiles) {
+				formData.append('skill_files', file);
+			}
+			await composeUpdate(agent.id, formData);
 			onOpenChange(false);
 			onUpdated?.();
 		} finally {
 			setSubmitting(false);
 		}
+	};
+
+	const handleAddMcps = async (clients: MCPClient[]) => {
+		const existingNames = new Set(mcps.map((mcp) => mcp.name));
+		for (const client of clients) {
+			if (existingNames.has(client.name)) {
+				throw new Error(`MCP server "${client.name}" already exists.`);
+			}
+		}
+		setMcps((prev) => [...prev, ...clients]);
+	};
+
+	const handleDownloadSkill = async (skillName: string) => {
+		const blob = await agentApi.downloadSkill(agent.id, skillName);
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = `${skillName}.zip`;
+		link.click();
+		URL.revokeObjectURL(url);
 	};
 
 	const nameValid = !!(values?.identity.name as string | undefined)?.trim();
@@ -167,6 +203,32 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 								onChange={setSubAgentValue}
 								agents={agents}
 								currentAgentId={agent.id}
+							/>
+							<AgentWorkspaceConfigFields
+								mcps={mcps}
+								onAddMcps={handleAddMcps}
+								onRemoveMcp={(name) =>
+									setMcps((prev) => prev.filter((item) => item.name !== name))
+								}
+								persistedSkills={persistedSkills}
+								pendingSkillFiles={pendingSkillFiles}
+								onAddSkillFiles={(files) =>
+									setPendingSkillFiles((prev) => [
+										...prev,
+										...(files ? Array.from(files) : []),
+									])
+								}
+								onRemovePersistedSkill={(name) =>
+									setPersistedSkills((prev) =>
+										prev.filter((skill) => skill.name !== name),
+									)
+								}
+								onRemovePendingSkill={(index) =>
+									setPendingSkillFiles((prev) =>
+										prev.filter((_, currentIndex) => currentIndex !== index),
+									)
+								}
+								onDownloadSkill={handleDownloadSkill}
 							/>
 						</div>
 					) : (

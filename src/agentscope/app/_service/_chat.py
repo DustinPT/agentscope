@@ -490,6 +490,8 @@ class ChatService:
             agent_id,
             session_id,
             session_record.config.workspace_id,
+            default_mcps=agent_record.data.mcps,
+            skill_assets=agent_record.data.skills,
         )
 
         # Add workspace working directory to the permission context

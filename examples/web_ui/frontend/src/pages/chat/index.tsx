@@ -539,6 +539,7 @@ const ChatPageInner = () => {
 								: undefined
 						}
 						onTeamUpdated={refetchSessions}
+						onAgentUpdated={refetchAgents}
 					/>
 				)}
 			</div>

@@ -11,6 +11,7 @@
 		"credential": "Credentials",
 		"date": "Date",
 		"delete": "Delete",
+		"download": "Download",
 		"deleting": "Deleting…",
 		"disabled": "Disabled",
 		"edit": "Edit",
@@ -139,6 +140,23 @@
 		"title": "Create agent",
 		"description": "Define a new agent's identity and behaviour.",
 		"trigger": "Create agent"
+	},
+	"agent-workspace": {
+		"legend": "Workspace Config",
+		"description": "Configure the default skills and MCP servers available to this agent.",
+		"skills": {
+			"title": "Skills",
+			"description": "Upload skill ZIP packages, and remove or download saved skills.",
+			"upload": "Upload ZIP",
+			"empty": "No skills yet",
+			"pending": "Pending save"
+		},
+		"mcps": {
+			"title": "MCP",
+			"description": "Manage the MCP server list available to this agent by default.",
+			"add": "Add MCP",
+			"empty": "No MCP servers yet"
+		}
 	},
 	"agent-form": {
 		"identity": {

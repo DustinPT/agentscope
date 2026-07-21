@@ -49,6 +49,24 @@ export function useAgents() {
 		[refetch],
 	);
 
+	const composeCreate = useCallback(
+		async (body: FormData) => {
+			const res = await agentApi.composeCreate(body);
+			await refetch();
+			return res;
+		},
+		[refetch],
+	);
+
+	const composeUpdate = useCallback(
+		async (agentId: string, body: FormData) => {
+			const res = await agentApi.composeUpdate(agentId, body);
+			await refetch();
+			return res;
+		},
+		[refetch],
+	);
+
 	/** Deletes an agent and refreshes the list. */
 	const remove = useCallback(
 		async (agentId: string) => {
@@ -58,5 +76,15 @@ export function useAgents() {
 		[refetch],
 	);
 
-	return { agents, loading, error, refetch, create, update, remove };
+	return {
+		agents,
+		loading,
+		error,
+		refetch,
+		create,
+		update,
+		composeCreate,
+		composeUpdate,
+		remove,
+	};
 }

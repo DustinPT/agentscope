@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The local skill loader class."""
 import asyncio
+import hashlib
 import os
 
 import aiofiles
@@ -45,24 +46,25 @@ class LocalSkillLoader(SkillLoaderBase):
             if not await aiofiles.ospath.isfile(skill_md_path):
                 return None
 
-            # Get file modification time
-            updated_at = await aiofiles.ospath.getmtime(skill_md_path)
-
-            # Check cache: if cached skill exists and updated_at matches,
-            # return cached
-            if skill_root in self._cache:
-                cached_skill = self._cache[skill_root]
-                if cached_skill.updated_at == updated_at:
-                    return cached_skill
-
-            # Read and parse SKILL.md
             async with aiofiles.open(
                 skill_md_path,
                 "r",
                 encoding="utf-8",
             ) as f:
                 content_str = await f.read()
-                content = frontmatter.loads(content_str)
+                content_hash = hashlib.sha256(
+                    content_str.encode("utf-8"),
+                ).hexdigest()
+
+            # Check cache: if cached skill exists and content_hash matches,
+            # return cached
+            if skill_root in self._cache:
+                cached_skill = self._cache[skill_root]
+                if cached_skill.content_hash == content_hash:
+                    return cached_skill
+
+            # Parse SKILL.md
+            content = frontmatter.loads(content_str)
 
             name = content.get("name")
             description = content.get("description")
@@ -80,7 +82,7 @@ class LocalSkillLoader(SkillLoaderBase):
                 description=str(description),
                 dir=skill_root,
                 markdown=content.content,
-                updated_at=updated_at,
+                content_hash=content_hash,
             )
 
             # Update cache

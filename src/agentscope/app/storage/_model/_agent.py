@@ -8,6 +8,19 @@ from pydantic import Field, BaseModel
 from ._base import _RecordBase
 from ._session import ChatModelConfig
 from ....agent import ContextConfig, ReActConfig
+from ....mcp import MCPClient
+
+
+class AgentSkillAsset(BaseModel):
+    """Persisted metadata for a managed agent skill asset."""
+
+    name: str = Field(description="Stable skill name used as the business key.")
+    description: str = Field(description="Skill description parsed from SKILL.md.")
+    archive_name: str = Field(description="Original uploaded ZIP filename.")
+    dir: str = Field(description="Server-side extracted skill directory.")
+    content_hash: str = Field(
+        description="Content hash computed from the skill's SKILL.md file.",
+    )
 
 
 class AgentData(BaseModel):
@@ -76,6 +89,18 @@ class AgentData(BaseModel):
             "Ignored when sub-agent calling is disabled."
         ),
         title="Allowed Sub-Agents",
+    )
+
+    mcps: list[MCPClient] = Field(
+        default_factory=list,
+        description="Workspace MCP servers shared by this agent.",
+        title="MCP Servers",
+    )
+
+    skills: list[AgentSkillAsset] = Field(
+        default_factory=list,
+        description="Workspace skills shared by this agent.",
+        title="Skills",
     )
 
 

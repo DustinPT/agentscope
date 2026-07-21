@@ -3,7 +3,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { workspaceApi } from '@/api';
 import type { MCPClient, MCPClientStatus, Skill } from '@/api';
 
-export function useWorkspace(agentId: string | null, sessionId: string | null) {
+export function useWorkspace(
+	agentId: string | null,
+	sessionId: string | null,
+	onAgentUpdated?: () => void | Promise<void>,
+) {
 	const [mcps, setMcps] = useState<MCPClientStatus[]>([]);
 	const [skills, setSkills] = useState<Skill[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -68,8 +72,9 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 				await workspaceApi.mcp.add(agentId, sessionId, mcp);
 			}
 			await refetch();
+			await onAgentUpdated?.();
 		},
-		[agentId, sessionId, mcps, refetch],
+		[agentId, sessionId, mcps, refetch, onAgentUpdated],
 	);
 
 	const removeMcp = useCallback(
@@ -77,8 +82,9 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
 			await workspaceApi.mcp.remove(mcpName, agentId, sessionId);
 			await refetch();
+			await onAgentUpdated?.();
 		},
-		[agentId, sessionId, refetch],
+		[agentId, sessionId, refetch, onAgentUpdated],
 	);
 
 	const addSkill = useCallback(
@@ -86,8 +92,9 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
 			await workspaceApi.skill.add(agentId, sessionId, { skill_path: skillPath });
 			await refetchSkills();
+			await onAgentUpdated?.();
 		},
-		[agentId, sessionId, refetchSkills],
+		[agentId, sessionId, refetchSkills, onAgentUpdated],
 	);
 
 	const removeSkill = useCallback(
@@ -95,8 +102,9 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
 			await workspaceApi.skill.remove(skillName, agentId, sessionId);
 			await refetchSkills();
+			await onAgentUpdated?.();
 		},
-		[agentId, sessionId, refetchSkills],
+		[agentId, sessionId, refetchSkills, onAgentUpdated],
 	);
 
 	return {

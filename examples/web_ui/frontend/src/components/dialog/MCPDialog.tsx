@@ -3,7 +3,7 @@ import { CircleAlert } from 'lucide-react';
 import { useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 
-import type { MCPClient, StdioMCPConfig, HttpMCPConfig } from '@/api/types';
+import type { MCPClient } from '@/api/types';
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
@@ -26,57 +26,13 @@ import {
 } from '@/components/ui/field.tsx';
 import { InputGroup, InputGroupTextarea } from '@/components/ui/input-group.tsx';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import { parseMcpConfig } from './mcpConfig';
 
 type Status = 'idle' | 'loading' | 'success' | 'error';
 
 interface Props {
 	children: ReactNode;
 	onAdd: (mcps: MCPClient[]) => Promise<void>;
-}
-
-function parseMcpConfig(
-	raw: string,
-	keepAlive: boolean,
-	t: (key: string, opts?: Record<string, string>) => string,
-): MCPClient[] {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch (e) {
-		throw new Error(t('dialog-mcp-create.parseError', { message: (e as Error).message }));
-	}
-
-	const obj = parsed as Record<string, unknown>;
-	const servers = obj.mcpServers as Record<string, Record<string, unknown>> | undefined;
-	if (!servers || typeof servers !== 'object') {
-		throw new Error(t('dialog-mcp-create.missingMcpServers'));
-	}
-
-	const entries = Object.entries(servers);
-	if (entries.length === 0) {
-		throw new Error(t('dialog-mcp-create.emptyMcpServers'));
-	}
-
-	return entries.map(([name, config]) => {
-		let mcp_config: StdioMCPConfig | HttpMCPConfig;
-		if ('url' in config) {
-			mcp_config = {
-				type: 'http_mcp',
-				url: config.url as string,
-				headers: (config.headers as Record<string, string> | undefined) ?? null,
-				timeout: (config.timeout as number | undefined) ?? null,
-			};
-		} else {
-			mcp_config = {
-				type: 'stdio_mcp',
-				command: config.command as string,
-				args: (config.args as string[] | undefined) ?? null,
-				env: (config.env as Record<string, string> | undefined) ?? null,
-				cwd: (config.cwd as string | undefined) ?? null,
-			};
-		}
-		return { name, is_stateful: keepAlive, mcp_config };
-	});
 }
 
 export const CreateMCPDialog = ({ children, onAdd }: Props) => {
@@ -116,10 +72,7 @@ export const CreateMCPDialog = ({ children, onAdd }: Props) => {
 		setStatus('loading');
 		try {
 			await onAdd(mcpClients);
-			setStatus('success');
-			setTimeout(() => {
-				handleOpenChange(false);
-			}, 1500);
+			handleOpenChange(false);
 		} catch (e) {
 			// ApiErrors are already shown via the global toast in client.ts.
 			// Show only local validation errors (e.g. duplicate name) inline.

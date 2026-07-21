@@ -8,7 +8,7 @@ from ._manager import (
     ChatRunRegistry,
     SchedulerManager,
 )
-from ._service import ChatService, SessionService
+from ._service import AgentAssetStore, ChatService, SessionService
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .message_bus import MessageBus
 from .storage import StorageBase
@@ -137,6 +137,11 @@ async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
         `WorkspaceManagerBase`: The workspace manager stored in ``app.state``.
     """
     return request.app.state.workspace_manager
+
+
+async def get_agent_asset_store(request: Request) -> AgentAssetStore:
+    """Return the application-wide managed skill asset store."""
+    return request.app.state.agent_asset_store
 
 
 async def get_extra_agent_middlewares(

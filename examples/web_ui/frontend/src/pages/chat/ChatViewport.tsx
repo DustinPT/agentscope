@@ -59,6 +59,7 @@ interface ChatViewportProps {
 	 * passing this callback wires that signal up.
 	 */
 	onTeamUpdated?: () => void;
+	onAgentUpdated?: () => void | Promise<void>;
 }
 
 /**
@@ -90,6 +91,7 @@ export function ChatViewport({
 	pendingInitialUserMsg,
 	onPendingInitialUserMsgConsumed,
 	onTeamUpdated,
+	onAgentUpdated,
 }: ChatViewportProps) {
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
@@ -151,7 +153,7 @@ export function ChatViewport({
 		skillsLoading,
 		addSkill,
 		removeSkill,
-	} = useWorkspace(agentId, sessionId);
+	} = useWorkspace(agentId, sessionId, onAgentUpdated);
 
 	const view = sessionViewOverride ?? sessions.find((v) => v.session.id === sessionId) ?? null;
 

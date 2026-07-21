@@ -2,8 +2,9 @@
 """Request / response schemas for the agent router."""
 from pydantic import BaseModel, Field
 
+from ....mcp import MCPClient
 from ....agent import ContextConfig, ReActConfig
-from ...storage import AgentRecord, ChatModelConfig
+from ...storage import AgentRecord, AgentSkillAsset, ChatModelConfig
 
 
 class CreateAgentRequest(BaseModel):
@@ -43,6 +44,10 @@ class CreateAgentRequest(BaseModel):
     allowed_subagent_ids: list[str] = Field(
         default_factory=list,
         description="Managed agents this agent may call as sub-agents.",
+    )
+    mcps: list[MCPClient] = Field(
+        default_factory=list,
+        description="Workspace MCP servers shared by this agent.",
     )
 
 
@@ -93,6 +98,35 @@ class UpdateAgentRequest(BaseModel):
         default=None,
         description="Managed agents this agent may call as sub-agents.",
     )
+    mcps: list[MCPClient] | None = Field(
+        default=None,
+        description="Workspace MCP servers shared by this agent.",
+    )
+
+
+class AgentComposeConfig(CreateAgentRequest):
+    """Full agent config payload carried inside compose multipart requests."""
+
+
+class AgentComposeUpdateConfig(CreateAgentRequest):
+    """Full update payload carried inside compose multipart requests."""
+
+    retained_skill_names: list[str] = Field(
+        default_factory=list,
+        description="Existing skills that should remain after this update.",
+    )
+
+
+class AgentComposeResponse(BaseModel):
+    """Response body for compose create/update endpoints."""
+
+    agent: AgentRecord
+
+
+class AgentSkillListResponse(BaseModel):
+    """Response body for managed skill metadata."""
+
+    skills: list[AgentSkillAsset]
 
 
 class ListAgentsResponse(BaseModel):

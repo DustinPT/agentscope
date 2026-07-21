@@ -16,6 +16,10 @@ from ._agent import (
     CreateAgentRequest,
     CreateAgentResponse,
     UpdateAgentRequest,
+    AgentComposeConfig,
+    AgentComposeUpdateConfig,
+    AgentComposeResponse,
+    AgentSkillListResponse,
 )
 from ._credential import (
     CreateCredentialRequest,
@@ -44,6 +48,10 @@ __all__ = [
     "CreateAgentRequest",
     "CreateAgentResponse",
     "UpdateAgentRequest",
+    "AgentComposeConfig",
+    "AgentComposeUpdateConfig",
+    "AgentComposeResponse",
+    "AgentSkillListResponse",
     "ListSchedulesResponse",
     # Chat
     "ChatRequest",

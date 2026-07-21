@@ -1,13 +1,23 @@
 # -*- coding: utf-8 -*-
 """Service layer for the AgentScope app."""
+from ._agent_asset_store import AgentAssetStore
 from ._chat import ChatService
 from ._model import get_model
 from ._session import SessionService
 from ._toolkit import get_toolkit
+from ._workspace_seed import (
+    sync_workspace_mcps,
+    sync_workspace_skills,
+    sync_workspace_state,
+)
 
 __all__ = [
+    "AgentAssetStore",
     "ChatService",
     "SessionService",
     "get_model",
     "get_toolkit",
+    "sync_workspace_mcps",
+    "sync_workspace_skills",
+    "sync_workspace_state",
 ]

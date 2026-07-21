@@ -192,8 +192,10 @@ class LocalWorkspace(WorkspaceBase):
         # Restore or seed MCPs
         mcp_file = os.path.join(self.workdir, ".mcp")
         if await aiofiles.ospath.exists(mcp_file):
-            async with aiofiles.open(mcp_file, "r", encoding="utf-8") as f:
-                raw_list = json.loads(await f.read())
+            try:
+                async with aiofiles.open(mcp_file, "r", encoding="utf-8") as f:
+                    raw_content = await f.read()
+                raw_list = json.loads(raw_content) if raw_content.strip() else []
                 for m in raw_list:
                     try:
                         self._mcps.append(MCPClient.model_validate(m))
@@ -203,6 +205,14 @@ class LocalWorkspace(WorkspaceBase):
                             m.get("name", "?"),
                             e,
                         )
+            except Exception as e:
+                logger.warning(
+                    "Failed to load .mcp from %s: %s. Resetting to defaults.",
+                    mcp_file,
+                    str(e),
+                )
+                self._mcps = list(self.default_mcps)
+                await self._save_mcp_file()
         else:
             self._mcps = list(self.default_mcps)
             await self._save_mcp_file()
@@ -849,8 +859,6 @@ class LocalWorkspace(WorkspaceBase):
             if not await aiofiles.ospath.isfile(skill_md_path):
                 return None
 
-            updated_at = await aiofiles.ospath.getmtime(skill_md_path)
-
             async with aiofiles.open(
                 skill_md_path,
                 "r",
@@ -872,7 +880,9 @@ class LocalWorkspace(WorkspaceBase):
                 description=str(description),
                 dir=skill_dir,
                 markdown=content.content,
-                updated_at=updated_at,
+                content_hash=hashlib.sha256(
+                    content_str.encode("utf-8"),
+                ).hexdigest(),
             )
 
         except Exception as e:

@@ -24,6 +24,8 @@ The gateway bearer token is freshly generated on each ``initialize``
 and shipped into the container via the gateway config file — it is
 *not* persisted.
 """
+import hashlib
+
 
 import asyncio
 import base64
@@ -465,7 +467,7 @@ class DockerWorkspace(WorkspaceBase):
                         description=str(desc),
                         dir=posixpath.dirname(md_path),
                         markdown=doc.content or "",
-                        updated_at=0.0,
+                        content_hash=hashlib.sha256(raw).hexdigest(),
                     ),
                 )
             except Exception as e:

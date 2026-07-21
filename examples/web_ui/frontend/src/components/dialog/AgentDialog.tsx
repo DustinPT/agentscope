@@ -2,13 +2,14 @@ import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { ContextConfig, ReActConfig } from '@/api';
+import type { ContextConfig, MCPClient, ReActConfig } from '@/api';
 import {
 	AgentFormFields,
 	defaultAgentFormValues,
 	type AgentFormValues,
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
+import { AgentWorkspaceConfigFields } from '@/components/form/AgentWorkspaceConfigFields';
 import {
 	createAgentModelConfigValue,
 	parseAgentModelConfigValue,
@@ -49,7 +50,7 @@ interface Props {
 }
 
 export function AgentDialog({ onCreated, triggerId }: Props) {
-	const { agents, create } = useAgents();
+	const { agents, composeCreate } = useAgents();
 	const { t } = useTranslation();
 	const { schema } = useAgentSchema();
 	const [open, setOpen] = useState(false);
@@ -64,6 +65,8 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 	const [reactToolGroupValue, setReactToolGroupValue] = useState<ReActToolGroupConfigValue>(
 		createReActToolGroupConfigValue(),
 	);
+	const [mcps, setMcps] = useState<MCPClient[]>([]);
+	const [pendingSkillFiles, setPendingSkillFiles] = useState<File[]>([]);
 
 	useEffect(() => {
 		if (open && schema && !values) {
@@ -71,12 +74,16 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 			setModelConfigValue(createAgentModelConfigValue());
 			setSubAgentValue(createSubAgentConfigValue());
 			setReactToolGroupValue(createReActToolGroupConfigValue());
+			setMcps([]);
+			setPendingSkillFiles([]);
 		}
 		if (!open) {
 			setValues(null);
 			setModelConfigValue(createAgentModelConfigValue());
 			setSubAgentValue(createSubAgentConfigValue());
 			setReactToolGroupValue(createReActToolGroupConfigValue());
+			setMcps([]);
+			setPendingSkillFiles([]);
 		}
 	}, [open, schema, values]);
 
@@ -95,7 +102,8 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 			const modelConfig = parseAgentModelConfigValue(modelConfigValue);
 			const subAgentConfig = parseSubAgentConfigValue(subAgentValue);
 			const reactToolGroupConfig = parseReActToolGroupConfigValue(reactToolGroupValue);
-			await create({
+			const formData = new FormData();
+			const config = {
 				name,
 				description: values.identity.description as string | undefined,
 				system_prompt: values.identity.system_prompt as string | undefined,
@@ -106,12 +114,31 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 				},
 				...modelConfig,
 				...subAgentConfig,
-			});
+				mcps,
+			};
+			formData.append('config', JSON.stringify(config));
+			for (const file of pendingSkillFiles) {
+				formData.append('skill_files', file);
+			}
+			await composeCreate(formData);
 			setOpen(false);
 			onCreated?.();
 		} finally {
 			setSubmitting(false);
 		}
+	};
+
+	const handleAddMcps = async (clients: MCPClient[]) => {
+		setMcps((prev) => {
+			const next = [...prev];
+			for (const client of clients) {
+				if (next.some((item) => item.name === client.name)) {
+					throw new Error(`MCP server "${client.name}" already exists.`);
+				}
+				next.push(client);
+			}
+			return next;
+		});
 	};
 
 	const nameValid = !!(values?.identity.name as string | undefined)?.trim();
@@ -159,6 +186,28 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 								value={subAgentValue}
 								onChange={setSubAgentValue}
 								agents={agents}
+							/>
+							<AgentWorkspaceConfigFields
+								mcps={mcps}
+								onAddMcps={handleAddMcps}
+								onRemoveMcp={(name) =>
+									setMcps((prev) => prev.filter((item) => item.name !== name))
+								}
+								persistedSkills={[]}
+								pendingSkillFiles={pendingSkillFiles}
+								onAddSkillFiles={(files) =>
+									setPendingSkillFiles((prev) => [
+										...prev,
+										...(files ? Array.from(files) : []),
+									])
+								}
+								onRemovePersistedSkill={() => undefined}
+								onRemovePendingSkill={(index) =>
+									setPendingSkillFiles((prev) =>
+										prev.filter((_, currentIndex) => currentIndex !== index),
+									)
+								}
+								onDownloadSkill={async () => undefined}
 							/>
 						</div>
 					) : (
