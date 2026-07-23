@@ -67,6 +67,8 @@ class StagedAgentPackage:
 class AgentAssetStore:
     """Manage staged and committed agent skill and MCP assets on local disk."""
 
+    _AGENT_ID_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,31}")
+
     def __init__(self, root_dir: str) -> None:
         self._root_dir = os.path.abspath(root_dir)
         self._staging_dir = os.path.join(self._root_dir, ".staging")
@@ -233,10 +235,15 @@ class AgentAssetStore:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Each agent entry must include a non-empty 'id'.",
                 )
-            if agent_id in {".", ".."} or "/" in agent_id or "\\" in agent_id:
+            if not AgentAssetStore._AGENT_ID_PATTERN.fullmatch(agent_id):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid agent id '{agent_id}'.",
+                    detail=(
+                        f"Invalid agent id '{agent_id}'. Agent ids must start "
+                        "with a letter or underscore, contain only letters, "
+                        "digits, underscores, or hyphens, and be at most 32 "
+                        "characters long."
+                    ),
                 )
             name = item.get("name")
             if not isinstance(name, str) or not name.strip():

@@ -14,7 +14,8 @@ Verifies the assembly rules:
   ``agent_record.source``: ``"team"`` → one ``TeamSay`` (worker variant);
   anything else → the full leader-side toolset of four;
 - ``TaskStop`` and ``reset_tools`` are not exposed;
-- ``SubAgentRun`` still follows the existing sub-agent permissions config;
+- ``SubAgentRun`` follows the sub-agent permissions config independently
+  of the ``team`` builtin tool group and requires a non-empty allow-list;
 - caller-supplied ``extra_factory`` results land at the end.
 """
 from typing import Any
@@ -431,8 +432,8 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
 class TestGetToolkitSubAgentRun(IsolatedAsyncioTestCase):
     """Sub-agent execution follows the existing allow-list strategy."""
 
-    async def test_subagentrun_enabled_strategy_unchanged(self) -> None:
-        """SubAgentRun still depends on allow_subagent_calls, not team group."""
+    async def test_subagentrun_enabled_without_team_group(self) -> None:
+        """SubAgentRun only depends on the sub-agent permission flags."""
         allowed_agent = _make_agent(name="child")
         agent = _make_agent(
             enabled_builtin_tool_groups=["read"],
@@ -459,6 +460,34 @@ class TestGetToolkitSubAgentRun(IsolatedAsyncioTestCase):
             extra_factory=None,
         )
         self.assertIn("SubAgentRun", set(_tool_names(toolkit)))
+
+    async def test_subagentrun_disabled_when_allowlist_empty(self) -> None:
+        """SubAgentRun is omitted when no callable sub-agents are configured."""
+        agent = _make_agent(
+            enabled_builtin_tool_groups=["read"],
+            allow_subagent_calls=True,
+            allowed_subagent_ids=[],
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            scheduler_manager=SchedulerManager(
+                storage=_NoOpStorage(),  # type: ignore[arg-type]
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
+            background_task_manager=BackgroundTaskManager(),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+        )
+        self.assertNotIn("SubAgentRun", set(_tool_names(toolkit)))
 
 
 class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):

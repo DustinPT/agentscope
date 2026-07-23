@@ -58,6 +58,7 @@ async def get_toolkit(
        the full leader-side toolset
        (``TeamCreate / AgentCreate / TeamSay / TeamDelete``)
     5. Sub-agent execution (`SubAgentRun`) when enabled by agent config
+       (independent of the ``team`` builtin-tool-group switch)
     6. Caller-supplied extras (``extra_factory``)
 
     Plus the workspace's skills and MCPs, which become the toolkit's
@@ -160,10 +161,11 @@ optional):
         "session_id": session_record.id,
         "agent_id": agent_record.id,
     }
-    if "team" in enabled_builtin_tool_groups and agent_record.source == "team":
-        tools.append(TeamSay(**team_tool_kwargs, role="worker"))
-    elif "team" in enabled_builtin_tool_groups:
-        allowed_subagents = []
+    allowed_subagents = []
+    if (
+        agent_record.data.allow_subagent_calls
+        and agent_record.data.allowed_subagent_ids
+    ):
         for subagent_id in agent_record.data.allowed_subagent_ids:
             subagent_record = await storage.get_agent(user_id, subagent_id)
             if subagent_record is None or subagent_record.user_id != user_id:
@@ -175,6 +177,20 @@ optional):
                     "description": subagent_record.data.description,
                 },
             )
+        tools.append(
+            SubAgentRun(
+                storage=storage,
+                message_bus=message_bus,
+                user_id=user_id,
+                session_id=session_record.id,
+                agent_id=agent_record.id,
+                allowed_subagents=allowed_subagents,
+            ),
+        )
+
+    if "team" in enabled_builtin_tool_groups and agent_record.source == "team":
+        tools.append(TeamSay(**team_tool_kwargs, role="worker"))
+    elif "team" in enabled_builtin_tool_groups:
         tools += [
             TeamCreate(**team_tool_kwargs),
             AgentCreate(
@@ -184,17 +200,6 @@ optional):
             TeamSay(**team_tool_kwargs, role="leader"),
             TeamDelete(**team_tool_kwargs),
         ]
-        if agent_record.data.allow_subagent_calls:
-            tools.append(
-                SubAgentRun(
-                    storage=storage,
-                    message_bus=message_bus,
-                    user_id=user_id,
-                    session_id=session_record.id,
-                    agent_id=agent_record.id,
-                    allowed_subagents=allowed_subagents,
-                ),
-            )
 
     # Caller-supplied extras.
     if extra_factory is not None:
