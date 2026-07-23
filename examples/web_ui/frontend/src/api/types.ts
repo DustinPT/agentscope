@@ -94,6 +94,19 @@ export interface AgentComposeResponse {
 	agent: AgentRecord;
 }
 
+export interface AgentPackageImportResult {
+	agent_id: string;
+	action: 'created' | 'updated';
+	agent: AgentRecord;
+}
+
+export interface AgentPackageImportResponse {
+	main_agent_id: string;
+	results: AgentPackageImportResult[];
+	created_count: number;
+	updated_count: number;
+}
+
 export interface AgentListResponse {
 	agents: AgentRecord[];
 	total: number;

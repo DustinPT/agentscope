@@ -1,6 +1,7 @@
 import { client } from './client';
 import type {
 	AgentComposeResponse,
+	AgentPackageImportResponse,
 	AgentListResponse,
 	AgentRecord,
 	AgentSchemaResponse,
@@ -24,6 +25,9 @@ export const agentApi = {
 
 	composeUpdate: (agentId: string, body: FormData) =>
 		client.putForm<AgentComposeResponse>(`/agent/${agentId}/compose`, body),
+
+	importPackage: (body: FormData) =>
+		client.postForm<AgentPackageImportResponse>('/agent/package/import', body),
 
 	downloadSkill: (agentId: string, skillName: string) =>
 		client.getBlob(`/agent/${agentId}/skills/${encodeURIComponent(skillName)}/download`),

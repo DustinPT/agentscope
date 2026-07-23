@@ -14,6 +14,8 @@ from ._agent import (
     AgentSchemaResponse,
     ListAgentsResponse,
     AgentMCPAssetListResponse,
+    AgentPackageImportResponse,
+    AgentPackageImportResult,
     CreateAgentRequest,
     CreateAgentResponse,
     UpdateAgentRequest,
@@ -46,6 +48,8 @@ __all__ = [
     # Agent
     "AgentSchemaResponse",
     "AgentMCPAssetListResponse",
+    "AgentPackageImportResponse",
+    "AgentPackageImportResult",
     "ListAgentsResponse",
     "CreateAgentRequest",
     "CreateAgentResponse",

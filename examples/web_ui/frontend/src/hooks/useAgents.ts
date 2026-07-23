@@ -67,6 +67,15 @@ export function useAgents() {
 		[refetch],
 	);
 
+	const importPackage = useCallback(
+		async (body: FormData) => {
+			const res = await agentApi.importPackage(body);
+			await refetch();
+			return res;
+		},
+		[refetch],
+	);
+
 	/** Deletes an agent and refreshes the list. */
 	const remove = useCallback(
 		async (agentId: string) => {
@@ -85,6 +94,7 @@ export function useAgents() {
 		update,
 		composeCreate,
 		composeUpdate,
+		importPackage,
 		remove,
 	};
 }

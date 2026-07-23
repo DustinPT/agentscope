@@ -141,6 +141,18 @@
 		"description": "Define a new agent's identity and behaviour.",
 		"trigger": "Create agent"
 	},
+	"dialog-agent-package-import": {
+		"title": "Import package",
+		"description": "Upload an agent package ZIP to create or update agents from the package config.",
+		"trigger": "Import package",
+		"fileLabel": "Package file",
+		"fileDescription": "Choose a ZIP containing config.json, system_prompt.md, skills, and mcps.",
+		"select": "Select ZIP",
+		"empty": "No file selected",
+		"confirm": "Import",
+		"importing": "Importing",
+		"success": "Import complete: created {{created}} agent(s), updated {{updated}} agent(s)."
+	},
 	"agent-workspace": {
 		"legend": "Workspace Config",
 		"description": "Configure the default skills and MCP servers available to this agent.",

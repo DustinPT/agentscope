@@ -141,6 +141,18 @@
 		"description": "定义新 Agent 的身份与行为。",
 		"trigger": "创建 Agent"
 	},
+	"dialog-agent-package-import": {
+		"title": "导入安装包",
+		"description": "上传 Agent 安装包 ZIP，按包内配置批量创建或更新 Agent。",
+		"trigger": "导入安装包",
+		"fileLabel": "安装包文件",
+		"fileDescription": "请选择包含 config.json、system_prompt.md、skills 和 mcps 的 ZIP 文件。",
+		"select": "选择 ZIP",
+		"empty": "尚未选择文件",
+		"confirm": "开始导入",
+		"importing": "导入中",
+		"success": "导入完成：创建 {{created}} 个，更新 {{updated}} 个 Agent。"
+	},
 	"agent-workspace": {
 		"legend": "工作区配置",
 		"description": "配置该智能体默认可用的技能和 MCP 服务。",

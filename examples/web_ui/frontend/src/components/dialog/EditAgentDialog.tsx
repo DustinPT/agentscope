@@ -49,18 +49,25 @@ import {
 	DialogTitle,
 	DialogDescription,
 } from '@/components/ui/dialog';
-import { useAgents } from '@/hooks/useAgents';
 import { useAgentSchema } from '@/hooks/useAgentSchema';
 
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	agent: AgentRecord;
+	agents: AgentRecord[];
+	composeUpdate: (agentId: string, body: FormData) => Promise<AgentRecord>;
 	onUpdated?: () => void;
 }
 
-export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props) {
-	const { agents, composeUpdate } = useAgents();
+export function EditAgentDialog({
+	open,
+	onOpenChange,
+	agent,
+	agents,
+	composeUpdate,
+	onUpdated,
+}: Props) {
 	const { t } = useTranslation();
 	const { schema } = useAgentSchema();
 	const [submitting, setSubmitting] = useState(false);
@@ -221,6 +228,7 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 								onChange={setSubAgentValue}
 								agents={agents}
 								currentAgentId={agent.id}
+								initialSelectedAgentIds={agent.data.allowed_subagent_ids ?? []}
 							/>
 							<AgentWorkspaceConfigFields
 								mcps={mcps}

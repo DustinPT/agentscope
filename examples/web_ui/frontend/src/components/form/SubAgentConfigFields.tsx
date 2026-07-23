@@ -22,6 +22,7 @@ interface Props {
 	onChange: (value: SubAgentConfigValue) => void;
 	agents: AgentRecord[];
 	currentAgentId?: string;
+	initialSelectedAgentIds?: string[];
 }
 
 export function SubAgentConfigFields({
@@ -29,11 +30,26 @@ export function SubAgentConfigFields({
 	onChange,
 	agents,
 	currentAgentId,
+	initialSelectedAgentIds = [],
 }: Props) {
 	const { t } = useTranslation();
 	const options = useMemo(
-		() => agents.filter((agent) => agent.id !== currentAgentId),
-		[agents, currentAgentId],
+		() =>
+			agents
+				.filter((agent) => agent.id !== currentAgentId)
+				.map((agent, index) => ({
+					agent,
+					index,
+					selected: initialSelectedAgentIds.includes(agent.id),
+				}))
+				.sort((left, right) => {
+					if (left.selected !== right.selected) {
+						return left.selected ? -1 : 1;
+					}
+					return left.index - right.index;
+				})
+				.map((item) => item.agent),
+		[agents, currentAgentId, initialSelectedAgentIds],
 	);
 
 	return (

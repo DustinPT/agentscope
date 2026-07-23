@@ -23,6 +23,7 @@ import {
 	type SessionDraftState,
 } from '@/components/chat/SessionDraftComposer';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
+import { AgentPackageImportDialog } from '@/components/dialog/AgentPackageImportDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
@@ -104,7 +105,13 @@ const ChatPageInner = () => {
 		memberId?: string;
 	}>();
 	const { t } = useTranslation();
-	const { agents, refetch: refetchAgents, remove: removeAgent } = useAgents();
+	const {
+		agents,
+		refetch: refetchAgents,
+		remove: removeAgent,
+		importPackage,
+		composeUpdate,
+	} = useAgents();
 	const {
 		sessions,
 		refetch: refetchSessions,
@@ -376,7 +383,13 @@ const ChatPageInner = () => {
 									<Trash2 className="text-destructive" />
 								</Button>
 							</div>
-							<AgentDialog onCreated={refetchAgents} triggerId="tour-create-agent" />
+							<div className="flex flex-wrap gap-2">
+								<AgentDialog onCreated={refetchAgents} triggerId="tour-create-agent" />
+								<AgentPackageImportDialog
+									importPackage={importPackage}
+									onImported={refetchAgents}
+								/>
+							</div>
 						</div>
 					</SidebarHeader>
 					<SidebarContent className="my-5">
@@ -549,6 +562,8 @@ const ChatPageInner = () => {
 						open={editOpen}
 						onOpenChange={setEditOpen}
 						agent={selectedAgent}
+						agents={agents}
+						composeUpdate={composeUpdate}
 						onUpdated={refetchAgents}
 					/>
 					<DeleteDialog

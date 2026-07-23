@@ -194,6 +194,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 								value={subAgentValue}
 								onChange={setSubAgentValue}
 								agents={agents}
+								initialSelectedAgentIds={subAgentValue.allowed_subagent_ids}
 							/>
 							<AgentWorkspaceConfigFields
 								mcps={mcps}
