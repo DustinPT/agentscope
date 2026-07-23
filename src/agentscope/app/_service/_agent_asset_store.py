@@ -57,6 +57,20 @@ class AgentAssetStore:
     def _agent_dir(self, user_id: str, agent_id: str) -> str:
         return os.path.join(self._root_dir, user_id, agent_id)
 
+    def _agent_skill_root_dir(self, user_id: str, agent_id: str) -> str:
+        return os.path.join(self._agent_dir(user_id, agent_id), "skills")
+
+    def _agent_skill_dir(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+    ) -> str:
+        return os.path.join(
+            self._agent_skill_root_dir(user_id, agent_id),
+            skill_name,
+        )
+
     def _agent_mcp_dir(self, user_id: str, agent_id: str) -> str:
         return os.path.join(self._agent_dir(user_id, agent_id), "mcps")
 
@@ -300,11 +314,11 @@ class AgentAssetStore:
         """Move staged skills into the managed agent asset directory."""
 
         def _commit() -> list[AgentSkillAsset]:
-            agent_dir = self._agent_dir(user_id, agent_id)
-            os.makedirs(agent_dir, exist_ok=True)
+            skill_root_dir = self._agent_skill_root_dir(user_id, agent_id)
+            os.makedirs(skill_root_dir, exist_ok=True)
             committed: list[AgentSkillAsset] = []
             for item in staged:
-                target_dir = os.path.join(agent_dir, item.name)
+                target_dir = self._agent_skill_dir(user_id, agent_id, item.name)
                 if os.path.exists(target_dir):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -409,7 +423,7 @@ class AgentAssetStore:
                     detail=f"Skill path does not exist: {skill_path}",
                 )
             name, description, content_hash = self._read_skill_metadata(source_dir)
-            target_dir = os.path.join(self._agent_dir(user_id, agent_id), name)
+            target_dir = self._agent_skill_dir(user_id, agent_id, name)
             if os.path.exists(target_dir):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -436,10 +450,9 @@ class AgentAssetStore:
         """Delete committed skill directories by name."""
 
         def _delete() -> None:
-            agent_dir = self._agent_dir(user_id, agent_id)
             for skill_name in skill_names:
                 shutil.rmtree(
-                    os.path.join(agent_dir, skill_name),
+                    self._agent_skill_dir(user_id, agent_id, skill_name),
                     ignore_errors=True,
                 )
 
@@ -472,7 +485,7 @@ class AgentAssetStore:
         """Create a ZIP archive from a committed skill directory."""
 
         def _zip() -> tuple[str, bytes]:
-            skill_dir = os.path.join(self._agent_dir(user_id, agent_id), skill_name)
+            skill_dir = self._agent_skill_dir(user_id, agent_id, skill_name)
             if not os.path.isdir(skill_dir):
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
