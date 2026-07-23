@@ -59,6 +59,7 @@ SANDBOX_USER_HOME = "/home/user"
 # Workspace-side persistent layout — mirrors the DockerWorkspace one.
 SANDBOX_WORKDIR = f"{SANDBOX_USER_HOME}/workspace"
 SANDBOX_DATA_DIR = f"{SANDBOX_WORKDIR}/data"
+SANDBOX_MCPS_DIR = f"{SANDBOX_WORKDIR}/mcps"
 SANDBOX_SKILLS_DIR = f"{SANDBOX_WORKDIR}/skills"
 SANDBOX_SESSIONS_DIR = f"{SANDBOX_WORKDIR}/sessions"
 SANDBOX_MCP_FILE = f"{SANDBOX_WORKDIR}/.mcp"
@@ -144,7 +145,7 @@ def bootstrap_commands(
     return [
         # 1. Persistent layout. mkdir -p is cheap on resume too — keeps
         #    the command idempotent in case bootstrap is re-run.
-        f"mkdir -p {SANDBOX_DATA_DIR} {SANDBOX_SKILLS_DIR} "
+        f"mkdir -p {SANDBOX_DATA_DIR} {SANDBOX_MCPS_DIR} {SANDBOX_SKILLS_DIR} "
         f"{SANDBOX_SESSIONS_DIR} {GATEWAY_HOME}",
         # 2. Astral uv — same shell installer as Docker. The base E2B
         #    image already ships ``curl``; we land uv at

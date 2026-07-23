@@ -68,6 +68,7 @@ async def _resolve_agent_workspace(
         session_id,
         session_record.config.workspace_id,
         default_mcps=agent_record.data.mcps,
+        mcp_assets=agent_record.data.mcp_assets,
         skill_assets=agent_record.data.skills,
     )
     return agent_record, workspace
@@ -167,6 +168,7 @@ async def add_mcp(
     await sync_workspace_state(
         workspace,
         expected_mcps=updated_agent.data.mcps,
+        expected_mcp_assets=updated_agent.data.mcp_assets,
         expected_skills=updated_agent.data.skills,
     )
 
@@ -199,6 +201,7 @@ async def remove_mcp(
     await sync_workspace_state(
         workspace,
         expected_mcps=updated_agent.data.mcps,
+        expected_mcp_assets=updated_agent.data.mcp_assets,
         expected_skills=updated_agent.data.skills,
     )
 
@@ -263,6 +266,7 @@ async def add_skill(
     await sync_workspace_state(
         workspace,
         expected_mcps=updated_agent.data.mcps,
+        expected_mcp_assets=updated_agent.data.mcp_assets,
         expected_skills=updated_agent.data.skills,
     )
 
@@ -297,5 +301,6 @@ async def remove_skill(
     await sync_workspace_state(
         workspace,
         expected_mcps=updated_agent.data.mcps,
+        expected_mcp_assets=updated_agent.data.mcp_assets,
         expected_skills=updated_agent.data.skills,
     )

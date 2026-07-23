@@ -34,7 +34,13 @@ from ._schema import (
 )
 from .._service import AgentAssetStore
 from .._service import SessionService
-from ..storage import StorageBase, AgentData, AgentRecord, AgentSkillAsset
+from ..storage import (
+    AgentData,
+    AgentMCPAsset,
+    AgentRecord,
+    AgentSkillAsset,
+    StorageBase,
+)
 
 
 async def _ensure_credential_exists(
@@ -106,6 +112,7 @@ async def _get_agent_or_404(
 def _build_agent_data(
     body: CreateAgentRequest,
     *,
+    mcp_assets: list[AgentMCPAsset] | None = None,
     skills: list[AgentSkillAsset] | None = None,
     existing_id: str | None = None,
 ) -> AgentData:
@@ -113,6 +120,7 @@ def _build_agent_data(
     payload = body.model_dump(mode="python")
     if existing_id is not None:
         payload["id"] = existing_id
+    payload["mcp_assets"] = mcp_assets or []
     payload["skills"] = skills or []
     return AgentData.model_validate(payload)
 
@@ -148,6 +156,21 @@ def _ensure_unique_skill_names(skills: list[AgentSkillAsset]) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Duplicate skill name '{dup}'.",
+        )
+
+
+def _ensure_unique_mcp_names(
+    mcps: list,
+    mcp_assets: list[AgentMCPAsset],
+) -> None:
+    """Reject duplicated MCP names across JSON and asset-based MCPs."""
+    names = [mcp.name for mcp in mcps] + [asset.name for asset in mcp_assets]
+    duplicates = {name for name in names if names.count(name) > 1}
+    if duplicates:
+        dup = sorted(duplicates)[0]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Duplicate MCP name '{dup}'.",
         )
 
 
@@ -395,6 +418,7 @@ async def update_agent(
 )
 async def compose_create_agent(
     config: Annotated[str, Form(...)],
+    mcp_files: Annotated[list[UploadFile], File()] = [],
     skill_files: Annotated[list[UploadFile], File()] = [],
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
@@ -409,10 +433,14 @@ async def compose_create_agent(
         body=body,
     )
 
-    staged: list = []
+    staged_skills: list = []
+    staged_mcps: list = []
     try:
-        staged = [await asset_store.stage_skill_zip(file) for file in skill_files]
-        if staged:
+        staged_skills = [
+            await asset_store.stage_skill_zip(file) for file in skill_files
+        ]
+        staged_mcps = [await asset_store.stage_mcp_zip(file) for file in mcp_files]
+        if staged_skills:
             _ensure_unique_skill_names(
                 [
                     AgentSkillAsset(
@@ -422,24 +450,43 @@ async def compose_create_agent(
                         dir="",
                         content_hash=item.content_hash,
                     )
-                    for item in staged
+                    for item in staged_skills
                 ],
             )
+        staged_mcp_assets = [
+            AgentMCPAsset(
+                name=item.name,
+                archive_name=item.archive_name,
+                dir="",
+                content_hash=item.content_hash,
+                client=item.client,
+            )
+            for item in staged_mcps
+        ]
+        _ensure_unique_mcp_names(body.mcps, staged_mcp_assets)
         record = AgentRecord(
             user_id=user_id,
             data=_build_agent_data(body),
         )
-        committed = await asset_store.commit_staged_skills(
+        committed_mcps = await asset_store.commit_staged_mcps(
             user_id,
             record.id,
-            staged,
+            staged_mcps,
         )
-        record.data.skills = committed
+        committed_skills = await asset_store.commit_staged_skills(
+            user_id,
+            record.id,
+            staged_skills,
+        )
+        record.data.mcp_assets = committed_mcps
+        record.data.skills = committed_skills
         await storage.upsert_agent(user_id, record)
         return AgentComposeResponse(agent=record)
     finally:
-        if staged:
-            await asset_store.cleanup_staged_skills(staged)
+        if staged_mcps:
+            await asset_store.cleanup_staged_mcps(staged_mcps)
+        if staged_skills:
+            await asset_store.cleanup_staged_skills(staged_skills)
 
 
 @agent_router.put(
@@ -450,6 +497,7 @@ async def compose_create_agent(
 async def compose_update_agent(
     agent_id: str,
     config: Annotated[str, Form(...)],
+    mcp_files: Annotated[list[UploadFile], File()] = [],
     skill_files: Annotated[list[UploadFile], File()] = [],
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
@@ -465,40 +513,105 @@ async def compose_update_agent(
         body=CreateAgentRequest.model_validate(body.model_dump(mode="python")),
     )
 
-    existing_map = {skill.name: skill for skill in existing.data.skills}
+    existing_skill_map = {skill.name: skill for skill in existing.data.skills}
+    existing_mcp_asset_map = {
+        mcp_asset.name: mcp_asset for mcp_asset in existing.data.mcp_assets
+    }
     unknown_retained = sorted(
-        set(body.retained_skill_names) - set(existing_map),
+        set(body.retained_skill_names) - set(existing_skill_map),
     )
     if unknown_retained:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown retained skill '{unknown_retained[0]}'.",
         )
+    unknown_retained_mcp_assets = sorted(
+        set(body.retained_mcp_asset_names) - set(existing_mcp_asset_map),
+    )
+    if unknown_retained_mcp_assets:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown retained MCP '{unknown_retained_mcp_assets[0]}'.",
+        )
 
-    staged: list = []
+    staged_skills: list = []
+    staged_mcps: list = []
     try:
-        staged = [await asset_store.stage_skill_zip(file) for file in skill_files]
-        staged_names = [item.name for item in staged]
-        if len(staged_names) != len(set(staged_names)):
-            dup = next(name for name in staged_names if staged_names.count(name) > 1)
+        staged_skills = [
+            await asset_store.stage_skill_zip(file) for file in skill_files
+        ]
+        staged_mcps = [await asset_store.stage_mcp_zip(file) for file in mcp_files]
+
+        staged_skill_names = [item.name for item in staged_skills]
+        if len(staged_skill_names) != len(set(staged_skill_names)):
+            dup = next(
+                name
+                for name in staged_skill_names
+                if staged_skill_names.count(name) > 1
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Duplicate skill name '{dup}'.",
             )
-        conflict = set(staged_names).intersection(body.retained_skill_names)
-        if conflict:
+        staged_mcp_names = [item.name for item in staged_mcps]
+        if len(staged_mcp_names) != len(set(staged_mcp_names)):
+            dup = next(
+                name
+                for name in staged_mcp_names
+                if staged_mcp_names.count(name) > 1
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Skill '{sorted(conflict)[0]}' already exists.",
+                detail=f"Duplicate MCP name '{dup}'.",
             )
 
-        retained_skills = [existing_map[name] for name in body.retained_skill_names]
-        committed = await asset_store.commit_staged_skills(user_id, agent_id, staged)
-        final_skills = retained_skills + committed
+        skill_conflict = set(staged_skill_names).intersection(body.retained_skill_names)
+        if skill_conflict:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Skill '{sorted(skill_conflict)[0]}' already exists.",
+            )
+        json_mcp_conflict = set(staged_mcp_names).intersection(
+            {mcp.name for mcp in body.mcps},
+        )
+        if json_mcp_conflict:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"MCP '{sorted(json_mcp_conflict)[0]}' already exists.",
+            )
+
+        retained_skills = [
+            existing_skill_map[name] for name in body.retained_skill_names
+        ]
+        retained_mcp_assets = [
+            existing_mcp_asset_map[name] for name in body.retained_mcp_asset_names
+        ]
+        replace_names = set(staged_mcp_names).intersection(existing_mcp_asset_map)
+        retained_mcp_assets = [
+            asset
+            for asset in retained_mcp_assets
+            if asset.name not in replace_names
+        ]
+
+        committed_mcps = await asset_store.commit_staged_mcps(
+            user_id,
+            agent_id,
+            staged_mcps,
+            replace_names=replace_names,
+        )
+        committed_skills = await asset_store.commit_staged_skills(
+            user_id,
+            agent_id,
+            staged_skills,
+        )
+        final_mcp_assets = retained_mcp_assets + committed_mcps
+        final_skills = retained_skills + committed_skills
+        _ensure_unique_mcp_names(body.mcps, final_mcp_assets)
         _ensure_unique_skill_names(final_skills)
 
         updated_data = _build_agent_data(
             CreateAgentRequest.model_validate(body.model_dump(mode="python")),
+            mcp_assets=final_mcp_assets,
             skills=final_skills,
             existing_id=existing.data.id,
         )
@@ -507,6 +620,16 @@ async def compose_update_agent(
         )
         await storage.upsert_agent(user_id, updated_agent)
 
+        removed_mcp_names = [
+            mcp_asset.name
+            for mcp_asset in existing.data.mcp_assets
+            if (
+                mcp_asset.name not in body.retained_mcp_asset_names
+                and mcp_asset.name not in staged_mcp_names
+            )
+        ]
+        if removed_mcp_names:
+            await asset_store.delete_mcps(user_id, agent_id, removed_mcp_names)
         removed_skill_names = [
             skill.name
             for skill in existing.data.skills
@@ -516,8 +639,10 @@ async def compose_update_agent(
             await asset_store.delete_skills(user_id, agent_id, removed_skill_names)
         return AgentComposeResponse(agent=updated_agent)
     finally:
-        if staged:
-            await asset_store.cleanup_staged_skills(staged)
+        if staged_mcps:
+            await asset_store.cleanup_staged_mcps(staged_mcps)
+        if staged_skills:
+            await asset_store.cleanup_staged_skills(staged_skills)
 
 
 @agent_router.get(

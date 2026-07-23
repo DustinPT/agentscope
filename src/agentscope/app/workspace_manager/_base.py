@@ -6,7 +6,7 @@ from typing import Self
 
 from ...mcp import MCPClient
 from ...workspace import WorkspaceBase
-from ..storage import AgentSkillAsset
+from ..storage import AgentMCPAsset, AgentSkillAsset
 
 
 class WorkspaceManagerBase(ABC):
@@ -31,6 +31,7 @@ class WorkspaceManagerBase(ABC):
         session_id: str,
         workspace_id: str,
         default_mcps: list[MCPClient] | None = None,
+        mcp_assets: list[AgentMCPAsset] | None = None,
         skill_assets: list[AgentSkillAsset] | None = None,
     ) -> WorkspaceBase:
         """Return an initialized workspace.

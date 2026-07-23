@@ -45,7 +45,7 @@ from agentscope.workspace._e2b._bootstrap import (
     DEFAULT_TIMEOUT,
 )
 from .._service._workspace_seed import sync_workspace_state
-from ..storage import AgentSkillAsset
+from ..storage import AgentMCPAsset, AgentSkillAsset
 from ._base import WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
@@ -193,6 +193,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         workspace_id: str,
         default_mcps: list[MCPClient] | None = None,
+        mcp_assets: list[AgentMCPAsset] | None = None,
         skill_assets: list[AgentSkillAsset] | None = None,
     ) -> E2BWorkspace:
         """Return an initialised workspace, reattaching on cache miss.
@@ -236,6 +237,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 await sync_workspace_state(
                     ws,
                     expected_mcps=default_mcps or [],
+                    expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
                 )
                 return ws
@@ -251,6 +253,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 await sync_workspace_state(
                     ws,
                     expected_mcps=default_mcps or [],
+                    expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
                 )
                 return ws
@@ -263,6 +266,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             await sync_workspace_state(
                 ws,
                 expected_mcps=default_mcps or [],
+                expected_mcp_assets=mcp_assets or [],
                 expected_skills=skill_assets or [],
             )
             self._cache[workspace_id] = (ws, time.monotonic())

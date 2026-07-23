@@ -1,9 +1,17 @@
 import { CircleAlert, Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import { agentApi } from '@/api';
-import type { AgentRecord, AgentSkillAsset, ContextConfig, MCPClient, ReActConfig } from '@/api';
+import type {
+	AgentMCPAsset,
+	AgentRecord,
+	AgentSkillAsset,
+	ContextConfig,
+	MCPClient,
+	ReActConfig,
+} from '@/api';
 import {
 	AgentFormFields,
 	defaultAgentFormValues,
@@ -67,6 +75,10 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 		createReActToolGroupConfigValue(agent),
 	);
 	const [mcps, setMcps] = useState<MCPClient[]>(agent.data.mcps ?? []);
+	const [persistedMcpAssets, setPersistedMcpAssets] = useState<AgentMCPAsset[]>(
+		agent.data.mcp_assets ?? [],
+	);
+	const [pendingMcpFiles, setPendingMcpFiles] = useState<File[]>([]);
 	const [persistedSkills, setPersistedSkills] = useState<AgentSkillAsset[]>(agent.data.skills ?? []);
 	const [pendingSkillFiles, setPendingSkillFiles] = useState<File[]>([]);
 
@@ -97,6 +109,8 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 		setSubAgentValue(createSubAgentConfigValue(agent));
 		setReactToolGroupValue(createReActToolGroupConfigValue(agent));
 		setMcps(agent.data.mcps ?? []);
+		setPersistedMcpAssets(agent.data.mcp_assets ?? []);
+		setPendingMcpFiles([]);
 		setPersistedSkills(agent.data.skills ?? []);
 		setPendingSkillFiles([]);
 	}, [open, schema, agent]);
@@ -129,9 +143,13 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 				...modelConfig,
 				...subAgentConfig,
 				mcps,
+				retained_mcp_asset_names: persistedMcpAssets.map((mcp) => mcp.name),
 				retained_skill_names: persistedSkills.map((skill) => skill.name),
 			};
 			formData.append('config', JSON.stringify(config));
+			for (const file of pendingMcpFiles) {
+				formData.append('mcp_files', file);
+			}
 			for (const file of pendingSkillFiles) {
 				formData.append('skill_files', file);
 			}
@@ -167,7 +185,7 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="!w-[500px] !max-w-[500px]">
+			<DialogContent className="!w-[640px] !max-w-[640px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-agent-edit.title')}</DialogTitle>
 					<DialogDescription className="sr-only">
@@ -209,6 +227,38 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 								onAddMcps={handleAddMcps}
 								onRemoveMcp={(name) =>
 									setMcps((prev) => prev.filter((item) => item.name !== name))
+								}
+								persistedMcpAssets={persistedMcpAssets}
+								pendingMcpFiles={pendingMcpFiles}
+								onAddMcpFiles={(files) => {
+									const nextFiles = files ? Array.from(files) : [];
+									const existingJsonNames = new Set(mcps.map((mcp) => mcp.name));
+									for (const file of nextFiles) {
+										const baseName = file.name.replace(/\.zip$/i, '');
+										if (existingJsonNames.has(baseName)) {
+											toast.error(
+												t('agent-workspace.mcps.conflict-json', { name: baseName }),
+											);
+											return;
+										}
+									}
+									setPendingMcpFiles((prev) => [...prev, ...nextFiles]);
+									setPersistedMcpAssets((prev) => {
+										const replacedNames = new Set(
+											nextFiles.map((file) => file.name.replace(/\.zip$/i, '')),
+										);
+										return prev.filter((asset) => !replacedNames.has(asset.name));
+									});
+								}}
+								onRemovePersistedMcpAsset={(name) =>
+									setPersistedMcpAssets((prev) =>
+										prev.filter((mcpAsset) => mcpAsset.name !== name),
+									)
+								}
+								onRemovePendingMcpFile={(index) =>
+									setPendingMcpFiles((prev) =>
+										prev.filter((_, currentIndex) => currentIndex !== index),
+									)
 								}
 								persistedSkills={persistedSkills}
 								pendingSkillFiles={pendingSkillFiles}

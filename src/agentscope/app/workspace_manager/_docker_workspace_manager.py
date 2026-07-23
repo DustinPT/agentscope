@@ -38,7 +38,7 @@ from agentscope.workspace._docker._make_dockerfile import (
     DEFAULT_GATEWAY_PORT,
 )
 from .._service._workspace_seed import sync_workspace_state
-from ..storage import AgentSkillAsset
+from ..storage import AgentMCPAsset, AgentSkillAsset
 from ._base import WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
@@ -173,6 +173,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         workspace_id: str,
         default_mcps: list[MCPClient] | None = None,
+        mcp_assets: list[AgentMCPAsset] | None = None,
         skill_assets: list[AgentSkillAsset] | None = None,
     ) -> DockerWorkspace:
         """Return an initialised workspace, building one on cache miss.
@@ -212,6 +213,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 await sync_workspace_state(
                     ws,
                     expected_mcps=default_mcps or [],
+                    expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
                 )
                 return ws
@@ -227,6 +229,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 await sync_workspace_state(
                     ws,
                     expected_mcps=default_mcps or [],
+                    expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
                 )
                 return ws
@@ -239,6 +242,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             await sync_workspace_state(
                 ws,
                 expected_mcps=default_mcps or [],
+                expected_mcp_assets=mcp_assets or [],
                 expected_skills=skill_assets or [],
             )
             self._cache[workspace_id] = (ws, time.monotonic())

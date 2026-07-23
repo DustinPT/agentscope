@@ -24,9 +24,6 @@ The gateway bearer token is freshly generated on each ``initialize``
 and shipped into the container via the gateway config file — it is
 *not* persisted.
 """
-import hashlib
-
-
 import asyncio
 import base64
 import hashlib
@@ -77,6 +74,8 @@ from ._make_dockerfile import (
     GATEWAY_VENV,
     prepare_build_context,
 )
+
+CONTAINER_MCPS_DIR = f"{CONTAINER_WORKDIR}/mcps"
 
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
@@ -627,6 +626,100 @@ class DockerWorkspace(WorkspaceBase):
             raise RuntimeError(
                 f"Failed to remove skill {name!r}: "
                 f"{result.stderr.decode(errors='replace')}",
+            )
+
+    async def sync_mcp_asset(
+        self,
+        name: str,
+        source_dir: str,
+        content_hash: str,
+    ) -> tuple[str, bool]:
+        """Copy one MCP asset directory into ``mcps/`` inside the container."""
+        target_dir = f"{CONTAINER_MCPS_DIR}/{name}"
+        marker_name = ".agentscope_asset_hash"
+        marker_path = f"{target_dir}/{marker_name}"
+        async with self._mcp_lock:
+            await self._exec(f"mkdir -p {CONTAINER_MCPS_DIR}")
+            if self.host_workdir is not None:
+                host_mcps_dir = os.path.join(self.host_workdir, "mcps")
+                host_target_dir = os.path.join(host_mcps_dir, name)
+                host_marker_path = os.path.join(host_target_dir, marker_name)
+                os.makedirs(host_mcps_dir, exist_ok=True)
+                if os.path.isdir(host_target_dir) and os.path.isfile(host_marker_path):
+                    with open(host_marker_path, encoding="utf-8") as f:
+                        existing_hash = f.read().strip()
+                    if existing_hash == content_hash:
+                        return target_dir, False
+                if os.path.isdir(host_target_dir):
+                    shutil.rmtree(host_target_dir, ignore_errors=True)
+                shutil.copytree(source_dir, host_target_dir)
+                with open(host_marker_path, "w", encoding="utf-8") as f:
+                    f.write(content_hash)
+                return target_dir, True
+
+            result = await self._exec(
+                f"cat {shlex.quote(marker_path)} 2>/dev/null || true",
+            )
+            existing_hash = result.stdout.decode(errors="replace").strip()
+            if existing_hash == content_hash:
+                return target_dir, False
+            await self._exec(f"rm -rf {shlex.quote(target_dir)}")
+
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as tf:
+                for root, _dirs, files in os.walk(source_dir):
+                    for file_name in files:
+                        abs_path = os.path.join(root, file_name)
+                        rel_path = os.path.relpath(abs_path, source_dir)
+                        tar_path = posixpath.join(name, rel_path.replace(os.sep, "/"))
+                        tf.add(abs_path, arcname=tar_path, recursive=False)
+            await self._container.put_archive(
+                CONTAINER_MCPS_DIR,
+                buf.getvalue(),
+            )
+            await self._exec(
+                f"printf %s {shlex.quote(content_hash)} > {shlex.quote(marker_path)}",
+            )
+        return target_dir, True
+
+    async def remove_mcp_asset(self, name: str) -> None:
+        """Delete one MCP asset directory from ``mcps/``."""
+        target_dir = f"{CONTAINER_MCPS_DIR}/{name}"
+        async with self._mcp_lock:
+            result = await self._exec(f"rm -rf {shlex.quote(target_dir)}")
+            if not result.ok():
+                raise RuntimeError(
+                    f"Failed to remove MCP asset {name!r}: "
+                    f"{result.stderr.decode(errors='replace')}",
+                )
+            if self.host_workdir is not None:
+                shutil.rmtree(
+                    os.path.join(self.host_workdir, "mcps", name),
+                    ignore_errors=True,
+                )
+
+    async def list_mcp_asset_names(self) -> list[str]:
+        """List MCP asset directory names from ``mcps/``."""
+        async with self._mcp_lock:
+            if self.host_workdir is not None:
+                host_mcps_dir = os.path.join(self.host_workdir, "mcps")
+                if not os.path.isdir(host_mcps_dir):
+                    return []
+                return sorted(
+                    entry
+                    for entry in os.listdir(host_mcps_dir)
+                    if os.path.isdir(os.path.join(host_mcps_dir, entry))
+                )
+
+            result = await self._exec(
+                f"ls -1 {shlex.quote(CONTAINER_MCPS_DIR)} 2>/dev/null || true",
+            )
+            if not result.ok():
+                return []
+            return sorted(
+                line.strip()
+                for line in result.stdout.decode(errors="replace").splitlines()
+                if line.strip()
             )
 
     # ── offload ─────────────────────────────────────────────────

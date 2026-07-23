@@ -1092,3 +1092,63 @@ class LocalWorkspace(WorkspaceBase):
                 skills_dir,
             )
             await self._save_skills_file(skills_dir, skills_file)
+
+    async def sync_mcp_asset(
+        self,
+        name: str,
+        source_dir: str,
+        content_hash: str,
+    ) -> tuple[str, bool]:
+        """Copy one MCP asset directory into ``mcps/`` under the workspace."""
+        target_root = os.path.join(self.workdir, "mcps")
+        target_dir = os.path.join(target_root, name)
+        marker_file = os.path.join(target_dir, ".agentscope_asset_hash")
+        async with self._mcp_lock:
+            os.makedirs(target_root, exist_ok=True)
+            if await aiofiles.ospath.isdir(target_dir) and await aiofiles.ospath.isfile(
+                marker_file,
+            ):
+                async with aiofiles.open(
+                    marker_file,
+                    "r",
+                    encoding="utf-8",
+                ) as f:
+                    existing_hash = (await f.read()).strip()
+                if existing_hash == content_hash:
+                    return target_dir, False
+            if await aiofiles.ospath.isdir(target_dir):
+                await asyncio.to_thread(shutil.rmtree, target_dir)
+            await asyncio.to_thread(
+                shutil.copytree,
+                source_dir,
+                target_dir,
+                dirs_exist_ok=False,
+            )
+            async with aiofiles.open(
+                marker_file,
+                "w",
+                encoding="utf-8",
+            ) as f:
+                await f.write(content_hash)
+        return target_dir, True
+
+    async def remove_mcp_asset(self, name: str) -> None:
+        """Delete one MCP asset directory from ``mcps/``."""
+        target_dir = os.path.join(self.workdir, "mcps", name)
+        async with self._mcp_lock:
+            if await aiofiles.ospath.isdir(target_dir):
+                await asyncio.to_thread(shutil.rmtree, target_dir)
+
+    async def list_mcp_asset_names(self) -> list[str]:
+        """List MCP asset directory names from ``mcps/``."""
+        target_root = os.path.join(self.workdir, "mcps")
+        async with self._mcp_lock:
+            if not await aiofiles.ospath.isdir(target_root):
+                return []
+            entries = await asyncio.to_thread(os.listdir, target_root)
+            results: list[str] = []
+            for entry in entries:
+                entry_path = os.path.join(target_root, entry)
+                if await aiofiles.ospath.isdir(entry_path):
+                    results.append(entry)
+            return sorted(results)

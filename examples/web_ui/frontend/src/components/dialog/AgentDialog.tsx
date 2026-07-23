@@ -1,33 +1,34 @@
 import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
-import type { ContextConfig, MCPClient, ReActConfig } from '@/api';
+import type { AgentMCPAsset, ContextConfig, MCPClient, ReActConfig } from '@/api';
 import {
 	AgentFormFields,
 	defaultAgentFormValues,
 	type AgentFormValues,
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
-import { AgentWorkspaceConfigFields } from '@/components/form/AgentWorkspaceConfigFields';
 import {
 	createAgentModelConfigValue,
 	parseAgentModelConfigValue,
 	type AgentModelConfigValue,
 } from '@/components/form/agentModelConfig';
 import { AgentModelConfigFields } from '@/components/form/AgentModelConfigFields';
-import type { SchemaFormValue } from '@/components/form/SchemaForm';
-import {
-	createSubAgentConfigValue,
-	parseSubAgentConfigValue,
-	type SubAgentConfigValue,
-} from '@/components/form/subAgentConfig';
+import { AgentWorkspaceConfigFields } from '@/components/form/AgentWorkspaceConfigFields';
 import {
 	createReActToolGroupConfigValue,
 	parseReActToolGroupConfigValue,
 	type ReActToolGroupConfigValue,
 } from '@/components/form/reactToolGroupConfig';
 import { ReActToolGroupFields } from '@/components/form/ReActToolGroupFields';
+import type { SchemaFormValue } from '@/components/form/SchemaForm';
+import {
+	createSubAgentConfigValue,
+	parseSubAgentConfigValue,
+	type SubAgentConfigValue,
+} from '@/components/form/subAgentConfig';
 import {
 	SubAgentConfigFields,
 } from '@/components/form/SubAgentConfigFields';
@@ -66,6 +67,8 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 		createReActToolGroupConfigValue(),
 	);
 	const [mcps, setMcps] = useState<MCPClient[]>([]);
+	const [persistedMcpAssets] = useState<AgentMCPAsset[]>([]);
+	const [pendingMcpFiles, setPendingMcpFiles] = useState<File[]>([]);
 	const [pendingSkillFiles, setPendingSkillFiles] = useState<File[]>([]);
 
 	useEffect(() => {
@@ -75,6 +78,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 			setSubAgentValue(createSubAgentConfigValue());
 			setReactToolGroupValue(createReActToolGroupConfigValue());
 			setMcps([]);
+			setPendingMcpFiles([]);
 			setPendingSkillFiles([]);
 		}
 		if (!open) {
@@ -83,6 +87,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 			setSubAgentValue(createSubAgentConfigValue());
 			setReactToolGroupValue(createReActToolGroupConfigValue());
 			setMcps([]);
+			setPendingMcpFiles([]);
 			setPendingSkillFiles([]);
 		}
 	}, [open, schema, values]);
@@ -117,6 +122,9 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 				mcps,
 			};
 			formData.append('config', JSON.stringify(config));
+			for (const file of pendingMcpFiles) {
+				formData.append('mcp_files', file);
+			}
 			for (const file of pendingSkillFiles) {
 				formData.append('skill_files', file);
 			}
@@ -151,7 +159,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 					<span>{t('dialog-agent-create.trigger')}</span>
 				</Button>
 			</DialogTrigger>
-			<DialogContent className="!w-[500px] !max-w-[500px]">
+			<DialogContent className="!w-[640px] !max-w-[640px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-agent-create.title')}</DialogTitle>
 					<DialogDescription className="sr-only">
@@ -192,6 +200,28 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 								onAddMcps={handleAddMcps}
 								onRemoveMcp={(name) =>
 									setMcps((prev) => prev.filter((item) => item.name !== name))
+								}
+								persistedMcpAssets={persistedMcpAssets}
+								pendingMcpFiles={pendingMcpFiles}
+								onAddMcpFiles={(files) => {
+									const nextFiles = files ? Array.from(files) : [];
+									const existingJsonNames = new Set(mcps.map((mcp) => mcp.name));
+									for (const file of nextFiles) {
+										const baseName = file.name.replace(/\.zip$/i, '');
+										if (existingJsonNames.has(baseName)) {
+											toast.error(
+												t('agent-workspace.mcps.conflict-json', { name: baseName }),
+											);
+											return;
+										}
+									}
+									setPendingMcpFiles((prev) => [...prev, ...nextFiles]);
+								}}
+								onRemovePersistedMcpAsset={() => undefined}
+								onRemovePendingMcpFile={(index) =>
+									setPendingMcpFiles((prev) =>
+										prev.filter((_, currentIndex) => currentIndex !== index),
+									)
 								}
 								persistedSkills={[]}
 								pendingSkillFiles={pendingSkillFiles}

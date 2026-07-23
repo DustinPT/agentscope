@@ -4,7 +4,12 @@ from pydantic import BaseModel, Field
 
 from ....mcp import MCPClient
 from ....agent import ContextConfig, ReActConfig
-from ...storage import AgentRecord, AgentSkillAsset, ChatModelConfig
+from ...storage import (
+    AgentMCPAsset,
+    AgentRecord,
+    AgentSkillAsset,
+    ChatModelConfig,
+)
 
 
 class CreateAgentRequest(BaseModel):
@@ -111,6 +116,10 @@ class AgentComposeConfig(CreateAgentRequest):
 class AgentComposeUpdateConfig(CreateAgentRequest):
     """Full update payload carried inside compose multipart requests."""
 
+    retained_mcp_asset_names: list[str] = Field(
+        default_factory=list,
+        description="Existing MCP assets that should remain after this update.",
+    )
     retained_skill_names: list[str] = Field(
         default_factory=list,
         description="Existing skills that should remain after this update.",
@@ -127,6 +136,12 @@ class AgentSkillListResponse(BaseModel):
     """Response body for managed skill metadata."""
 
     skills: list[AgentSkillAsset]
+
+
+class AgentMCPAssetListResponse(BaseModel):
+    """Response body for managed MCP asset metadata."""
+
+    mcps: list[AgentMCPAsset]
 
 
 class ListAgentsResponse(BaseModel):

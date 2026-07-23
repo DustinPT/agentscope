@@ -153,9 +153,13 @@
 		},
 		"mcps": {
 			"title": "MCP",
-			"description": "Manage the MCP server list available to this agent by default.",
+			"description": "Manage the MCP server list available to this agent by default with JSON config or MCP ZIP uploads.",
 			"add": "Add MCP",
-			"empty": "No MCP servers yet"
+			"upload": "Upload ZIP",
+			"empty": "No MCP servers yet",
+			"pending": "Pending ZIP",
+			"asset-saved": "Saved ZIP",
+			"conflict-json": "The MCP ZIP conflicts with an existing JSON MCP \"{{name}}\". Remove that JSON MCP first."
 		}
 	},
 	"agent-form": {

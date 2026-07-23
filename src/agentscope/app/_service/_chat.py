@@ -491,6 +491,7 @@ class ChatService:
             session_id,
             session_record.config.workspace_id,
             default_mcps=agent_record.data.mcps,
+            mcp_assets=agent_record.data.mcp_assets,
             skill_assets=agent_record.data.skills,
         )
 

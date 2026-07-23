@@ -2,7 +2,7 @@ import { Download, PlusCircle, Trash2, Upload } from 'lucide-react';
 import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { AgentSkillAsset, MCPClient } from '@/api';
+import type { AgentMCPAsset, AgentSkillAsset, MCPClient } from '@/api';
 import { CreateMCPDialog } from '@/components/dialog/MCPDialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,6 +22,11 @@ interface Props {
 	mcps: MCPClient[];
 	onAddMcps: (mcps: MCPClient[]) => Promise<void>;
 	onRemoveMcp: (name: string) => void;
+	persistedMcpAssets: AgentMCPAsset[];
+	pendingMcpFiles: File[];
+	onAddMcpFiles: (files: FileList | null) => void;
+	onRemovePersistedMcpAsset: (name: string) => void;
+	onRemovePendingMcpFile: (index: number) => void;
 	persistedSkills: AgentSkillAsset[];
 	pendingSkillFiles: File[];
 	onAddSkillFiles: (files: FileList | null) => void;
@@ -34,6 +39,11 @@ export function AgentWorkspaceConfigFields({
 	mcps,
 	onAddMcps,
 	onRemoveMcp,
+	persistedMcpAssets,
+	pendingMcpFiles,
+	onAddMcpFiles,
+	onRemovePersistedMcpAsset,
+	onRemovePendingMcpFile,
 	persistedSkills,
 	pendingSkillFiles,
 	onAddSkillFiles,
@@ -43,6 +53,7 @@ export function AgentWorkspaceConfigFields({
 }: Props) {
 	const { t } = useTranslation();
 	const skillInputRef = useRef<HTMLInputElement | null>(null);
+	const mcpInputRef = useRef<HTMLInputElement | null>(null);
 
 	return (
 		<FieldSet>
@@ -163,19 +174,88 @@ export function AgentWorkspaceConfigFields({
 									{t('agent-workspace.mcps.description')}
 								</div>
 							</div>
-							<CreateMCPDialog onAdd={onAddMcps}>
-								<Button type="button" variant="outline">
-									<PlusCircle className="size-3.5" />
-									{t('agent-workspace.mcps.add')}
+							<div className="flex items-center gap-2">
+								<Button
+									type="button"
+									variant="outline"
+									onClick={() => mcpInputRef.current?.click()}
+								>
+									<Upload className="size-3.5" />
+									{t('agent-workspace.mcps.upload')}
 								</Button>
-							</CreateMCPDialog>
+								<CreateMCPDialog onAdd={onAddMcps}>
+									<Button type="button" variant="outline">
+										<PlusCircle className="size-3.5" />
+										{t('agent-workspace.mcps.add')}
+									</Button>
+								</CreateMCPDialog>
+							</div>
 						</div>
-						{mcps.length === 0 ? (
+						<input
+							ref={mcpInputRef}
+							type="file"
+							accept=".zip"
+							multiple
+							className="hidden"
+							onChange={(e) => {
+								onAddMcpFiles(e.target.files);
+								e.currentTarget.value = '';
+							}}
+						/>
+						{mcps.length === 0 &&
+						persistedMcpAssets.length === 0 &&
+						pendingMcpFiles.length === 0 ? (
 							<p className="text-muted-foreground text-sm">
 								{t('agent-workspace.mcps.empty')}
 							</p>
 						) : (
 							<div className="space-y-2">
+								{persistedMcpAssets.map((asset) => (
+									<div
+										key={`persisted-asset-${asset.name}`}
+										className="border-border flex items-center justify-between rounded-md border px-3 py-2"
+									>
+										<div className="min-w-0">
+											<div className="truncate text-sm font-medium">{asset.name}</div>
+											<div className="text-muted-foreground truncate text-xs">
+												{t('agent-workspace.mcps.asset-saved')}
+												{': '}
+												{asset.archive_name}
+											</div>
+										</div>
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											onClick={() => onRemovePersistedMcpAsset(asset.name)}
+										>
+											<Trash2 className="size-3.5" />
+											{t('common.delete')}
+										</Button>
+									</div>
+								))}
+								{pendingMcpFiles.map((file, index) => (
+									<div
+										key={`pending-mcp-${file.name}-${index}`}
+										className="border-border flex items-center justify-between rounded-md border border-dashed px-3 py-2"
+									>
+										<div className="min-w-0">
+											<div className="truncate text-sm font-medium">{file.name}</div>
+											<div className="text-muted-foreground text-xs">
+												{t('agent-workspace.mcps.pending')}
+											</div>
+										</div>
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											onClick={() => onRemovePendingMcpFile(index)}
+										>
+											<Trash2 className="size-3.5" />
+											{t('common.delete')}
+										</Button>
+									</div>
+								))}
 								{mcps.map((mcp) => (
 									<div
 										key={mcp.name}

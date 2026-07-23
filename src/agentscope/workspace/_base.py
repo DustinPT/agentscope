@@ -204,3 +204,34 @@ class WorkspaceBase:
         Raises:
             KeyError: If the skill is not found in the workspace.
         """
+
+    @abstractmethod
+    async def sync_mcp_asset(
+        self,
+        name: str,
+        source_dir: str,
+        content_hash: str,
+    ) -> tuple[str, bool]:
+        """Copy or upload one MCP asset directory into the workspace.
+
+        Args:
+            name: MCP asset name, used as the target directory name under
+                ``<workdir>/mcps``.
+            source_dir: Absolute path to the extracted MCP asset directory on
+                the host filesystem.
+            content_hash: Stable asset content hash used to detect whether the
+                runtime MCP process must be refreshed.
+
+        Returns:
+            A tuple of ``(target_dir, changed)`` where ``changed`` indicates
+            whether the asset content differs from the version already present
+            in the workspace.
+        """
+
+    @abstractmethod
+    async def remove_mcp_asset(self, name: str) -> None:
+        """Remove one MCP asset directory from the workspace."""
+
+    @abstractmethod
+    async def list_mcp_asset_names(self) -> list[str]:
+        """List MCP asset directory names currently present in the workspace."""

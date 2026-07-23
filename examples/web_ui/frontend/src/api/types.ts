@@ -43,6 +43,7 @@ export interface AgentData {
 	allow_subagent_calls: boolean;
 	allowed_subagent_ids: string[];
 	mcps: MCPClient[];
+	mcp_assets: AgentMCPAsset[];
 	skills: AgentSkillAsset[];
 }
 
@@ -85,6 +86,7 @@ export interface AgentComposeConfig extends CreateAgentRequest {
 
 export interface AgentComposeUpdateConfig extends CreateAgentRequest {
 	mcps?: MCPClient[];
+	retained_mcp_asset_names: string[];
 	retained_skill_names: string[];
 }
 
@@ -372,6 +374,14 @@ export interface ToolInfo {
 export interface MCPClientStatus extends MCPClient {
 	is_healthy: boolean;
 	tools: ToolInfo[];
+}
+
+export interface AgentMCPAsset {
+	name: string;
+	archive_name: string;
+	dir: string;
+	content_hash: string;
+	client: MCPClient;
 }
 
 export interface AgentSkillAsset {

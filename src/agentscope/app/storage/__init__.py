@@ -5,6 +5,7 @@ from ._base import StorageBase
 from ._redis_storage import RedisStorage
 from ._model import (
     AgentData,
+    AgentMCPAsset,
     AgentRecord,
     AgentSkillAsset,
     CredentialRecord,
@@ -25,6 +26,7 @@ __all__ = [
     "RedisStorage",
     # The ORM models
     "AgentData",
+    "AgentMCPAsset",
     "AgentRecord",
     "AgentSkillAsset",
     "CredentialRecord",

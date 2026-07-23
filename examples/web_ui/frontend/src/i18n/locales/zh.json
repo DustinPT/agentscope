@@ -153,9 +153,13 @@
 		},
 		"mcps": {
 			"title": "MCP",
-			"description": "维护该智能体默认可用的 MCP 服务器列表。",
+			"description": "维护该智能体默认可用的 MCP 服务器列表，支持 JSON 配置和 MCP ZIP 上传。",
 			"add": "添加 MCP",
-			"empty": "暂无 MCP 服务器"
+			"upload": "上传 ZIP",
+			"empty": "暂无 MCP 服务器",
+			"pending": "待保存 ZIP",
+			"asset-saved": "已保存 ZIP",
+			"conflict-json": "MCP ZIP 与现有 JSON MCP \"{{name}}\" 同名，请先删除该 JSON MCP。"
 		}
 	},
 	"agent-form": {

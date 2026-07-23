@@ -33,9 +33,6 @@ Docker engine for the E2B SDK (``e2b.AsyncSandbox``):
 Configuration is per-instance: every workspace owns one sandbox. The
 manager handles cache, TTL eviction and metadata-based reattachment.
 """
-import hashlib
-
-
 import asyncio
 import base64
 import hashlib
@@ -80,6 +77,7 @@ from ._bootstrap import (
     GATEWAY_VENV_PY,
     METADATA_WORKSPACE_ID_KEY,
     SANDBOX_DATA_DIR,
+    SANDBOX_MCPS_DIR,
     SANDBOX_MCP_FILE,
     SANDBOX_SESSIONS_DIR,
     SANDBOX_SKILLS_DIR,
@@ -565,6 +563,64 @@ class E2BWorkspace(WorkspaceBase):
                 f"Failed to remove skill {name!r}: "
                 f"{result.stderr.decode(errors='replace')}",
             )
+
+    async def sync_mcp_asset(
+        self,
+        name: str,
+        source_dir: str,
+        content_hash: str,
+    ) -> tuple[str, bool]:
+        """Upload one MCP asset directory into ``mcps/`` inside the sandbox."""
+        target_dir = f"{SANDBOX_MCPS_DIR}/{name}"
+        marker_path = f"{target_dir}/.agentscope_asset_hash"
+        async with self._mcp_lock:
+            await self._exec(f"mkdir -p {SANDBOX_MCPS_DIR}")
+            try:
+                existing_hash = (
+                    await self._sandbox.files.read(marker_path)
+                ).decode().strip()
+                if existing_hash == content_hash:
+                    return target_dir, False
+            except Exception:
+                pass
+            await self._exec(f"rm -rf {shlex.quote(target_dir)}")
+            for root, _dirs, files in os.walk(source_dir):
+                for fname in files:
+                    local = os.path.join(root, fname)
+                    rel = os.path.relpath(local, source_dir)
+                    remote = f"{target_dir}/{rel}"
+                    with open(local, "rb") as f:
+                        data = f.read()
+                    await self._sandbox.files.write(remote, data)
+            await self._sandbox.files.write(
+                marker_path,
+                content_hash.encode("utf-8"),
+            )
+        return target_dir, True
+
+    async def remove_mcp_asset(self, name: str) -> None:
+        """Delete one MCP asset directory from ``mcps/``."""
+        result = await self._exec(
+            f"rm -rf {shlex.quote(f'{SANDBOX_MCPS_DIR}/{name}')}",
+        )
+        if not result.ok():
+            raise RuntimeError(
+                f"Failed to remove MCP asset {name!r}: "
+                f"{result.stderr.decode(errors='replace')}",
+            )
+
+    async def list_mcp_asset_names(self) -> list[str]:
+        """List MCP asset directory names from ``mcps/``."""
+        result = await self._exec(
+            f"ls -1 {shlex.quote(SANDBOX_MCPS_DIR)} 2>/dev/null || true",
+        )
+        if not result.ok():
+            return []
+        return sorted(
+            line.strip()
+            for line in result.stdout.decode(errors="replace").splitlines()
+            if line.strip()
+        )
 
     # ── offload ─────────────────────────────────────────────────
 

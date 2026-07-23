@@ -23,6 +23,20 @@ class AgentSkillAsset(BaseModel):
     )
 
 
+class AgentMCPAsset(BaseModel):
+    """Persisted metadata for a managed agent MCP asset."""
+
+    name: str = Field(description="Stable MCP name used as the business key.")
+    archive_name: str = Field(description="Original uploaded ZIP filename.")
+    dir: str = Field(description="Server-side extracted MCP directory.")
+    content_hash: str = Field(
+        description="Content hash computed from the MCP package metadata.",
+    )
+    client: MCPClient = Field(
+        description="Normalized MCP client configuration parsed from mcp.json.",
+    )
+
+
 class AgentData(BaseModel):
     """The agent data model."""
 
@@ -95,6 +109,12 @@ class AgentData(BaseModel):
         default_factory=list,
         description="Workspace MCP servers shared by this agent.",
         title="MCP Servers",
+    )
+
+    mcp_assets: list[AgentMCPAsset] = Field(
+        default_factory=list,
+        description="Managed MCP packages shared by this agent.",
+        title="MCP Assets",
     )
 
     skills: list[AgentSkillAsset] = Field(

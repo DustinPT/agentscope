@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Managed skill asset storage for agent-level workspace configuration."""
+"""Managed skill and MCP asset storage for agent-level workspace configuration."""
 
 import asyncio
 import hashlib
 import io
+import json
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -14,7 +16,8 @@ from pathlib import Path
 import frontmatter
 from fastapi import HTTPException, UploadFile, status
 
-from ..storage import AgentSkillAsset
+from ...mcp import MCPClient
+from ..storage import AgentMCPAsset, AgentSkillAsset
 
 
 @dataclass
@@ -28,8 +31,19 @@ class StagedSkillAsset:
     content_hash: str
 
 
+@dataclass
+class StagedMCPAsset:
+    """Temporary extracted MCP awaiting commit."""
+
+    name: str
+    archive_name: str
+    temp_dir: str
+    content_hash: str
+    client: MCPClient
+
+
 class AgentAssetStore:
-    """Manage staged and committed agent skill assets on local disk."""
+    """Manage staged and committed agent skill and MCP assets on local disk."""
 
     def __init__(self, root_dir: str) -> None:
         self._root_dir = os.path.abspath(root_dir)
@@ -42,6 +56,9 @@ class AgentAssetStore:
 
     def _agent_dir(self, user_id: str, agent_id: str) -> str:
         return os.path.join(self._root_dir, user_id, agent_id)
+
+    def _agent_mcp_dir(self, user_id: str, agent_id: str) -> str:
+        return os.path.join(self._agent_dir(user_id, agent_id), "mcps")
 
     @staticmethod
     def _assert_safe_zip(members: list[zipfile.ZipInfo]) -> None:
@@ -75,6 +92,24 @@ class AgentAssetStore:
         return candidates[0]
 
     @staticmethod
+    def _find_mcp_root(extract_dir: str) -> str:
+        candidates: list[str] = []
+        for root, _dirs, files in os.walk(extract_dir):
+            if "mcp.json" in files:
+                candidates.append(root)
+        if not candidates:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="MCP ZIP must contain a mcp.json file.",
+            )
+        if len(candidates) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="MCP ZIP must contain exactly one MCP root.",
+            )
+        return candidates[0]
+
+    @staticmethod
     def _read_skill_metadata(skill_dir: str) -> tuple[str, str, str]:
         skill_md_path = os.path.join(skill_dir, "SKILL.md")
         with open(skill_md_path, "r", encoding="utf-8") as f:
@@ -90,6 +125,70 @@ class AgentAssetStore:
         return str(name), str(description), hashlib.sha256(
             raw.encode("utf-8"),
         ).hexdigest()
+
+    @staticmethod
+    def _read_mcp_metadata(mcp_dir: str) -> tuple[str, MCPClient]:
+        mcp_json_path = os.path.join(mcp_dir, "mcp.json")
+        try:
+            with open(mcp_json_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid mcp.json: {exc}",
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="mcp.json must be a JSON object.",
+            )
+
+        name = payload.get("name")
+        if not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", name):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "MCP name must contain only letters, digits, underscores, "
+                    "or hyphens."
+                ),
+            )
+
+        mcp_config = payload.get("mcp_config")
+        if not isinstance(mcp_config, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="mcp.json must include an object field 'mcp_config'.",
+            )
+
+        type_ = mcp_config.get("type")
+        if type_ not in {"stdio_mcp", "http_mcp"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="mcp_config.type must be 'stdio_mcp' or 'http_mcp'.",
+            )
+
+        model_payload = {
+            "name": name,
+            "is_stateful": payload.get("is_stateful"),
+            "mcp_config": mcp_config,
+            "execution_timeout": payload.get("execution_timeout"),
+        }
+        try:
+            client = MCPClient.model_validate(model_payload)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid mcp.json: {exc}",
+            ) from exc
+
+        if type_ == "stdio_mcp" and not client.is_stateful:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="stdio_mcp requires is_stateful=true.",
+            )
+
+        return name, client
 
     async def stage_skill_zip(
         self,
@@ -129,6 +228,56 @@ class AgentAssetStore:
                     archive_name=file.filename or f"{name}.zip",
                     temp_dir=skill_root,
                     content_hash=content_hash,
+                )
+            except zipfile.BadZipFile as exc:
+                shutil.rmtree(staging_root, ignore_errors=True)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid ZIP archive: {exc}",
+                ) from exc
+            except Exception:
+                shutil.rmtree(staging_root, ignore_errors=True)
+                raise
+
+        return await asyncio.to_thread(_stage)
+
+    async def stage_mcp_zip(
+        self,
+        file: UploadFile,
+    ) -> StagedMCPAsset:
+        """Validate and extract an uploaded MCP ZIP file into staging."""
+        if not file.filename or not file.filename.lower().endswith(".zip"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only .zip MCP packages are supported.",
+            )
+
+        payload = await file.read()
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded MCP package is empty.",
+            )
+
+        def _stage() -> StagedMCPAsset:
+            os.makedirs(self._staging_dir, exist_ok=True)
+            staging_root = tempfile.mkdtemp(
+                prefix="mcp_",
+                dir=self._staging_dir,
+            )
+            try:
+                with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+                    self._assert_safe_zip(zf.infolist())
+                    zf.extractall(staging_root)
+                mcp_root = self._find_mcp_root(staging_root)
+                content_hash = hashlib.sha256(payload).hexdigest()
+                name, client = self._read_mcp_metadata(mcp_root)
+                return StagedMCPAsset(
+                    name=name,
+                    archive_name=file.filename or f"{name}.zip",
+                    temp_dir=mcp_root,
+                    content_hash=content_hash,
+                    client=client,
                 )
             except zipfile.BadZipFile as exc:
                 shutil.rmtree(staging_root, ignore_errors=True)
@@ -190,6 +339,60 @@ class AgentAssetStore:
 
         await asyncio.to_thread(_cleanup)
 
+    async def commit_staged_mcps(
+        self,
+        user_id: str,
+        agent_id: str,
+        staged: list[StagedMCPAsset],
+        *,
+        replace_names: set[str] | None = None,
+    ) -> list[AgentMCPAsset]:
+        """Move staged MCPs into the managed agent asset directory."""
+
+        def _commit() -> list[AgentMCPAsset]:
+            agent_dir = self._agent_mcp_dir(user_id, agent_id)
+            os.makedirs(agent_dir, exist_ok=True)
+            committed: list[AgentMCPAsset] = []
+            replace = replace_names or set()
+            for item in staged:
+                target_dir = os.path.join(agent_dir, item.name)
+                if os.path.exists(target_dir):
+                    if item.name in replace:
+                        shutil.rmtree(target_dir, ignore_errors=True)
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"MCP '{item.name}' already exists.",
+                        )
+                shutil.move(item.temp_dir, target_dir)
+                committed.append(
+                    AgentMCPAsset(
+                        name=item.name,
+                        archive_name=item.archive_name,
+                        dir=target_dir,
+                        content_hash=item.content_hash,
+                        client=item.client,
+                    ),
+                )
+            return committed
+
+        return await asyncio.to_thread(_commit)
+
+    async def cleanup_staged_mcps(
+        self,
+        staged: list[StagedMCPAsset],
+    ) -> None:
+        """Remove staging directories for uncommitted MCP uploads."""
+
+        def _cleanup() -> None:
+            for item in staged:
+                shutil.rmtree(
+                    os.path.dirname(item.temp_dir),
+                    ignore_errors=True,
+                )
+
+        await asyncio.to_thread(_cleanup)
+
     async def import_skill_dir(
         self,
         user_id: str,
@@ -237,6 +440,24 @@ class AgentAssetStore:
             for skill_name in skill_names:
                 shutil.rmtree(
                     os.path.join(agent_dir, skill_name),
+                    ignore_errors=True,
+                )
+
+        await asyncio.to_thread(_delete)
+
+    async def delete_mcps(
+        self,
+        user_id: str,
+        agent_id: str,
+        mcp_names: list[str],
+    ) -> None:
+        """Delete committed MCP directories by name."""
+
+        def _delete() -> None:
+            agent_dir = self._agent_mcp_dir(user_id, agent_id)
+            for mcp_name in mcp_names:
+                shutil.rmtree(
+                    os.path.join(agent_dir, mcp_name),
                     ignore_errors=True,
                 )
 
