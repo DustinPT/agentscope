@@ -197,3 +197,60 @@ class ListMessagesResponse(BaseModel):
     is_running: bool = Field(
         description="Whether the session is currently running.",
     )
+
+
+class SessionExportSessionInfo(BaseModel):
+    """Session metadata included in an export payload."""
+
+    agent_id: str = Field(description="Owning agent id.")
+    agent_name: str = Field(description="Owning agent name.")
+    session_id: str = Field(description="Session id.")
+    session_name: str = Field(description="Session display name.")
+    source: str = Field(description="Session source.")
+    workspace_id: str = Field(description="Workspace id bound to the session.")
+    created_at: str = Field(description="Session creation timestamp.")
+    updated_at: str = Field(description="Session update timestamp.")
+
+
+class SessionExportOptions(BaseModel):
+    """Export options applied by the backend."""
+
+    include_system_messages: bool = Field(
+        description="Whether system messages are included in the export.",
+    )
+    include_tool_schemas: bool = Field(
+        description="Whether tool schemas are included in the export.",
+    )
+    truncate_tool_call_input: bool = Field(
+        description="Whether tool-call inputs are truncated.",
+    )
+    tool_call_input_max_length: int = Field(
+        description="Maximum tool-call input length when truncation is enabled.",
+    )
+    truncate_tool_result: bool = Field(
+        description="Whether tool execution results are truncated.",
+    )
+    tool_result_max_length: int = Field(
+        description="Maximum tool-result length when truncation is enabled.",
+    )
+
+
+class SessionExportResponse(BaseModel):
+    """Response body for exporting a session."""
+
+    version: int = Field(description="Export payload version.")
+    exported_at: str = Field(description="Export generation timestamp.")
+    session: SessionExportSessionInfo = Field(
+        description="Session metadata bundled with the export.",
+    )
+    export_options: SessionExportOptions = Field(
+        description="Options applied while building the export payload.",
+    )
+    tool_schemas: list[dict] = Field(
+        default_factory=list,
+        description="Tool JSON schemas exported for the current session.",
+    )
+    messages: list[dict] = Field(
+        default_factory=list,
+        description="Exported messages as JSON-serializable objects.",
+    )

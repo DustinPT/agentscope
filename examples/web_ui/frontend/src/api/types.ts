@@ -206,6 +206,35 @@ export interface ScheduleSessionsResponse {
 	total: number;
 }
 
+export interface SessionExportOptions {
+        include_system_messages: boolean;
+        include_tool_schemas: boolean;
+        truncate_tool_call_input: boolean;
+        tool_call_input_max_length: number;
+        truncate_tool_result: boolean;
+        tool_result_max_length: number;
+}
+
+export interface SessionExportSessionInfo {
+        agent_id: string;
+        agent_name: string;
+        session_id: string;
+        session_name: string;
+        source: SessionSource | string;
+        workspace_id: string;
+        created_at: string;
+        updated_at: string;
+}
+
+export interface SessionExportResponse {
+        version: number;
+        exported_at: string;
+        session: SessionExportSessionInfo;
+        export_options: SessionExportOptions;
+        tool_schemas: Array<Record<string, unknown>>;
+        messages: Array<Record<string, unknown>>;
+}
+
 // ─── Team ─────────────────────────────────────────────────────────────────────
 
 export interface TeamData {

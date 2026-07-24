@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from .._reply_state import get_reply_checkpoint_replay_entry_id
 from ..deps import (
+    get_chat_service,
     get_current_user_id,
     get_message_bus,
     get_session_service,
@@ -21,6 +22,7 @@ from ._schema import (
     CreateSessionResponse,
     ListMessagesResponse,
     ListSessionsResponse,
+    SessionExportResponse,
     SessionView,
     SubAgentSessionView,
     TeamDetailResponse,
@@ -28,7 +30,7 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus
-from .._service import SessionService
+from .._service import ChatService, SessionService
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
@@ -519,6 +521,66 @@ async def list_messages(
         messages=messages,
         is_running=await message_bus.session_is_running(session_id),
     )
+
+
+@session_router.get(
+    "/{session_id}/export",
+    response_model=SessionExportResponse,
+    summary="Export a session as JSON payload",
+)
+async def export_session(
+    session_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    include_system_messages: bool = Query(
+        False,
+        description="Whether to include reconstructed system messages.",
+    ),
+    include_tool_schemas: bool = Query(
+        False,
+        description="Whether to include tool schemas.",
+    ),
+    truncate_tool_call_input: bool = Query(
+        True,
+        description="Whether to truncate tool-call inputs.",
+    ),
+    tool_call_input_max_length: int = Query(
+        200,
+        ge=1,
+        description="Maximum tool-call input length when truncation is enabled.",
+    ),
+    truncate_tool_result: bool = Query(
+        True,
+        description="Whether to truncate tool execution results.",
+    ),
+    tool_result_max_length: int = Query(
+        200,
+        ge=1,
+        description="Maximum tool-result length when truncation is enabled.",
+    ),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> SessionExportResponse:
+    """Return the fully assembled export payload for a session."""
+    existing = await storage.get_session(user_id, agent_id, session_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+
+    payload = await chat_service.build_session_export_payload(
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        include_system_messages=include_system_messages,
+        include_tool_schemas=include_tool_schemas,
+        truncate_tool_call_input=truncate_tool_call_input,
+        tool_call_input_max_length=tool_call_input_max_length,
+        truncate_tool_result=truncate_tool_result,
+        tool_result_max_length=tool_result_max_length,
+    )
+    return SessionExportResponse.model_validate(payload)
 
 
 # ----------------------------------------------------------------------

@@ -12,7 +12,10 @@ that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -53,7 +56,7 @@ from ...event import (
     ToolCallDeltaEvent,
     UserConfirmResultEvent,
 )
-from ...message import AssistantMsg, Msg
+from ...message import AssistantMsg, Msg, SystemMsg
 from ...permission import AdditionalWorkingDirectory
 
 
@@ -370,6 +373,442 @@ class ChatService:
                 )
 
         task.add_done_callback(_log_exception)
+
+    async def _list_all_messages(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        batch_size: int = 200,
+    ) -> list[Msg]:
+        """Fetch all persisted messages for a session."""
+        messages: list[Msg] = []
+        offset = 0
+        while True:
+            batch = await self._storage.list_messages(
+                user_id,
+                session_id,
+                offset=offset,
+                limit=batch_size,
+            )
+            if not batch:
+                break
+            messages.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += len(batch)
+        return messages
+
+    @staticmethod
+    def _truncate_export_text(
+        value: str,
+        max_length: int,
+    ) -> tuple[str, bool]:
+        """Truncate text for export when it exceeds ``max_length``."""
+        if len(value) <= max_length:
+            return value, False
+        return value[:max_length], True
+
+    def _sanitize_export_block(
+        self,
+        block: dict[str, Any],
+        *,
+        truncate_tool_call_input: bool,
+        tool_call_input_max_length: int,
+        truncate_tool_result: bool,
+        tool_result_max_length: int,
+    ) -> dict[str, Any]:
+        """Apply export-time truncation to a single content block."""
+        result = dict(block)
+        block_type = result.get("type")
+
+        if (
+            block_type == "tool_call"
+            and truncate_tool_call_input
+            and isinstance(result.get("input"), str)
+        ):
+            original = result["input"]
+            truncated, changed = self._truncate_export_text(
+                original,
+                tool_call_input_max_length,
+            )
+            if changed:
+                result["input"] = truncated
+                result["input_truncated"] = True
+                result["input_original_length"] = len(original)
+
+        if block_type == "tool_result" and truncate_tool_result:
+            output = result.get("output")
+            if isinstance(output, str):
+                truncated, changed = self._truncate_export_text(
+                    output,
+                    tool_result_max_length,
+                )
+                if changed:
+                    result["output"] = truncated
+                    result["output_truncated"] = True
+                    result["output_original_length"] = len(output)
+            elif isinstance(output, list):
+                sanitized_output: list[Any] = []
+                for item in output:
+                    if not isinstance(item, dict):
+                        sanitized_output.append(item)
+                        continue
+                    sanitized_item = dict(item)
+                    if (
+                        sanitized_item.get("type") == "text"
+                        and isinstance(sanitized_item.get("text"), str)
+                    ):
+                        original = sanitized_item["text"]
+                        truncated, changed = self._truncate_export_text(
+                            original,
+                            tool_result_max_length,
+                        )
+                        if changed:
+                            sanitized_item["text"] = truncated
+                            sanitized_item["text_truncated"] = True
+                            sanitized_item["text_original_length"] = len(
+                                original,
+                            )
+                    sanitized_output.append(sanitized_item)
+                result["output"] = sanitized_output
+
+        return result
+
+    def _sanitize_export_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        include_system_messages: bool,
+        truncate_tool_call_input: bool,
+        tool_call_input_max_length: int,
+        truncate_tool_result: bool,
+        tool_result_max_length: int,
+    ) -> list[dict[str, Any]]:
+        """Filter and sanitize messages for export."""
+        sanitized_messages: list[dict[str, Any]] = []
+        for message in messages:
+            if (
+                not include_system_messages
+                and message.get("role") == "system"
+            ):
+                continue
+            sanitized_messages.append(
+                {
+                    **message,
+                    "content": [
+                        self._sanitize_export_block(
+                            block,
+                            truncate_tool_call_input=truncate_tool_call_input,
+                            tool_call_input_max_length=tool_call_input_max_length,
+                            truncate_tool_result=truncate_tool_result,
+                            tool_result_max_length=tool_result_max_length,
+                        )
+                        if isinstance(block, dict)
+                        else block
+                        for block in message.get("content", [])
+                    ],
+                },
+            )
+        return sanitized_messages
+
+    @staticmethod
+    def _build_export_session_info(
+        *,
+        agent_record,
+        session_record,
+    ) -> dict[str, Any]:
+        """Build the export payload's session metadata."""
+        return {
+            "agent_id": agent_record.id,
+            "agent_name": agent_record.data.name,
+            "session_id": session_record.id,
+            "session_name": session_record.config.name,
+            "source": session_record.source.value,
+            "workspace_id": session_record.config.workspace_id,
+            "created_at": session_record.created_at.isoformat(),
+            "updated_at": session_record.updated_at.isoformat(),
+        }
+
+    @staticmethod
+    def _build_fallback_export_system_message(
+        *,
+        system_prompt: str,
+        exported_at: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Build a fallback system message when full reconstruction fails."""
+        return SystemMsg(
+            name="system",
+            content=system_prompt,
+            created_at=exported_at,
+            finished_at=exported_at,
+            metadata={
+                "export_source": "reconstructed",
+                "reconstruction_mode": "fallback",
+                "fallback_reason": reason,
+            },
+        ).model_dump(mode="json")
+
+    async def _build_export_runtime_context(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_record,
+        session_record,
+    ) -> dict[str, Any]:
+        """Assemble reusable runtime components for export helpers."""
+        workspace = await self._workspace_manager.get_workspace(
+            user_id,
+            agent_record.id,
+            session_id,
+            session_record.config.workspace_id,
+            default_mcps=agent_record.data.mcps,
+            mcp_assets=agent_record.data.mcp_assets,
+            skill_assets=agent_record.data.skills,
+        )
+
+        session_state = deepcopy(session_record.state)
+        session_state.session_id = session_id
+        if (
+            workspace.workdir
+            not in session_state.permission_context.working_directories
+        ):
+            session_state.permission_context.working_directories[
+                workspace.workdir
+            ] = AdditionalWorkingDirectory(
+                path=workspace.workdir,
+                source="session",
+            )
+
+        runtime_session = session_record.model_copy(deep=True)
+        runtime_session.state = session_state
+
+        toolkit = await get_toolkit(
+            storage=self._storage,
+            workspace=workspace,
+            scheduler_manager=self._scheduler_manager,
+            background_task_manager=self._background_task_manager,
+            message_bus=self._message_bus,
+            user_id=user_id,
+            agent_record=agent_record,
+            session_record=runtime_session,
+            extra_factory=self._extra_agent_tools,
+            sub_agent_templates=self._sub_agent_templates,
+        )
+
+        middlewares = []
+        if runtime_session.parent_session_id is not None:
+            middlewares.append(
+                SubAgentMiddleware(
+                    storage=self._storage,
+                    message_bus=self._message_bus,
+                    user_id=user_id,
+                    agent_id=agent_record.id,
+                    session_id=session_id,
+                ),
+            )
+        if self._extra_agent_middlewares is not None:
+            middlewares.extend(
+                await self._extra_agent_middlewares(
+                    user_id,
+                    agent_record.id,
+                    session_id,
+                ),
+            )
+
+        return {
+            "workspace": workspace,
+            "session_state": session_state,
+            "runtime_session": runtime_session,
+            "toolkit": toolkit,
+            "middlewares": middlewares,
+        }
+
+    async def _build_export_system_message(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_record,
+        session_record,
+        exported_at: str,
+    ) -> dict[str, Any]:
+        """Reconstruct the current system message for export."""
+        base_system_prompt = agent_record.data.system_prompt
+        try:
+            runtime_context = await self._build_export_runtime_context(
+                user_id=user_id,
+                session_id=session_id,
+                agent_record=agent_record,
+                session_record=session_record,
+            )
+            runtime_session = runtime_context["runtime_session"]
+
+            model_cfg = (
+                runtime_session.config.chat_model_config
+                or runtime_session.config.fallback_chat_model_config
+            )
+            if model_cfg is None:
+                return self._build_fallback_export_system_message(
+                    system_prompt=base_system_prompt,
+                    exported_at=exported_at,
+                    reason="missing_model_config",
+                )
+
+            model = await get_model(user_id, model_cfg, self._storage)
+            agent = self._agent_cls(
+                name=agent_record.data.name,
+                system_prompt=base_system_prompt,
+                model=model,
+                toolkit=runtime_context["toolkit"],
+                state=runtime_context["session_state"],
+                middlewares=runtime_context["middlewares"],
+                offloader=runtime_context["workspace"],
+                context_config=agent_record.data.context_config,
+                react_config=agent_record.data.react_config,
+            )
+            reconstructed_prompt = await agent._get_system_prompt()
+            return SystemMsg(
+                name="system",
+                content=reconstructed_prompt,
+                created_at=exported_at,
+                finished_at=exported_at,
+                metadata={
+                    "export_source": "reconstructed",
+                    "reconstruction_mode": "full",
+                },
+            ).model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to fully reconstruct system message for session %s: %s",
+                session_id,
+                exc,
+            )
+            return self._build_fallback_export_system_message(
+                system_prompt=base_system_prompt,
+                exported_at=exported_at,
+                reason="reconstruction_failed",
+            )
+
+    async def _build_export_tool_schemas(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_record,
+        session_record,
+    ) -> list[dict[str, Any]]:
+        """Resolve the currently active tool schemas for export."""
+        try:
+            runtime_context = await self._build_export_runtime_context(
+                user_id=user_id,
+                session_id=session_id,
+                agent_record=agent_record,
+                session_record=session_record,
+            )
+            return await runtime_context["toolkit"].get_tool_schemas(
+                runtime_context["runtime_session"].state.tool_context.activated_groups,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to build tool schemas for session %s export: %s",
+                session_id,
+                exc,
+            )
+            return []
+
+    async def build_session_export_payload(
+        self,
+        *,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        include_system_messages: bool = False,
+        include_tool_schemas: bool = False,
+        truncate_tool_call_input: bool = False,
+        tool_call_input_max_length: int = 200,
+        truncate_tool_result: bool = False,
+        tool_result_max_length: int = 200,
+    ) -> dict[str, Any]:
+        """Build the final JSON payload for session export."""
+        agent_record = await self._storage.get_agent(user_id, agent_id)
+        if agent_record is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent {agent_id!r} not found.",
+            )
+        session_record = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session_record is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Session {session_id!r} not found for "
+                    f"agent {agent_id!r}."
+                ),
+            )
+
+        exported_at = datetime.now().isoformat()
+        messages = await self._list_all_messages(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        export_messages = [
+            message.model_dump(mode="json")
+            for message in messages
+        ]
+
+        if include_system_messages:
+            export_messages = [
+                await self._build_export_system_message(
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_record=agent_record,
+                    session_record=session_record,
+                    exported_at=exported_at,
+                ),
+                *export_messages,
+            ]
+
+        tool_schemas: list[dict[str, Any]] = []
+        if include_tool_schemas:
+            tool_schemas = await self._build_export_tool_schemas(
+                user_id=user_id,
+                session_id=session_id,
+                agent_record=agent_record,
+                session_record=session_record,
+            )
+
+        return {
+            "version": 1,
+            "exported_at": exported_at,
+            "session": self._build_export_session_info(
+                agent_record=agent_record,
+                session_record=session_record,
+            ),
+            "export_options": {
+                "include_system_messages": include_system_messages,
+                "include_tool_schemas": include_tool_schemas,
+                "truncate_tool_call_input": truncate_tool_call_input,
+                "tool_call_input_max_length": tool_call_input_max_length,
+                "truncate_tool_result": truncate_tool_result,
+                "tool_result_max_length": tool_result_max_length,
+            },
+            "tool_schemas": tool_schemas,
+            "messages": self._sanitize_export_messages(
+                export_messages,
+                include_system_messages=include_system_messages,
+                truncate_tool_call_input=truncate_tool_call_input,
+                tool_call_input_max_length=tool_call_input_max_length,
+                truncate_tool_result=truncate_tool_result,
+                tool_result_max_length=tool_result_max_length,
+            ),
+        }
 
     async def run(
         self,

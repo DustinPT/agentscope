@@ -5,6 +5,8 @@ import type {
 	CreateSessionRequest,
 	CreateSessionResponse,
 	SessionListResponse,
+        SessionExportOptions,
+        SessionExportResponse,
 	SessionRecord,
 	UpdateSessionRequest,
 	Msg,
@@ -39,6 +41,21 @@ export const sessionApi = {
 			offset: String(offset),
 			limit: String(limit),
 		}),
+
+        exportSession: (
+                sessionId: string,
+                agentId: string,
+                options: SessionExportOptions,
+        ) =>
+                client.get<SessionExportResponse>(`/sessions/${sessionId}/export`, {
+                        agent_id: agentId,
+                        include_system_messages: String(options.include_system_messages),
+                        include_tool_schemas: String(options.include_tool_schemas),
+                        truncate_tool_call_input: String(options.truncate_tool_call_input),
+                        tool_call_input_max_length: String(options.tool_call_input_max_length),
+                        truncate_tool_result: String(options.truncate_tool_result),
+                        tool_result_max_length: String(options.tool_result_max_length),
+                }),
 
 	/**
 	 * Subscribe to a session's live event stream via SSE.

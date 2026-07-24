@@ -1,9 +1,10 @@
 import type { Msg } from '@agentscope-ai/agentscope/message';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { ArrowDownToLine, ArrowLeft, ArrowUpToLine, Bot, List, Toolbox } from 'lucide-react';
+import { ArrowDownToLine, ArrowLeft, ArrowUpToLine, Bot, Download, List, Toolbox } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 
-import type { ChatModelConfig, SessionView, SubAgentSessionView } from '@/api';
+import type { ChatModelConfig, SessionExportOptions, SessionView, SubAgentSessionView } from '@/api';
 import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import {
@@ -14,6 +15,7 @@ import { TaskPanel } from '@/components/chat/TaskPanel';
 import { UserMessageDirectory } from '@/components/chat/UserMessageDirectory';
 import { buildUserMessageOutline } from '@/components/chat/userMessageOutline';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { SessionExportDialog } from '@/components/dialog/SessionExportDialog';
 import { WorkspaceDrawer } from '@/components/drawer/WorkspaceDrawer.tsx';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
@@ -25,6 +27,7 @@ import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useTranslation } from '@/i18n/useI18n';
+import { buildSessionExportFilename, downloadJsonFile } from '@/utils/sessionExport';
 
 interface ChatViewportProps {
 	/**
@@ -120,6 +123,7 @@ export function ChatViewport({
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [outlineOpen, setOutlineOpen] = useState(false);
+        const [exportOpen, setExportOpen] = useState(false);
 	const [scrollTargetMessageId, setScrollTargetMessageId] = useState<string | null>(null);
 	const [scrollViewportCommand, setScrollViewportCommand] = useState<{
 		type: 'top' | 'bottom';
@@ -354,6 +358,23 @@ export function ChatViewport({
 		setScrollViewportCommand({ type, nonce: Date.now() });
 	}, []);
 
+        const handleSessionExport = useCallback(
+                async (options: SessionExportOptions) => {
+                        if (!sessionId || !agentId) return;
+                        const payload = await sessionApi.exportSession(sessionId, agentId, options);
+                        downloadJsonFile(
+                                payload,
+                                buildSessionExportFilename(
+                                        payload.session.agent_name,
+                                        payload.session.session_name,
+                                        payload.exported_at,
+                                ),
+                        );
+                        toast.success(t('dialog-session-export.success'));
+                },
+                [agentId, sessionId, t],
+        );
+
 	return (
 		<>
 			<main className="flex size-full">
@@ -460,6 +481,15 @@ export function ChatViewport({
 					>
 						<List />
 					</Button>
+                                        <Button
+                                                size="icon-sm"
+                                                variant="ghost"
+                                                tooltip={t('chat.toolbar.exportSession')}
+                                                onClick={() => setExportOpen(true)}
+                                                disabled={!sessionId || !agentId}
+                                        >
+                                                <Download />
+                                        </Button>
 					<WorkspaceDrawer
 						mcps={mcps}
 						loading={mcpsLoading}
@@ -488,6 +518,11 @@ export function ChatViewport({
 				activeMessageId={scrollTargetMessageId}
 				onSelect={handleDirectorySelect}
 			/>
+                        <SessionExportDialog
+                                open={exportOpen}
+                                onOpenChange={setExportOpen}
+                                onConfirm={handleSessionExport}
+                        />
 		</>
 	);
 }

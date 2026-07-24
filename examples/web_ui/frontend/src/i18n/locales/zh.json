@@ -133,7 +133,8 @@
 		},
 		"toolbar": {
 			"scrollToTop": "滚动到顶部",
-			"scrollToBottom": "滚动到底部"
+                        "scrollToBottom": "滚动到底部",
+                        "exportSession": "导出会话"
 		}
 	},
 	"dialog-agent-create": {
@@ -286,6 +287,23 @@
 		"label": "名称",
 		"placeholder": "会话名称"
 	},
+        "dialog-session-export": {
+                "title": "导出会话",
+                "description": "将当前会话导出为 JSON 文件，并按需包含系统消息或裁剪工具内容。",
+                "includeSystemMessages": "导出系统消息",
+                "includeToolSchemas": "导出工具 Schema",
+                "truncateToolCallInput": "截断工具调用参数",
+                "toolCallInputMaxLength": "工具调用参数最大长度",
+                "truncateToolResult": "截断工具执行结果",
+                "toolResultMaxLength": "工具执行结果最大长度",
+                "lengthDescription": "仅在启用截断时生效，必须为正整数。",
+                "confirm": "导出",
+                "exporting": "导出中…",
+                "success": "会话已导出",
+                "validation": {
+                        "positiveInteger": "请输入大于 0 的整数。"
+                }
+        },
 	"session-menu": {
 		"rename": "重命名",
 		"delete": "删除"

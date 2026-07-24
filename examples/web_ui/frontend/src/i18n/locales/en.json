@@ -133,7 +133,8 @@
 		},
 		"toolbar": {
 			"scrollToTop": "Scroll to top",
-			"scrollToBottom": "Scroll to bottom"
+                        "scrollToBottom": "Scroll to bottom",
+                        "exportSession": "Export session"
 		}
 	},
 	"dialog-agent-create": {
@@ -286,6 +287,23 @@
 		"label": "Name",
 		"placeholder": "Session name"
 	},
+        "dialog-session-export": {
+                "title": "Export session",
+                "description": "Export the current session as a JSON file, optionally including system messages or truncating tool content.",
+                "includeSystemMessages": "Include system messages",
+                "includeToolSchemas": "Include tool schemas",
+                "truncateToolCallInput": "Truncate tool call input",
+                "toolCallInputMaxLength": "Tool call input max length",
+                "truncateToolResult": "Truncate tool result",
+                "toolResultMaxLength": "Tool result max length",
+                "lengthDescription": "Only used when truncation is enabled and must be a positive integer.",
+                "confirm": "Export",
+                "exporting": "Exporting…",
+                "success": "Session exported",
+                "validation": {
+                        "positiveInteger": "Enter a positive integer greater than 0."
+                }
+        },
 	"session-menu": {
 		"rename": "Rename",
 		"delete": "Delete"
