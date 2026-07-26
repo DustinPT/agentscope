@@ -79,20 +79,8 @@ CONTAINER_MCPS_DIR = f"{CONTAINER_WORKDIR}/mcps"
 
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
-You have a Docker-based workspace. All tool calls execute **inside the
-container** at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-
-Use the MCP-provided tools to interact with the container's filesystem
-and processes.
+You are running in a Docker container environment. All tool calls execute
+inside that container.
 </workspace>"""
 
 

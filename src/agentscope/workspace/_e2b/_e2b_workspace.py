@@ -96,20 +96,8 @@ from .._utils import (
 
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
-You have an E2B-based cloud workspace. All tool calls execute **inside
-the sandbox** at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-
-Use the MCP-provided tools to interact with the sandbox's filesystem
-and processes.
+You are running in an E2B sandbox environment. All tool calls execute
+inside that sandbox.
 </workspace>"""
 
 

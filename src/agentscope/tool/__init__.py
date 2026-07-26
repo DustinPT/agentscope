@@ -12,6 +12,7 @@ from ._builtin import (
     Edit,
     Glob,
     Grep,
+    CreateProjectDirectory,
     Read,
     Write,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "Edit",
     "Glob",
     "Grep",
+    "CreateProjectDirectory",
     "Read",
     "Write",
     "TaskUpdate",
