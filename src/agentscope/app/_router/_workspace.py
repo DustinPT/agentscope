@@ -14,7 +14,7 @@ from ..deps import (
     get_workspace_manager,
 )
 from ..workspace_manager import WorkspaceManagerBase
-from ..storage import AgentRecord, StorageBase
+from ..storage import AgentMCPAsset, AgentRecord, AgentSkillAsset, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
 from ...workspace import WorkspaceBase
@@ -48,6 +48,7 @@ async def _resolve_agent_workspace(
     session_id: str,
     storage: StorageBase,
     workspace_manager: WorkspaceManagerBase,
+    asset_store: AgentAssetStore,
 ) -> tuple[AgentRecord, WorkspaceBase]:
     """Resolve the current agent record and synchronized workspace."""
     agent_record = await storage.get_agent(user_id, agent_id)
@@ -62,16 +63,40 @@ async def _resolve_agent_workspace(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id!r} not found.",
         )
+    resolved_mcp_assets = [
+        asset.model_copy(update={"dir": asset_store.resolve_dir(asset.dir)})
+        for asset in agent_record.data.mcp_assets
+    ]
+    resolved_skills = [
+        skill.model_copy(update={"dir": asset_store.resolve_dir(skill.dir)})
+        for skill in agent_record.data.skills
+    ]
     workspace = await workspace_manager.get_workspace(
         user_id,
         agent_id,
         session_id,
         session_record.config.workspace_id,
         default_mcps=agent_record.data.mcps,
-        mcp_assets=agent_record.data.mcp_assets,
-        skill_assets=agent_record.data.skills,
+        mcp_assets=resolved_mcp_assets,
+        skill_assets=resolved_skills,
     )
     return agent_record, workspace
+
+
+def _resolve_agent_assets(
+    agent: AgentRecord,
+    asset_store: AgentAssetStore,
+) -> tuple[list[AgentMCPAsset], list[AgentSkillAsset]]:
+    """Resolve managed asset metadata to absolute local directories."""
+    resolved_mcp_assets = [
+        asset.model_copy(update={"dir": asset_store.resolve_dir(asset.dir)})
+        for asset in agent.data.mcp_assets
+    ]
+    resolved_skills = [
+        skill.model_copy(update={"dir": asset_store.resolve_dir(skill.dir)})
+        for skill in agent.data.skills
+    ]
+    return resolved_mcp_assets, resolved_skills
 
 
 async def _persist_agent(
@@ -97,6 +122,7 @@ async def list_mcps(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    asset_store: AgentAssetStore = Depends(get_agent_asset_store),
 ) -> list[MCPClientStatus]:
     """Return all MCP clients with live tool list and health status."""
     _, workspace = await _resolve_agent_workspace(
@@ -105,6 +131,7 @@ async def list_mcps(
         session_id,
         storage,
         workspace_manager,
+        asset_store,
     )
     clients = await workspace.list_mcps()
 
@@ -143,6 +170,7 @@ async def add_mcp(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    asset_store: AgentAssetStore = Depends(get_agent_asset_store),
 ) -> None:
     """Add an MCP client to the agent config and sync this workspace."""
     agent, workspace = await _resolve_agent_workspace(
@@ -151,6 +179,7 @@ async def add_mcp(
         session_id,
         storage,
         workspace_manager,
+        asset_store,
     )
     if any(existing.name == mcp.name for existing in agent.data.mcps):
         raise HTTPException(
@@ -165,11 +194,15 @@ async def add_mcp(
         },
     )
     updated_agent = await _persist_agent(storage, user_id, updated_agent)
+    resolved_mcp_assets, resolved_skills = _resolve_agent_assets(
+        updated_agent,
+        asset_store,
+    )
     await sync_workspace_state(
         workspace,
         expected_mcps=updated_agent.data.mcps,
-        expected_mcp_assets=updated_agent.data.mcp_assets,
-        expected_skills=updated_agent.data.skills,
+        expected_mcp_assets=resolved_mcp_assets,
+        expected_skills=resolved_skills,
     )
 
 
@@ -184,6 +217,7 @@ async def remove_mcp(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    asset_store: AgentAssetStore = Depends(get_agent_asset_store),
 ) -> None:
     """Remove an MCP client from the agent config and sync this workspace."""
     agent, workspace = await _resolve_agent_workspace(
@@ -192,17 +226,22 @@ async def remove_mcp(
         session_id,
         storage,
         workspace_manager,
+        asset_store,
     )
     remaining = [mcp for mcp in agent.data.mcps if mcp.name != mcp_name]
     updated_agent = agent.model_copy(
         update={"data": agent.data.model_copy(update={"mcps": remaining})},
     )
     updated_agent = await _persist_agent(storage, user_id, updated_agent)
+    resolved_mcp_assets, resolved_skills = _resolve_agent_assets(
+        updated_agent,
+        asset_store,
+    )
     await sync_workspace_state(
         workspace,
         expected_mcps=updated_agent.data.mcps,
-        expected_mcp_assets=updated_agent.data.mcp_assets,
-        expected_skills=updated_agent.data.skills,
+        expected_mcp_assets=resolved_mcp_assets,
+        expected_skills=resolved_skills,
     )
 
 
@@ -218,6 +257,7 @@ async def list_skills(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    asset_store: AgentAssetStore = Depends(get_agent_asset_store),
 ) -> list[Skill]:
     """Return all skills available in the session's workspace."""
     _, workspace = await _resolve_agent_workspace(
@@ -226,6 +266,7 @@ async def list_skills(
         session_id,
         storage,
         workspace_manager,
+        asset_store,
     )
     return await workspace.list_skills()
 
@@ -247,6 +288,7 @@ async def add_skill(
         session_id,
         storage,
         workspace_manager,
+        asset_store,
     )
     asset = await asset_store.import_skill_dir(user_id, agent_id, body.skill_path)
     if any(skill.name == asset.name for skill in agent.data.skills):
@@ -263,11 +305,15 @@ async def add_skill(
         },
     )
     updated_agent = await _persist_agent(storage, user_id, updated_agent)
+    resolved_mcp_assets, resolved_skills = _resolve_agent_assets(
+        updated_agent,
+        asset_store,
+    )
     await sync_workspace_state(
         workspace,
         expected_mcps=updated_agent.data.mcps,
-        expected_mcp_assets=updated_agent.data.mcp_assets,
-        expected_skills=updated_agent.data.skills,
+        expected_mcp_assets=resolved_mcp_assets,
+        expected_skills=resolved_skills,
     )
 
 
@@ -291,6 +337,7 @@ async def remove_skill(
         session_id,
         storage,
         workspace_manager,
+        asset_store,
     )
     remaining = [skill for skill in agent.data.skills if skill.name != skill_name]
     updated_agent = agent.model_copy(
@@ -298,9 +345,13 @@ async def remove_skill(
     )
     updated_agent = await _persist_agent(storage, user_id, updated_agent)
     await asset_store.delete_skills(user_id, agent_id, [skill_name])
+    resolved_mcp_assets, resolved_skills = _resolve_agent_assets(
+        updated_agent,
+        asset_store,
+    )
     await sync_workspace_state(
         workspace,
         expected_mcps=updated_agent.data.mcps,
-        expected_mcp_assets=updated_agent.data.mcp_assets,
-        expected_skills=updated_agent.data.skills,
+        expected_mcp_assets=resolved_mcp_assets,
+        expected_skills=resolved_skills,
     )

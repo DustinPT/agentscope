@@ -78,6 +78,43 @@ class AgentAssetStore:
         """Return the absolute root directory."""
         return self._root_dir
 
+    def _ensure_path_within_root(self, path: str) -> str:
+        """Normalize one absolute path and ensure it stays under ``root_dir``."""
+        absolute = os.path.abspath(path)
+        try:
+            common = os.path.commonpath([self._root_dir, absolute])
+        except ValueError as exc:
+            raise ValueError(
+                f"Asset path {path!r} is not under asset root {self._root_dir!r}.",
+            ) from exc
+        if common != self._root_dir:
+            raise ValueError(
+                f"Asset path {path!r} resolves outside asset root {self._root_dir!r}.",
+            )
+        return absolute
+
+    def to_relative_dir(self, dir_path: str) -> str:
+        """Convert one absolute asset directory to a root-relative path."""
+        absolute = self._ensure_path_within_root(dir_path)
+        relative = os.path.relpath(absolute, self._root_dir)
+        normalized = relative.replace(os.sep, "/")
+        if normalized in {"", "."}:
+            raise ValueError("Asset directory cannot be the asset root itself.")
+        return normalized
+
+    def resolve_dir(self, dir_path: str) -> str:
+        """Resolve one persisted asset directory to an absolute local path.
+
+        Legacy records may still contain absolute paths, so those are accepted
+        unchanged. New records are expected to be stored relative to the
+        managed asset root.
+        """
+        if os.path.isabs(dir_path):
+            return os.path.abspath(dir_path)
+        normalized = dir_path.replace("\\", os.sep)
+        candidate = os.path.join(self._root_dir, normalized)
+        return self._ensure_path_within_root(candidate)
+
     def _agent_dir(self, user_id: str, agent_id: str) -> str:
         return os.path.join(self._root_dir, user_id, agent_id)
 
@@ -698,7 +735,7 @@ class AgentAssetStore:
                         name=item.name,
                         description=item.description,
                         archive_name=item.archive_name,
-                        dir=target_dir,
+                        dir=self.to_relative_dir(target_dir),
                         content_hash=item.content_hash,
                     ),
                 )
@@ -751,7 +788,7 @@ class AgentAssetStore:
                     AgentMCPAsset(
                         name=item.name,
                         archive_name=item.archive_name,
-                        dir=target_dir,
+                        dir=self.to_relative_dir(target_dir),
                         content_hash=item.content_hash,
                         client=item.client,
                     ),
@@ -803,7 +840,7 @@ class AgentAssetStore:
                 name=name,
                 description=description,
                 archive_name=f"{name}.zip",
-                dir=target_dir,
+                dir=self.to_relative_dir(target_dir),
                 content_hash=content_hash,
             )
 

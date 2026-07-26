@@ -24,7 +24,14 @@ from .._reply_state import (
     set_reply_checkpoint_replay_entry_id,
 )
 from ..message_bus import MessageBus
-from ..storage import SessionConfig, SessionSource, StorageBase
+from ..storage import (
+    AgentMCPAsset,
+    AgentRecord,
+    AgentSkillAsset,
+    SessionConfig,
+    SessionSource,
+    StorageBase,
+)
 from .._manager import BackgroundTaskManager, SchedulerManager
 from .._manager import ChatRunRegistry
 from ..workspace_manager import WorkspaceManagerBase
@@ -58,6 +65,7 @@ from ...event import (
 )
 from ...message import AssistantMsg, Msg, SystemMsg
 from ...permission import AdditionalWorkingDirectory
+from ._agent_asset_store import AgentAssetStore
 
 
 @dataclass
@@ -103,6 +111,8 @@ class ChatService:
         background_task_manager: BackgroundTaskManager,
         message_bus: MessageBus,
         chat_run_registry: ChatRunRegistry,
+        *,
+        agent_asset_store: AgentAssetStore | None = None,
         extra_agent_middlewares: AgentMiddlewareFactory | None = None,
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
@@ -116,6 +126,11 @@ class ChatService:
             workspace_manager (`WorkspaceManagerBase`):
                 Provides per-session workspace (tools, MCPs, skills) used
                 during agent assembly.
+            agent_asset_store (`AgentAssetStore | None`, optional):
+                Resolves persisted managed asset paths into local absolute
+                directories before the workspace consumes them. Runtime code
+                passes this explicitly; tests may omit it when managed assets
+                are irrelevant.
             scheduler_manager (`SchedulerManager`):
                 Application scheduler — passed through to
                 :func:`get_toolkit` so the agent toolkit gets the four
@@ -150,6 +165,7 @@ class ChatService:
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
+        self._agent_asset_store = agent_asset_store
         self._scheduler_manager = scheduler_manager
         self._background_task_manager = background_task_manager
         self._message_bus = message_bus
@@ -158,6 +174,27 @@ class ChatService:
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
+
+    def _resolve_managed_assets(
+        self,
+        agent_record: AgentRecord,
+    ) -> tuple[list[AgentMCPAsset], list[AgentSkillAsset]]:
+        """Resolve managed asset metadata to absolute local directories."""
+        if self._agent_asset_store is None:
+            return list(agent_record.data.mcp_assets), list(agent_record.data.skills)
+        resolved_mcp_assets = [
+            asset.model_copy(
+                update={"dir": self._agent_asset_store.resolve_dir(asset.dir)},
+            )
+            for asset in agent_record.data.mcp_assets
+        ]
+        resolved_skills = [
+            skill.model_copy(
+                update={"dir": self._agent_asset_store.resolve_dir(skill.dir)},
+            )
+            for skill in agent_record.data.skills
+        ]
+        return resolved_mcp_assets, resolved_skills
 
     @staticmethod
     def _checkpoint_char_delta(event: object) -> int:
@@ -559,14 +596,17 @@ class ChatService:
         session_record,
     ) -> dict[str, Any]:
         """Assemble reusable runtime components for export helpers."""
+        resolved_mcp_assets, resolved_skills = self._resolve_managed_assets(
+            agent_record,
+        )
         workspace = await self._workspace_manager.get_workspace(
             user_id,
             agent_record.id,
             session_id,
             session_record.config.workspace_id,
             default_mcps=agent_record.data.mcps,
-            mcp_assets=agent_record.data.mcp_assets,
-            skill_assets=agent_record.data.skills,
+            mcp_assets=resolved_mcp_assets,
+            skill_assets=resolved_skills,
         )
 
         session_state = deepcopy(session_record.state)
@@ -924,14 +964,17 @@ class ChatService:
             and session_record.parent_session_id is None
         )
         initial_session_name = session_record.config.name
+        resolved_mcp_assets, resolved_skills = self._resolve_managed_assets(
+            agent_record,
+        )
         workspace = await self._workspace_manager.get_workspace(
             user_id,
             agent_id,
             session_id,
             session_record.config.workspace_id,
             default_mcps=agent_record.data.mcps,
-            mcp_assets=agent_record.data.mcp_assets,
-            skill_assets=agent_record.data.skills,
+            mcp_assets=resolved_mcp_assets,
+            skill_assets=resolved_skills,
         )
 
         # Add workspace working directory to the permission context

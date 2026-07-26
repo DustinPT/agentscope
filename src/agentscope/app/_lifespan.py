@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         chat_service = ChatService(
             storage=storage,
             workspace_manager=workspace_manager,
+            agent_asset_store=app.state.agent_asset_store,
             scheduler_manager=scheduler,
             background_task_manager=bg_manager,
             message_bus=message_bus,

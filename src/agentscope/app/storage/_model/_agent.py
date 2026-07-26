@@ -17,7 +17,9 @@ class AgentSkillAsset(BaseModel):
     name: str = Field(description="Stable skill name used as the business key.")
     description: str = Field(description="Skill description parsed from SKILL.md.")
     archive_name: str = Field(description="Original uploaded ZIP filename.")
-    dir: str = Field(description="Server-side extracted skill directory.")
+    dir: str = Field(
+        description="Skill directory stored relative to the managed asset root.",
+    )
     content_hash: str = Field(
         description="Content hash computed from the skill's SKILL.md file.",
     )
@@ -28,7 +30,9 @@ class AgentMCPAsset(BaseModel):
 
     name: str = Field(description="Stable MCP name used as the business key.")
     archive_name: str = Field(description="Original uploaded ZIP filename.")
-    dir: str = Field(description="Server-side extracted MCP directory.")
+    dir: str = Field(
+        description="MCP directory stored relative to the managed asset root.",
+    )
     content_hash: str = Field(
         description="Content hash computed from the MCP package metadata.",
     )
