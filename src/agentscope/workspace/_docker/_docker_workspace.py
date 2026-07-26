@@ -55,7 +55,10 @@ from ...message import (
 )
 from ...skill import Skill
 from ...tool import ToolBase
-from .._base import WorkspaceBase
+from .._base import (
+    WorkspaceBase,
+    DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS,
+)
 from .._gateway_client import (
     GatewayClient,
     GatewayMCPClient,
@@ -78,9 +81,11 @@ from ._make_dockerfile import (
 CONTAINER_MCPS_DIR = f"{CONTAINER_WORKDIR}/mcps"
 
 
-_DEFAULT_INSTRUCTIONS = """<workspace>
+_DEFAULT_INSTRUCTIONS = f"""<workspace>
 You are running in a Docker container environment. All tool calls execute
 inside that container.
+
+{DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS}
 </workspace>"""
 
 

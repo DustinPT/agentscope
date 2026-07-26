@@ -17,7 +17,10 @@ import aiofiles.ospath
 import frontmatter
 from pydantic import AnyUrl
 
-from ._base import WorkspaceBase
+from ._base import (
+    WorkspaceBase,
+    DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS,
+)
 from ..mcp import MCPClient
 from ..message import (
     TextBlock,
@@ -76,7 +79,9 @@ def _sanitize_dir_name(name: str) -> str:
     return re.sub(r"[^\w一-鿿-]", "_", name)
 
 
-_DEFAULT_WORKSPACE_INSTRUCTIONS = ""
+_DEFAULT_WORKSPACE_INSTRUCTIONS = f"""<workspace>
+{DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS}
+</workspace>"""
 
 
 class LocalWorkspace(WorkspaceBase):
@@ -296,7 +301,7 @@ class LocalWorkspace(WorkspaceBase):
 
     async def get_instructions(self) -> str:
         """Get the workspace instructions."""
-        return ""
+        return self.instructions
 
     async def _load_skills_file(self, skills_dir: str) -> _SkillsFile:
         """Load the .skills index file, returning an empty structure if absent.

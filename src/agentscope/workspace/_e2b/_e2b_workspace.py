@@ -60,7 +60,10 @@ from ...message import (
 )
 from ...skill import Skill
 from ...tool import ToolBase
-from .._base import WorkspaceBase
+from .._base import (
+    WorkspaceBase,
+    DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS,
+)
 from .._gateway_client import (
     GatewayClient,
     GatewayMCPClient,
@@ -95,9 +98,11 @@ from .._utils import (
 )
 
 
-_DEFAULT_INSTRUCTIONS = """<workspace>
+_DEFAULT_INSTRUCTIONS = f"""<workspace>
 You are running in an E2B sandbox environment. All tool calls execute
 inside that sandbox.
+
+{DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS}
 </workspace>"""
 
 
