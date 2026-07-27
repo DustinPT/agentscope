@@ -13,7 +13,14 @@ from utils import MockModel, AnyString
 from agentscope.model import StructuredResponse, ChatResponse
 from agentscope.agent import Agent, ContextConfig
 from agentscope.state import AgentState
-from agentscope.message import UserMsg, AssistantMsg, TextBlock, ToolCallBlock
+from agentscope.message import (
+    UserMsg,
+    AssistantMsg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
 from agentscope.tool import Toolkit
 
 
@@ -796,9 +803,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 ),
                 toolkit=Toolkit(),
             )
-            await agent.state.tool_context.cache_file(
+            await agent.state.tool_context.cache_file_version(
                 file_path=file_path,
-                lines=["content\n"],
+                source_kind="read",
+                content="content\n",
             )
             self.assertIsNotNone(
                 await agent.state.tool_context.get_cache(file_path),
@@ -853,6 +861,12 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                                         {"file_path": file_path},
                                     ),
                                 ),
+                                ToolResultBlock(
+                                    id="read-call-1",
+                                    name="Read",
+                                    output="content",
+                                    state=ToolResultState.SUCCESS,
+                                ),
                             ],
                             id="1",
                         ),
@@ -871,6 +885,12 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                                         {"file_path": file_path},
                                     ),
                                 ),
+                                ToolResultBlock(
+                                    id="read-call-2",
+                                    name="Read",
+                                    output="content",
+                                    state=ToolResultState.SUCCESS,
+                                ),
                             ],
                             id="3",
                         ),
@@ -878,9 +898,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 ),
                 toolkit=Toolkit(),
             )
-            await agent.state.tool_context.cache_file(
+            await agent.state.tool_context.cache_file_version(
                 file_path=file_path,
-                lines=["content\n"],
+                source_kind="read",
+                content="content\n",
             )
 
             model.set_structured_response(
@@ -936,9 +957,161 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 ),
                 toolkit=Toolkit(),
             )
-            await agent.state.tool_context.cache_file(
+            await agent.state.tool_context.cache_file_version(
                 file_path=file_path,
-                lines=["content\n"],
+                source_kind="read",
+                content="content\n",
+            )
+
+            model.set_structured_response(
+                StructuredResponse(
+                    content={
+                        "task_overview": "1",
+                        "current_state": "2",
+                        "important_discoveries": "3",
+                        "next_steps": "4",
+                        "context_to_preserve": "5",
+                    },
+                ),
+            )
+
+            _ = [evt async for evt in agent.compress_context()]
+
+            self.assertIsNone(
+                await agent.state.tool_context.get_cache(file_path),
+            )
+
+    async def test_context_compression_keeps_reserved_edit_cache(self) -> None:
+        """Edit cache is kept when a successful Edit remains in context."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = os.path.join(temp_dir, "test.txt")
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("content\n")
+
+            model = MockModel(context_size=100)
+            agent = Agent(
+                name="Friday",
+                system_prompt="".join(["0" for _ in range(20 * 4)]),
+                model=model,
+                context_config=ContextConfig(
+                    trigger_ratio=0.7,
+                    reserve_ratio=0.6,
+                ),
+                state=AgentState(
+                    session_id="123",
+                    context=[
+                        UserMsg(
+                            "User",
+                            "".join(["2" for _ in range(30 * 4)]),
+                            id="1",
+                        ),
+                        AssistantMsg(
+                            "Friday",
+                            [
+                                ToolCallBlock(
+                                    id="edit-call-1",
+                                    name="Edit",
+                                    input=json.dumps(
+                                        {
+                                            "file_path": file_path,
+                                            "old_string": "a",
+                                            "new_string": "b",
+                                        },
+                                    ),
+                                ),
+                                ToolResultBlock(
+                                    id="edit-call-1",
+                                    name="Edit",
+                                    output="ok",
+                                    state=ToolResultState.SUCCESS,
+                                ),
+                            ],
+                            id="2",
+                        ),
+                    ],
+                ),
+                toolkit=Toolkit(),
+            )
+            await agent.state.tool_context.cache_file_version(
+                file_path=file_path,
+                source_kind="edit",
+                content="content\n",
+            )
+
+            model.set_structured_response(
+                StructuredResponse(
+                    content={
+                        "task_overview": "1",
+                        "current_state": "2",
+                        "important_discoveries": "3",
+                        "next_steps": "4",
+                        "context_to_preserve": "5",
+                    },
+                ),
+            )
+
+            _ = [evt async for evt in agent.compress_context()]
+
+            self.assertIsNotNone(
+                await agent.state.tool_context.get_cache(file_path),
+            )
+
+    async def test_context_compression_ignores_non_success_tool_result(self) -> None:
+        """Cache is cleared when reserved tool result is not success."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = os.path.join(temp_dir, "test.txt")
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("content\n")
+
+            model = MockModel(context_size=100)
+            agent = Agent(
+                name="Friday",
+                system_prompt="".join(["0" for _ in range(20 * 4)]),
+                model=model,
+                context_config=ContextConfig(
+                    trigger_ratio=0.7,
+                    reserve_ratio=0.6,
+                ),
+                state=AgentState(
+                    session_id="123",
+                    context=[
+                        AssistantMsg(
+                            "Friday",
+                            [
+                                ToolCallBlock(
+                                    id="read-call-1",
+                                    name="Read",
+                                    input=json.dumps(
+                                        {"file_path": file_path},
+                                    ),
+                                ),
+                                ToolResultBlock(
+                                    id="read-call-1",
+                                    name="Read",
+                                    output="content",
+                                    state=ToolResultState.RUNNING,
+                                ),
+                            ],
+                            id="1",
+                        ),
+                        UserMsg(
+                            "User",
+                            "".join(["2" for _ in range(30 * 4)]),
+                            id="2",
+                        ),
+                        UserMsg(
+                            "User",
+                            "".join(["3" for _ in range(10 * 4)]),
+                            id="3",
+                        ),
+                    ],
+                ),
+                toolkit=Toolkit(),
+            )
+            await agent.state.tool_context.cache_file_version(
+                file_path=file_path,
+                source_kind="read",
+                content="content\n",
             )
 
             model.set_structured_response(

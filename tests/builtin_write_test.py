@@ -60,7 +60,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             content=content,
         )
 
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, "success")
         self.assertTrue(chunk.is_last)
 
         # Verify file was created and content is correct
@@ -79,7 +79,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             content=content,
         )
 
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, "success")
 
         # Verify directory and file were created
         self.assertTrue(os.path.exists(file_path))
@@ -142,7 +142,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(chunk.state, ToolResultState.ERROR)
-        self.assertIn("has not been read", chunk.content[0].text)
+        self.assertIn("not known", chunk.content[0].text)
         # File must not have been mutated
         with open(file_path, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "original")

@@ -58,7 +58,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         chunk = await self.read_tool(file_path=self.temp_file.name)
 
         self.assertIsInstance(chunk, ToolChunk)
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, "success")
         self.assertEqual(len(chunk.content), 1)
         self.assertIsInstance(chunk.content[0], TextBlock)
 
@@ -74,7 +74,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
             offset=5,
         )
 
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, "success")
         content = chunk.content[0].text
 
         # Should start from line 5
@@ -96,7 +96,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
             limit=3,
         )
 
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, "success")
         content = chunk.content[0].text
 
         # Should only read 3 lines

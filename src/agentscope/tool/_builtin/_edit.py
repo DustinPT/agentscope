@@ -32,9 +32,10 @@ class Edit(ToolBase):
     description: str = """Performs exact string replacements in files.
 
 Usage:
-- You must use your `Read` tool at least once in the conversation
-  before editing. This tool will error if you attempt an edit without
-  reading the file.
+- Before using `Edit` on a file, you must have previously used `Read`,
+  `Write`, or `Edit` on that file in the conversation.
+- If the file has changed since then, you must use `Read`, `Write`, or
+  `Edit` on it again first to establish the latest version.
 - When editing text from Read tool output, ensure you preserve the
   exact indentation (tabs/spaces) as it appears AFTER the line number
   prefix. The line number prefix format is: line number + tab.
@@ -284,34 +285,38 @@ Usage:
         content = None
         if _agent_state is not None:
             cache = await _agent_state.tool_context.get_cache(file_path)
-            if cache is None:
-                # Haven't read this file before
+            if cache is None or not await _agent_state.tool_context.validate_cached_version(  # noqa: E501
+                file_path,
+                cache,
+            ):
                 return ToolChunk(
                     content=[
                         TextBlock(
-                            text="Error: To edit a file, you must first read "
-                            "it using the Read tool.",
+                            text=(
+                                "Error: The current file version is not "
+                                "known. Re-read or rewrite the file to "
+                                "establish the latest version before "
+                                "editing."
+                            ),
                         ),
                     ],
                     state=ToolResultState.ERROR,
                     is_last=True,
                 )
-            content = "".join(cache.lines)
-        else:
-            # No state provided, read from disk
-            try:
-                async with aiofiles.open(
-                    file_path,
-                    "r",
-                    encoding="utf-8",
-                ) as f:
-                    content = await f.read()
-            except Exception as e:
-                return ToolChunk(
-                    content=[TextBlock(text=f"Error reading file: {str(e)}")],
-                    state=ToolResultState.ERROR,
-                    is_last=True,
-                )
+        # Read the current file content only after version validation passes.
+        try:
+            async with aiofiles.open(
+                file_path,
+                "r",
+                encoding="utf-8",
+            ) as f:
+                content = await f.read()
+        except Exception as e:
+            return ToolChunk(
+                content=[TextBlock(text=f"Error reading file: {str(e)}")],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
 
         # Count occurrences
         occurrences = content.count(old_string)
@@ -370,6 +375,13 @@ Usage:
                 is_last=True,
             )
 
+        if _agent_state is not None:
+            await _agent_state.tool_context.cache_file_version(
+                file_path=file_path,
+                source_kind="edit",
+                content=updated_content,
+            )
+
         # Return success message
         replacement_msg = (
             f"all {occurrences} occurrences" if replace_all else "1 occurrence"
@@ -381,6 +393,6 @@ Usage:
                     f"in {file_path}",
                 ),
             ],
-            state=ToolResultState.RUNNING,
+            state=ToolResultState.SUCCESS,
             is_last=True,
         )

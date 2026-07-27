@@ -213,28 +213,20 @@ Usage:
             )
 
         try:
-            # Read file content with aiofiles
-            lines = None
+            async with aiofiles.open(file_path, mode="rb") as f:
+                file_bytes = await f.read()
+
+            lines = file_bytes.decode(
+                "utf-8",
+                errors="replace",
+            ).splitlines(keepends=True)
+
             if _agent_state is not None:
-                cache = await _agent_state.tool_context.get_cache(file_path)
-                if cache is not None:
-                    lines = cache.lines
-
-            if lines is None:
-                async with aiofiles.open(
-                    file_path,
-                    mode="r",
-                    encoding="utf-8",
-                    errors="replace",
-                ) as f:
-                    lines = await f.readlines()
-
-                # Cache file if state is provided
-                if _agent_state is not None:
-                    await _agent_state.tool_context.cache_file(
-                        file_path=file_path,
-                        lines=lines,
-                    )
+                await _agent_state.tool_context.cache_file_version(
+                    file_path=file_path,
+                    source_kind="read",
+                    content=file_bytes,
+                )
 
             # Apply offset and limit (offset is 1-based)
             start_idx = offset - 1
@@ -263,7 +255,7 @@ Usage:
 
             return ToolChunk(
                 content=[TextBlock(text=result)],
-                state=ToolResultState.RUNNING,
+                state=ToolResultState.SUCCESS,
                 is_last=True,
             )
 

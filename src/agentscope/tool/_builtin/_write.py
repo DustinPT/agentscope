@@ -35,7 +35,8 @@ class Write(ToolBase):
 
 Usage:
 - This tool will overwrite the existing file if there is one at the provided path.
-- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
+- If this is an existing file, you must have previously used `Read`, `Write`, or `Edit` on this file in the conversation before writing it.
+- If the file has changed since then, you must use `Read`, `Write`, or `Edit` on it again first to establish the latest version.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."""  # noqa: E501
@@ -230,16 +231,23 @@ Usage:
                 is_last=True,
             )
 
-        # Check if file exists, it must be read first if it exists
+        # Existing files can only be overwritten when the current version
+        # still matches a file version the model already knows.
         if os.path.exists(file_path) and _agent_state is not None:
             cache = await _agent_state.tool_context.get_cache(file_path)
-            if cache is None:
+            if cache is None or not await _agent_state.tool_context.validate_cached_version(  # noqa: E501
+                file_path,
+                cache,
+            ):
                 return ToolChunk(
                     content=[
                         TextBlock(
-                            text=f"Error: File {file_path} exists but has not "
-                            f"been read yet. You must read the file first "
-                            f"before writing to it.",
+                            text=(
+                                f"Error: The current version of {file_path} "
+                                "is not known. Re-read or rewrite the file "
+                                "to establish the latest version before "
+                                "writing."
+                            ),
                         ),
                     ],
                     state=ToolResultState.ERROR,
@@ -254,6 +262,13 @@ Usage:
         async with aiofiles.open(file_path, mode="w", encoding="utf-8") as f:
             await f.write(content)
 
+        if _agent_state is not None:
+            await _agent_state.tool_context.cache_file_version(
+                file_path=file_path,
+                source_kind="write",
+                content=content,
+            )
+
         # Count lines in content
         line_count = len(content.split("\n"))
 
@@ -265,6 +280,6 @@ Usage:
                     f"({line_count} lines).",
                 ),
             ],
-            state=ToolResultState.RUNNING,
+            state=ToolResultState.SUCCESS,
             is_last=True,
         )

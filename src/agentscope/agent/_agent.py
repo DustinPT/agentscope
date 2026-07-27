@@ -564,7 +564,7 @@ class Agent:
                 f"'{path}', you can refer to it when needed.</system-reminder>"
             )
 
-        await self._clear_unreserved_read_cache(msgs_to_reserve)
+        await self._clear_unreserved_file_cache(msgs_to_reserve)
 
         # Update the context
         self.state.context = msgs_to_reserve
@@ -2157,17 +2157,22 @@ class Agent:
 
         return msgs_to_compress, msgs_to_reserve
 
-    async def _clear_unreserved_read_cache(
+    async def _clear_unreserved_file_cache(
         self,
         msgs_to_reserve: list[Msg],
     ) -> None:
-        """Clean Read caches not referenced by reserved Read tool calls."""
+        """Clean file caches not backed by reserved successful tool results."""
+        call_id_to_path: dict[str, str] = {}
+        successful_call_ids: set[str] = set()
+
         reserved_paths: set[str] = set()
         for msg in msgs_to_reserve:
             for block in msg.get_content_blocks("tool_call"):
-                if not (
-                    isinstance(block, ToolCallBlock) and block.name == "Read"
-                ):
+                if not isinstance(block, ToolCallBlock) or block.name not in {
+                    "Read",
+                    "Write",
+                    "Edit",
+                }:
                     continue
 
                 try:
@@ -2177,7 +2182,22 @@ class Agent:
 
                 file_path = tool_input.get("file_path")
                 if isinstance(file_path, str):
-                    reserved_paths.add(file_path)
+                    call_id_to_path[block.id] = file_path
+
+            for block in msg.get_content_blocks("tool_result"):
+                if not isinstance(block, ToolResultBlock) or block.name not in {
+                    "Read",
+                    "Write",
+                    "Edit",
+                }:
+                    continue
+                if block.state == ToolResultState.SUCCESS:
+                    successful_call_ids.add(block.id)
+
+        for call_id in successful_call_ids:
+            file_path = call_id_to_path.get(call_id)
+            if file_path is not None:
+                reserved_paths.add(file_path)
 
         await self.state.tool_context.clean_file_cache(
             reserved_file_paths=reserved_paths,

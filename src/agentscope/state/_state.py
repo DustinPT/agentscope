@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
+import hashlib
 import uuid
 
 from pydantic import BaseModel, Field
 
+import aiofiles
 import aiofiles.os
 
 from ._task import Task
@@ -11,13 +13,15 @@ from ..message import TextBlock, DataBlock, Msg
 from ..permission import PermissionContext
 
 
-class ReadCacheEntry(BaseModel):
-    """The read file cache."""
+class FileVersionCacheEntry(BaseModel):
+    """The cached proof for a file version known to the model."""
 
-    lines: list[str]
-    updated_at: float
-    bytes: float
     file_path: str
+    mtime_ns: int
+    size_bytes: int
+    sha256: str
+    bytes: float
+    source_kind: str
 
 
 class ToolContext(BaseModel):
@@ -27,58 +31,114 @@ class ToolContext(BaseModel):
     """The maximum number of cached files."""
     max_cache_bytes: float = Field(default=25000, gt=10000)
     """The maximum size of the accumulated read file cache."""
-    read_file_cache: list[ReadCacheEntry] = Field(default_factory=list)
+    read_file_cache: list[FileVersionCacheEntry] = Field(
+        default_factory=list,
+    )
     """The cache for Read/Write/Edit file tools."""
 
     activated_groups: list[str] = Field(default_factory=list)
     """The names of the activated tool groups, each group contains a set of
     tools."""
 
-    async def get_cache(self, file_path: str) -> ReadCacheEntry | None:
-        """Get cached file content if still valid.
+    async def get_cache(
+        self,
+        file_path: str,
+    ) -> FileVersionCacheEntry | None:
+        """Get cached file version info by path.
 
         Args:
             file_path: The absolute path of the file.
 
         Returns:
-            The cached entry if valid, otherwise None.
+            The cached entry if present, otherwise None.
         """
-
-        # Find the cache entry
         for entry in self.read_file_cache:
             if entry.file_path == file_path:
-                # Check if cache is still valid
-                try:
-                    updated_at = await aiofiles.os.path.getmtime(file_path)
-                    if updated_at == entry.updated_at:
-                        return entry
-                    else:
-                        # Cache is outdated, remove it
-                        self.read_file_cache.remove(entry)
-                        return None
-                except Exception:
-                    # File might not exist anymore
-                    self.read_file_cache.remove(entry)
-                    return None
+                return entry
         return None
 
-    async def cache_file(self, file_path: str, lines: list[str]) -> None:
-        """Cache file content with LRU eviction.
+    async def validate_cached_version(
+        self,
+        file_path: str,
+        cache_entry: FileVersionCacheEntry | None = None,
+    ) -> bool:
+        """Validate whether the current file still matches cached version.
 
         Args:
             file_path: The absolute path of the file.
-            lines: The lines of the file content.
+            cache_entry: Optional cached entry to validate.
+
+        Returns:
+            True if the file still matches the cached version, otherwise
+            False. When the version no longer matches, the cache entry is
+            removed.
+        """
+        cache_entry = cache_entry or await self.get_cache(file_path)
+        if cache_entry is None:
+            return False
+
+        try:
+            file_stat = await aiofiles.os.stat(file_path)
+        except Exception:
+            self.read_file_cache = [
+                entry
+                for entry in self.read_file_cache
+                if entry.file_path != file_path
+            ]
+            return False
+
+        if (
+            file_stat.st_mtime_ns == cache_entry.mtime_ns
+            and file_stat.st_size == cache_entry.size_bytes
+        ):
+            return True
+
+        async with aiofiles.open(file_path, mode="rb") as file_obj:
+            content = await file_obj.read()
+
+        content_sha256 = hashlib.sha256(content).hexdigest()
+        if content_sha256 == cache_entry.sha256:
+            cache_entry.mtime_ns = file_stat.st_mtime_ns
+            cache_entry.size_bytes = file_stat.st_size
+            cache_entry.bytes = file_stat.st_size / 1024
+            return True
+
+        self.read_file_cache = [
+            entry
+            for entry in self.read_file_cache
+            if entry.file_path != file_path
+        ]
+        return False
+
+    async def cache_file_version(
+        self,
+        file_path: str,
+        source_kind: str,
+        content: str | bytes | None = None,
+    ) -> None:
+        """Cache the current file version with LRU eviction.
+
+        Args:
+            file_path: The absolute path of the file.
+            source_kind: Which tool produced this version proof.
+            content: Optional content bytes or text to hash. When omitted,
+                the file is read from disk.
         """
         try:
-            updated_at = await aiofiles.os.path.getmtime(file_path)
+            file_stat = await aiofiles.os.stat(file_path)
         except Exception:
-            # Cannot get mtime, skip caching
             return
 
+        if content is None:
+            async with aiofiles.open(file_path, mode="rb") as file_obj:
+                content_bytes = await file_obj.read()
+        elif isinstance(content, str):
+            content_bytes = content.encode("utf-8")
+        else:
+            content_bytes = content
+
         # Calculate size in KB
-        new_entry_bytes = (
-            sum(len(line.encode("utf-8")) for line in lines) / 1024
-        )
+        new_entry_bytes = file_stat.st_size / 1024
 
         # Remove existing cache for this file if present
         self.read_file_cache = [
@@ -102,11 +162,13 @@ class ToolContext(BaseModel):
 
         # Add new entry to the end (most recent)
         self.read_file_cache.append(
-            ReadCacheEntry(
-                lines=lines,
-                updated_at=updated_at,
-                bytes=new_entry_bytes,
+            FileVersionCacheEntry(
                 file_path=file_path,
+                mtime_ns=file_stat.st_mtime_ns,
+                size_bytes=file_stat.st_size,
+                sha256=hashlib.sha256(content_bytes).hexdigest(),
+                bytes=new_entry_bytes,
+                source_kind=source_kind,
             ),
         )
 
