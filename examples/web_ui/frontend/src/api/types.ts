@@ -446,10 +446,6 @@ export interface Skill {
 	content_hash: string;
 }
 
-export interface AddSkillRequest {
-	skill_path: string;
-}
-
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 
 export type PermissionMode =

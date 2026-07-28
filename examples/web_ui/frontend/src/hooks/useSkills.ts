@@ -35,25 +35,5 @@ export function useSkills(agentId: string | null, sessionId: string | null) {
 		refetch();
 	}, [refetch]);
 
-	/** Adds a skill from the given path and refreshes the list. */
-	const add = useCallback(
-		async (skillPath: string) => {
-			if (!agentId || !sessionId) throw new Error('No agent/session selected');
-			await workspaceApi.skill.add(agentId, sessionId, { skill_path: skillPath });
-			await refetch();
-		},
-		[agentId, sessionId, refetch],
-	);
-
-	/** Removes a skill by name and refreshes the list. */
-	const remove = useCallback(
-		async (skillName: string) => {
-			if (!agentId || !sessionId) throw new Error('No agent/session selected');
-			await workspaceApi.skill.remove(skillName, agentId, sessionId);
-			await refetch();
-		},
-		[agentId, sessionId, refetch],
-	);
-
-	return { skills, loading, error, refetch, add, remove };
+        return { skills, loading, error, refetch };
 }

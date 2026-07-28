@@ -94,7 +94,6 @@ export function ChatViewport({
 	pendingInitialUserMsg,
 	onPendingInitialUserMsgConsumed,
 	onTeamUpdated,
-	onAgentUpdated,
 }: ChatViewportProps) {
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
@@ -151,13 +150,9 @@ export function ChatViewport({
 	const {
 		mcps,
 		loading: mcpsLoading,
-		addMcps,
-		removeMcp,
 		skills,
 		skillsLoading,
-		addSkill,
-		removeSkill,
-	} = useWorkspace(agentId, sessionId, onAgentUpdated);
+        } = useWorkspace(agentId, sessionId);
 
 	const view = sessionViewOverride ?? sessions.find((v) => v.session.id === sessionId) ?? null;
 
@@ -493,12 +488,8 @@ export function ChatViewport({
 					<WorkspaceDrawer
 						mcps={mcps}
 						loading={mcpsLoading}
-						onAdd={addMcps}
-						onRemove={removeMcp}
 						skills={skills}
 						skillsLoading={skillsLoading}
-						onAddSkill={addSkill}
-						onRemoveSkill={removeSkill}
 					>
 						<Button size="icon-sm" variant="ghost">
 							<Toolbox />

@@ -1,9 +1,25 @@
 # -*- coding: utf-8 -*-
 """Synchronize workspace runtime state with persisted agent configuration."""
 
+from dataclasses import dataclass
+import hashlib
+import os
+
+import frontmatter
+
+from ..._logging import logger
 from ...mcp import MCPClient
 from ...workspace import WorkspaceBase
 from ..storage import AgentMCPAsset, AgentSkillAsset
+
+
+@dataclass(frozen=True)
+class _DesiredSkill:
+    """One desired skill entry after merging defaults and agent config."""
+
+    name: str
+    dir: str
+    content_hash: str
 
 
 def _replace_mcp_variables(value: str, mapping: dict[str, str]) -> str:
@@ -35,6 +51,53 @@ def _resolve_asset_client(
         if config.get("cwd") is not None:
             config["cwd"] = _replace_mcp_variables(str(config["cwd"]), mapping)
     return MCPClient.model_validate(payload)
+
+
+def _get_workspace_default_mcps(workspace: WorkspaceBase) -> list[MCPClient]:
+    """Return manager-level default MCPs carried by the workspace."""
+    return list(getattr(workspace, "default_mcps", []) or [])
+
+
+def _get_workspace_default_skills(
+    workspace: WorkspaceBase,
+) -> list[_DesiredSkill]:
+    """Return manager-level default skills carried by the workspace."""
+    default_skills: list[_DesiredSkill] = []
+    skill_paths = list(getattr(workspace, "skill_paths", []) or [])
+    for skill_path in skill_paths:
+        skill_md_path = os.path.join(skill_path, "SKILL.md")
+        if not os.path.isfile(skill_md_path):
+            logger.warning(
+                "Skipping workspace default skill %r: SKILL.md not found",
+                skill_path,
+            )
+            continue
+
+        try:
+            with open(skill_md_path, "rb") as file_obj:
+                raw = file_obj.read()
+            doc = frontmatter.loads(raw.decode("utf-8"))
+            name = doc.get("name")
+            if not name:
+                logger.warning(
+                    "Skipping workspace default skill %r: missing name",
+                    skill_path,
+                )
+                continue
+            default_skills.append(
+                _DesiredSkill(
+                    name=str(name),
+                    dir=skill_path,
+                    content_hash=hashlib.sha256(raw).hexdigest(),
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Skipping workspace default skill %r: %s",
+                skill_path,
+                exc,
+            )
+    return default_skills
 
 
 async def sync_workspace_mcp_assets(
@@ -75,11 +138,16 @@ async def sync_workspace_mcp_assets(
 async def sync_workspace_mcps(
     workspace: WorkspaceBase,
     expected_mcps: list[MCPClient],
+    default_mcps: list[MCPClient] | None = None,
     force_reconnect_names: set[str] | None = None,
 ) -> None:
-    """Synchronize workspace MCPs to the expected agent configuration."""
+    """Synchronize workspace MCPs to the merged workspace+agent config."""
     current_mcps = await workspace.list_mcps()
-    expected_map = {mcp.name: mcp for mcp in expected_mcps}
+    expected_map: dict[str, MCPClient] = {}
+    for mcp in default_mcps or []:
+        expected_map[mcp.name] = mcp
+    for mcp in expected_mcps:
+        expected_map[mcp.name] = mcp
     current_by_name: dict[str, list[MCPClient]] = {}
     force_reconnect_names = force_reconnect_names or set()
 
@@ -116,10 +184,19 @@ async def sync_workspace_mcps(
 async def sync_workspace_skills(
     workspace: WorkspaceBase,
     expected_skills: list[AgentSkillAsset],
+    default_skills: list[_DesiredSkill] | None = None,
 ) -> None:
-    """Synchronize workspace skills to the expected agent configuration."""
+    """Synchronize workspace skills to the merged workspace+agent config."""
     current_skills = await workspace.list_skills()
-    expected_map = {skill.name: skill for skill in expected_skills}
+    expected_map: dict[str, _DesiredSkill] = {}
+    for skill in default_skills or []:
+        expected_map[skill.name] = skill
+    for skill in expected_skills:
+        expected_map[skill.name] = _DesiredSkill(
+            name=skill.name,
+            dir=skill.dir,
+            content_hash=skill.content_hash,
+        )
     current_by_name: dict[str, list] = {}
 
     for skill in current_skills:
@@ -161,9 +238,16 @@ async def sync_workspace_state(
         workspace,
         expected_mcp_assets,
     )
+    default_mcps = _get_workspace_default_mcps(workspace)
+    default_skills = _get_workspace_default_skills(workspace)
     await sync_workspace_mcps(
         workspace,
         [*expected_mcps, *asset_mcps],
+        default_mcps=default_mcps,
         force_reconnect_names=changed_asset_names,
     )
-    await sync_workspace_skills(workspace, expected_skills)
+    await sync_workspace_skills(
+        workspace,
+        expected_skills,
+        default_skills=default_skills,
+    )

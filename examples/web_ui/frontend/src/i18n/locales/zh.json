@@ -137,6 +137,22 @@
                         "exportSession": "导出会话"
 		}
 	},
+        "workspace-drawer": {
+                "title": "工作区",
+                "description": "查看当前会话工作区中的 MCP 与技能。",
+                "skillTab": "技能",
+                "mcp": {
+                        "description": "当前工作区中可用的 MCP 服务。",
+                        "searchPlaceholder": "搜索工作区中的 MCP",
+                        "empty": "暂无 MCP",
+                        "toolCount": "{{count}} 个工具"
+                },
+                "skill": {
+                        "description": "当前工作区中可用的技能。",
+                        "searchPlaceholder": "搜索工作区中的技能",
+                        "empty": "暂无技能"
+                }
+        },
 	"dialog-agent-create": {
 		"title": "创建 Agent",
 		"description": "定义新 Agent 的身份与行为。",
