@@ -3,7 +3,7 @@
 import hashlib
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 import aiofiles
 import aiofiles.os
@@ -22,6 +22,61 @@ class FileVersionCacheEntry(BaseModel):
     sha256: str
     bytes: float
     source_kind: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_read_cache(
+        cls,
+        data: object,
+    ) -> object:
+        """Migrate legacy read-file cache entries to the new schema."""
+        if not isinstance(data, dict):
+            return data
+
+        if {
+            "file_path",
+            "mtime_ns",
+            "size_bytes",
+            "sha256",
+            "bytes",
+            "source_kind",
+        }.issubset(data):
+            return data
+
+        legacy_lines = data.get("lines")
+        legacy_file_path = data.get("file_path")
+        legacy_updated_at = data.get("updated_at")
+        legacy_bytes = data.get("bytes")
+        if not isinstance(legacy_lines, list) or not isinstance(
+            legacy_file_path,
+            str,
+        ):
+            return data
+
+        joined_content = "".join(
+            line for line in legacy_lines if isinstance(line, str)
+        )
+        content_bytes = joined_content.encode("utf-8")
+
+        mtime_ns = 0
+        if isinstance(legacy_updated_at, int | float):
+            mtime_ns = int(legacy_updated_at * 1_000_000_000)
+
+        size_bytes = len(content_bytes)
+        cache_bytes = (
+            float(legacy_bytes)
+            if isinstance(legacy_bytes, int | float)
+            else size_bytes / 1024
+        )
+
+        return {
+            "file_path": legacy_file_path,
+            "mtime_ns": mtime_ns,
+            "size_bytes": size_bytes,
+            "sha256": hashlib.sha256(content_bytes).hexdigest(),
+            "bytes": cache_bytes,
+            "source_kind": "read",
+        }
 
 
 class ToolContext(BaseModel):

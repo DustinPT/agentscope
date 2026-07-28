@@ -2,6 +2,7 @@
 # pylint: disable=protected-access
 """Unit tests for RedisStorage using fakeredis."""
 
+import json
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
@@ -84,6 +85,53 @@ class TestCredential(IsolatedAsyncioTestCase):
             records[0].data.get("host"),
             "http://localhost:11434",
         )
+
+
+class TestSessionBackwardCompatibility(IsolatedAsyncioTestCase):
+    """Tests for backward-compatible session state loading."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.user_id = "user-1"
+        self.agent_id = "agent-1"
+
+    async def test_list_sessions_supports_legacy_read_cache(self) -> None:
+        """Legacy read_file_cache entries should still load from Redis."""
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+        )
+        session_key = self.storage._key(
+            self.storage.key_config.session,
+            user_id=self.user_id,
+            session_id=session.id,
+        )
+
+        raw = await self.storage._client.get(session_key)
+        payload = json.loads(raw)
+        payload["state"]["tool_context"]["read_file_cache"] = [
+            {
+                "lines": ["hello\n", "world\n"],
+                "updated_at": 1720000000.0,
+                "bytes": 0.011,
+                "file_path": "/tmp/legacy.txt",
+            },
+        ]
+        await self.storage._client.set(session_key, json.dumps(payload))
+
+        sessions = await self.storage.list_sessions(
+            self.user_id,
+            self.agent_id,
+        )
+
+        self.assertEqual(len(sessions), 1)
+        cache_entry = sessions[0].state.tool_context.read_file_cache[0]
+        self.assertEqual(cache_entry.file_path, "/tmp/legacy.txt")
+        self.assertEqual(cache_entry.source_kind, "read")
+        self.assertGreater(cache_entry.size_bytes, 0)
+        self.assertTrue(cache_entry.sha256)
 
     async def test_list_empty(self) -> None:
         """Verify list returns empty when no records exist."""
