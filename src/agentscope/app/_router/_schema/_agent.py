@@ -137,7 +137,7 @@ class AgentComposeResponse(BaseModel):
 class AgentPackageImportResult(BaseModel):
     """One create/update result produced by package import."""
 
-    agent_id: str = Field(description="Imported agent UUID.")
+    agent_id: str = Field(description="Imported agent ID.")
     action: Literal["created", "updated"] = Field(
         description="Whether the agent was created or updated.",
     )
@@ -148,7 +148,7 @@ class AgentPackageImportResponse(BaseModel):
     """Response body for agent package import."""
 
     main_agent_id: str = Field(
-        description="Imported main agent UUID resolved from config.json.",
+        description="Imported main agent ID resolved from config.json.main_agent_slug.",
     )
     results: list[AgentPackageImportResult] = Field(
         description="Per-agent import results.",

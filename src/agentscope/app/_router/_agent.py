@@ -194,7 +194,7 @@ def _parse_compose_model(
 
 def _build_package_agent_data(
     *,
-    agent_uuid: str,
+    agent_id: str,
     name: str,
     description: str,
     system_prompt: str,
@@ -214,7 +214,7 @@ def _build_package_agent_data(
         ).model_dump(mode="python")
     payload.update(
         {
-            "id": agent_uuid,
+            "id": agent_id,
             "name": name,
             "description": description,
             "system_prompt": system_prompt,
@@ -801,35 +801,35 @@ async def import_agent_package(
     try:
         existing_by_id: dict[str, AgentRecord | None] = {}
         for staged_agent in staged_package.agents:
-            existing_by_id[staged_agent.uuid] = await storage.get_agent(
+            existing_by_id[staged_agent.agent_id] = await storage.get_agent(
                 user_id,
-                staged_agent.uuid,
+                staged_agent.agent_id,
             )
 
         results: list[AgentPackageImportResult] = []
         created_count = 0
         updated_count = 0
         for staged_agent in staged_package.agents:
-            existing = existing_by_id[staged_agent.uuid]
+            existing = existing_by_id[staged_agent.agent_id]
             committed_skills, committed_mcps = await _import_package_agent_assets(
                 asset_store=asset_store,
                 user_id=user_id,
-                agent_id=staged_agent.uuid,
+                agent_id=staged_agent.agent_id,
                 skill_dirs=staged_agent.skill_dirs,
                 mcp_dirs=staged_agent.mcp_dirs,
                 existing=existing,
             )
             data = _build_package_agent_data(
-                agent_uuid=staged_agent.uuid,
+                agent_id=staged_agent.agent_id,
                 name=staged_agent.name,
                 description=staged_agent.description,
                 system_prompt=staged_agent.system_prompt,
-                allowed_subagent_ids=staged_agent.allowed_subagent_uuids,
+                allowed_subagent_ids=staged_agent.allowed_subagent_ids,
                 skills=committed_skills,
                 mcp_assets=committed_mcps,
                 existing=existing,
             )
-            record_id = staged_agent.uuid
+            record_id = staged_agent.agent_id
             if existing is None:
                 record = AgentRecord(
                     id=record_id,
