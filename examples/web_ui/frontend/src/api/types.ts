@@ -95,12 +95,14 @@ export interface AgentComposeResponse {
 }
 
 export interface AgentPackageImportResult {
+        /** Imported real agent UUID, not the package-local friendly id. */
 	agent_id: string;
 	action: 'created' | 'updated';
 	agent: AgentRecord;
 }
 
 export interface AgentPackageImportResponse {
+        /** Imported main agent UUID resolved from config.json.main_agent. */
 	main_agent_id: string;
 	results: AgentPackageImportResult[];
 	created_count: number;

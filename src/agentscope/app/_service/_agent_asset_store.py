@@ -46,10 +46,11 @@ class StagedMCPAsset:
 class StagedAgentPackageAgent:
     """One agent entry extracted from an uploaded agent package."""
 
-    id: str
+    package_id: str
+    uuid: str
     name: str
     description: str
-    allowed_subagent_ids: list[str]
+    allowed_subagent_uuids: list[str]
     system_prompt: str
     skill_dirs: list[str]
     mcp_dirs: list[str]
@@ -68,6 +69,7 @@ class AgentAssetStore:
     """Manage staged and committed agent skill and MCP assets on local disk."""
 
     _AGENT_ID_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,31}")
+    _AGENT_UUID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
     def __init__(self, root_dir: str) -> None:
         self._root_dir = os.path.abspath(root_dir)
@@ -260,6 +262,7 @@ class AgentAssetStore:
 
         normalized_agents: list[dict[str, object]] = []
         agent_ids: list[str] = []
+        agent_uuids: list[str] = []
         for item in agents:
             if not isinstance(item, dict):
                 raise HTTPException(
@@ -280,6 +283,23 @@ class AgentAssetStore:
                         "with a letter or underscore, contain only letters, "
                         "digits, underscores, or hyphens, and be at most 32 "
                         "characters long."
+                    ),
+                )
+            agent_uuid = item.get("uuid")
+            if not isinstance(agent_uuid, str) or not agent_uuid.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Agent '{agent_id}' must include a non-empty 'uuid'."
+                    ),
+                )
+            if not AgentAssetStore._AGENT_UUID_PATTERN.fullmatch(agent_uuid):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Invalid uuid '{agent_uuid}' for agent '{agent_id}'. "
+                        "UUIDs must be 32 lowercase hexadecimal characters "
+                        "without hyphens."
                     ),
                 )
             name = item.get("name")
@@ -318,12 +338,14 @@ class AgentAssetStore:
             normalized_agents.append(
                 {
                     "id": agent_id,
+                    "uuid": agent_uuid,
                     "name": name.strip(),
                     "description": description,
                     "allowed_subagent_ids": list(allowed_subagent_ids),
                 },
             )
             agent_ids.append(agent_id)
+            agent_uuids.append(agent_uuid)
 
         if len(agent_ids) != len(set(agent_ids)):
             dup = next(
@@ -336,14 +358,29 @@ class AgentAssetStore:
                 detail=f"Duplicate agent id '{dup}' in config.json.",
             )
 
-        main_agent_id = payload.get("main_agent")
-        if not isinstance(main_agent_id, str) or main_agent_id not in set(agent_ids):
+        if len(agent_uuids) != len(set(agent_uuids)):
+            dup = next(
+                agent_uuid
+                for agent_uuid in agent_uuids
+                if agent_uuids.count(agent_uuid) > 1
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="config.json.main_agent must reference one agent id.",
+                detail=f"Duplicate agent uuid '{dup}' in config.json.",
             )
 
         agent_id_set = set(agent_ids)
+        package_id_to_uuid = {
+            str(item["id"]): str(item["uuid"]) for item in normalized_agents
+        }
+
+        main_agent_id = payload.get("main_agent")
+        if not isinstance(main_agent_id, str) or main_agent_id not in agent_id_set:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="config.json.main_agent must reference one agent package id.",
+            )
+
         for item in normalized_agents:
             missing = sorted(
                 set(item["allowed_subagent_ids"]) - agent_id_set,  # type: ignore[arg-type]
@@ -356,8 +393,12 @@ class AgentAssetStore:
                         f"'{missing[0]}'."
                     ),
                 )
+            item["allowed_subagent_uuids"] = [
+                package_id_to_uuid[subagent_id]
+                for subagent_id in item["allowed_subagent_ids"]  # type: ignore[index]
+            ]
 
-        return main_agent_id, normalized_agents
+        return package_id_to_uuid[main_agent_id], normalized_agents
 
     @staticmethod
     def _read_skill_metadata(skill_dir: str) -> tuple[str, str, str]:
@@ -570,24 +611,25 @@ class AgentAssetStore:
                     self._assert_safe_zip(zf.infolist())
                     zf.extractall(staging_root)
                 package_root = self._find_agent_package_root(staging_root)
-                main_agent_id, agent_configs = self._read_agent_package_config(
+                main_agent_uuid, agent_configs = self._read_agent_package_config(
                     package_root,
                 )
                 agents: list[StagedAgentPackageAgent] = []
                 for config in agent_configs:
-                    agent_id = str(config["id"])
-                    agent_dir = os.path.join(package_root, agent_id)
+                    package_id = str(config["id"])
+                    agent_uuid = str(config["uuid"])
+                    agent_dir = os.path.join(package_root, package_id)
                     if not os.path.isdir(agent_dir):
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Agent directory '{agent_id}' is missing.",
+                            detail=f"Agent directory '{package_id}' is missing.",
                         )
                     prompt_path = os.path.join(agent_dir, "system_prompt.md")
                     if not os.path.isfile(prompt_path):
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=(
-                                f"Agent '{agent_id}' must contain "
+                                f"Agent '{package_id}' must contain "
                                 "'system_prompt.md'."
                             ),
                         )
@@ -609,11 +651,12 @@ class AgentAssetStore:
                                 mcp_dirs.append(abs_path)
                     agents.append(
                         StagedAgentPackageAgent(
-                            id=agent_id,
+                            package_id=package_id,
+                            uuid=agent_uuid,
                             name=str(config["name"]),
                             description=str(config["description"]),
-                            allowed_subagent_ids=list(
-                                config["allowed_subagent_ids"],  # type: ignore[arg-type]
+                            allowed_subagent_uuids=list(
+                                config["allowed_subagent_uuids"],  # type: ignore[arg-type]
                             ),
                             system_prompt=system_prompt,
                             skill_dirs=skill_dirs,
@@ -622,7 +665,7 @@ class AgentAssetStore:
                     )
                 return StagedAgentPackage(
                     temp_dir=staging_root,
-                    main_agent_id=main_agent_id,
+                    main_agent_id=main_agent_uuid,
                     agents=agents,
                 )
             except zipfile.BadZipFile as exc:
