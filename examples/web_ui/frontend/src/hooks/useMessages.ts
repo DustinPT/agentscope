@@ -154,15 +154,44 @@ export function useMessages(
 		}
 		return null;
 	}, []);
+        const serializeUserContentForComparison = useCallback((message: Msg | null | undefined) => {
+                if (!message || message.role !== 'user') return null;
+                return JSON.stringify(
+                        message.content.map((block) => {
+                                if (block.type === 'text') {
+                                        return { type: 'text', text: block.text };
+                                }
+                                if (block.type === 'data') {
+                                        return {
+                                                type: 'data',
+                                                name: block.name ?? null,
+                                                source:
+                                                        block.source.type === 'url'
+                                                                ? {
+                                                                                type: 'url',
+                                                                                url: block.source.url,
+                                                                                media_type: block.source.media_type,
+                                                                        }
+                                                                : {
+                                                                                type: 'base64',
+                                                                                data: block.source.data,
+                                                                                media_type: block.source.media_type,
+                                                                        },
+                                        };
+                                }
+                                return block;
+                        }),
+                );
+        }, []);
 	const hasEquivalentUserMsg = useCallback((messages: Msg[], candidate: Msg | null | undefined) => {
-		if (!candidate || candidate.role !== 'user') return false;
-		const candidateContent = JSON.stringify(candidate.content);
+                const candidateContent = serializeUserContentForComparison(candidate);
+                if (!candidateContent) return false;
 		return messages.some(
 			(message) =>
 				message.role === 'user' &&
-				JSON.stringify(message.content) === candidateContent,
+                                serializeUserContentForComparison(message) === candidateContent,
 		);
-	}, []);
+        }, [serializeUserContentForComparison]);
 	const scheduleUpdate = useCallback(() => {
 		if (rafRef.current !== null) return;
 		rafRef.current = requestAnimationFrame(() => {
