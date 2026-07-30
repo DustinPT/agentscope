@@ -110,6 +110,11 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const measureRef = useRef<HTMLSpanElement>(null);
 		const value = controlledValue ?? internalValue;
 		const files = controlledFiles ?? internalFiles;
+                const latestFilesRef = useRef(files);
+
+                useEffect(() => {
+                        latestFilesRef.current = files;
+                }, [files]);
 
 		const setValue = (nextValue: string) => {
 			if (controlledValue === undefined) {
@@ -122,7 +127,10 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			nextFiles: ProcessedFile[] | ((prevFiles: ProcessedFile[]) => ProcessedFile[]),
 		) => {
 			const resolvedFiles =
-				typeof nextFiles === 'function' ? nextFiles(files) : nextFiles;
+                                typeof nextFiles === 'function'
+                                        ? nextFiles(latestFilesRef.current)
+                                        : nextFiles;
+                        latestFilesRef.current = resolvedFiles;
 			if (controlledFiles === undefined) {
 				setInternalFiles(resolvedFiles);
 			}
@@ -141,6 +149,8 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 
 		// Whether any file is still being processed (block send until all done)
 		const hasProcessing = files.some((f) => f.status === 'processing');
+                const hasReadyContent =
+                        value.trim().length > 0 || files.some((f) => f.status === 'done' && f.block);
 
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
@@ -181,7 +191,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		const handleSend = () => {
-			if (!value.trim() || disabled || hasProcessing) return;
+                        if (!hasReadyContent || disabled || hasProcessing) return;
 
 			const blocks: ContentBlock[] = [];
 
@@ -398,7 +408,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 										<Button
 											type="button"
 											onClick={handleSend}
-											disabled={disabled || !value.trim() || hasProcessing}
+                                                                                        disabled={disabled || !hasReadyContent || hasProcessing}
 											size="icon"
 											className="shrink-0 rounded-full"
 										>
