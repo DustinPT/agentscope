@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The read tool in agentscope."""
+import base64
 import fnmatch
+import mimetypes
 import os
 from typing import Any, List
 
@@ -14,7 +16,7 @@ from ...permission import (
     PermissionRule,
 )
 from .._response import ToolChunk
-from ...message import TextBlock, ToolResultState
+from ...message import Base64Source, DataBlock, TextBlock, ToolResultState
 from ...state import AgentState
 
 
@@ -33,8 +35,7 @@ Usage:
 - By default, it reads up to 2000 lines starting from the beginning of the file
 - You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
 - Results are returned using cat -n format, with line numbers starting at 1
-- This tool allows you to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as you're a multimodal LLM.
-- This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific pages."""  # noqa: E501
+- This tool allows you to read common image files (eg PNG, JPG, GIF, WEBP, etc). When reading an image file, the result includes the image as multimodal content."""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -85,6 +86,33 @@ Usage:
         """
 
         self._max_line_characters = max_line_characters
+
+    @staticmethod
+    def _guess_media_type(file_path: str) -> str | None:
+        """Guess the media type from file path."""
+        media_type, _ = mimetypes.guess_type(file_path)
+        return media_type
+
+    @staticmethod
+    def _is_binary_file(file_bytes: bytes, media_type: str | None) -> bool:
+        """Detect whether a file should be treated as binary."""
+        if media_type and not media_type.startswith("text/"):
+            return True
+
+        if b"\x00" in file_bytes:
+            return True
+
+        if not file_bytes:
+            return False
+
+        sample = file_bytes[:4096]
+        text_byte_whitelist = {9, 10, 13}
+        non_text_bytes = sum(
+            1
+            for byte in sample
+            if byte < 32 and byte not in text_byte_whitelist
+        )
+        return non_text_bytes / len(sample) > 0.3
 
     async def check_permissions(
         self,
@@ -216,10 +244,7 @@ Usage:
             async with aiofiles.open(file_path, mode="rb") as f:
                 file_bytes = await f.read()
 
-            lines = file_bytes.decode(
-                "utf-8",
-                errors="replace",
-            ).splitlines(keepends=True)
+            media_type = self._guess_media_type(file_path)
 
             if _agent_state is not None:
                 await _agent_state.tool_context.cache_file_version(
@@ -227,6 +252,62 @@ Usage:
                     source_kind="read",
                     content=file_bytes,
                 )
+
+            if media_type == "application/pdf":
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                "Error: PDF files are not supported by the "
+                                f"Read tool: {file_path}"
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+
+            if media_type and media_type.startswith("image/"):
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                "Image file loaded successfully: "
+                                f"{file_path} ({media_type})"
+                            ),
+                        ),
+                        DataBlock(
+                            source=Base64Source(
+                                data=base64.b64encode(file_bytes).decode(
+                                    "ascii",
+                                ),
+                                media_type=media_type,
+                            ),
+                            name=os.path.basename(file_path),
+                        ),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                    is_last=True,
+                )
+
+            if self._is_binary_file(file_bytes, media_type):
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                "Error: Binary files are not supported by "
+                                f"the Read tool: {file_path}"
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+
+            lines = file_bytes.decode(
+                "utf-8",
+                errors="replace",
+            ).splitlines(keepends=True)
 
             # Apply offset and limit (offset is 1-based)
             start_idx = offset - 1
