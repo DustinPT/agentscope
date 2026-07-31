@@ -104,7 +104,16 @@
 		"playAudio": "Play audio",
 		"pauseAudio": "Pause audio",
 		"running": "Running...",
+                "failed": "Run failed",
 		"contextUsageTooltip": "Context usage (current context length / model max context)",
+                "errorKinds": {
+                        "rate_limit": "Model service is rate limited. Try again shortly.",
+                        "auth": "Model authentication failed. Check the API key or model config.",
+                        "timeout": "Model request timed out. Try again shortly.",
+                        "connection": "Model service connection failed. Try again shortly.",
+                        "http": "Model request failed.",
+                        "unknown": "Reply generation failed."
+                },
 		"hintSource": {
 			"tool_output": "Tool Output",
 			"team_message": "Team Message",

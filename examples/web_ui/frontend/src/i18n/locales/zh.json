@@ -104,7 +104,16 @@
 		"playAudio": "播放音频",
 		"pauseAudio": "暂停音频",
 		"running": "运行中...",
+                "failed": "运行失败",
 		"contextUsageTooltip": "上下文使用率（当前上下文长度/模型最大上下文）",
+                "errorKinds": {
+                        "rate_limit": "模型服务当前限流，请稍后重试",
+                        "auth": "模型鉴权失败，请检查 API Key 或模型配置",
+                        "timeout": "模型请求超时，请稍后重试",
+                        "connection": "模型服务连接失败，请稍后重试",
+                        "http": "模型请求失败",
+                        "unknown": "回复生成失败"
+                },
 		"hintSource": {
 			"tool_output": "工具输出",
 			"team_message": "团队消息",

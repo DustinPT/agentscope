@@ -90,7 +90,12 @@ class ReplyStartEvent(EventBase):
 
 
 class ReplyEndEvent(EventBase):
-    """Reply end event."""
+    """Reply end event.
+
+    ``metadata`` may carry terminal reply annotations such as
+    ``context_usage`` for completed replies or ``run_error`` details when the
+    reply ends in a failed state.
+    """
 
     type: Literal[EventType.REPLY_END] = EventType.REPLY_END
     """Event type."""

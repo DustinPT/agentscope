@@ -138,11 +138,11 @@ export function useMessages(
 	const mergeReplyMetadata = useCallback((msg: Msg, event: AgentEvent) => {
 		if (event.type !== EventType.REPLY_END) return;
 		const replyEndEvent = event as ReplyEndEvent;
-		const contextUsage = replyEndEvent.metadata?.context_usage;
-		if (!contextUsage || typeof contextUsage !== 'object') return;
+                const metadata = replyEndEvent.metadata;
+                if (!metadata || typeof metadata !== 'object') return;
 		msg.metadata = {
 			...msg.metadata,
-			context_usage: contextUsage as JsonLike,
+                        ...(metadata as Record<string, JsonLike>),
 		};
 	}, []);
 	const getHistoryReplayBoundary = useCallback((messages: Msg[]): string | null => {

@@ -6,6 +6,7 @@ import type {
 	ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
 import {
+        AlertCircle,
 	ArrowDown,
 	ArrowUp,
 	Bot,
@@ -34,6 +35,7 @@ import {
 	CollapsibleTrigger,
 } from '@/components/ui/collapsible.tsx';
 import { Item, ItemContent } from '@/components/ui/item.tsx';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAudioBlock, useReplayController } from '@/context/AudioContext';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
@@ -52,6 +54,14 @@ interface ContextUsageMetadata {
 	current_tokens: number;
 	max_context_tokens: number;
 	usage_ratio: number;
+}
+
+interface ReplyRunErrorMetadata {
+        kind: 'rate_limit' | 'auth' | 'timeout' | 'connection' | 'http' | 'unknown';
+        summary?: string;
+        detail?: string;
+        retryable?: boolean;
+        status_code?: number | null;
 }
 
 function getContextUsageMetadata(message: Msg): ContextUsageMetadata | null {
@@ -73,6 +83,37 @@ function getContextUsageMetadata(message: Msg): ContextUsageMetadata | null {
 		max_context_tokens: candidate.max_context_tokens,
 		usage_ratio: candidate.usage_ratio,
 	};
+}
+
+function getReplyRunErrorMetadata(message: Msg): ReplyRunErrorMetadata | null {
+        const raw = message.metadata?.run_error;
+        if (!raw || typeof raw !== 'object') return null;
+
+        const candidate = raw as Partial<ReplyRunErrorMetadata>;
+        const kind = candidate.kind;
+        if (
+                kind !== 'rate_limit' &&
+                kind !== 'auth' &&
+                kind !== 'timeout' &&
+                kind !== 'connection' &&
+                kind !== 'http' &&
+                kind !== 'unknown'
+        ) {
+                return null;
+        }
+
+        return {
+                kind,
+                summary: typeof candidate.summary === 'string' ? candidate.summary : undefined,
+                detail: typeof candidate.detail === 'string' ? candidate.detail : undefined,
+                retryable: typeof candidate.retryable === 'boolean' ? candidate.retryable : undefined,
+                status_code: typeof candidate.status_code === 'number' ? candidate.status_code : null,
+        };
+}
+
+function getRunFailedAt(message: Msg): string | null {
+        const raw = message.metadata?.run_failed_at;
+        return typeof raw === 'string' && raw.length > 0 ? raw : null;
 }
 
 function formatContextUsage(metadata: ContextUsageMetadata): string {
@@ -539,11 +580,22 @@ export function MessageBubble({
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
-	const isRunning = !message.finished_at;
+        const runError = getReplyRunErrorMetadata(message);
+        const runFailedAt = getRunFailedAt(message);
+        const isFailed = !!runError;
+        const isRunning = !message.finished_at && !isFailed;
 	const hasUsage =
 		!!message.usage &&
 		((message.usage.input_tokens ?? 0) > 0 || (message.usage.output_tokens ?? 0) > 0);
 	const contextUsage = getContextUsageMetadata(message);
+        const failureSummary = runError
+                ? t(`messageBubble.errorKinds.${runError.kind}`, { defaultValue: runError.summary })
+                : null;
+        const failureDetail = runError
+                ? [runError.detail, runError.status_code ? `HTTP ${runError.status_code}` : null]
+                          .filter(Boolean)
+                          .join('\n')
+                : null;
 
 	// Tick once per second while running so the elapsed time updates live.
 	const [now, setNow] = useState(() => Date.now());
@@ -566,7 +618,8 @@ export function MessageBubble({
 	const showFooter = !isUser;
 
 	const startMs = new Date(message.created_at).getTime();
-	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
+        const terminalAt = message.finished_at ?? runFailedAt;
+        const endMs = isRunning ? now : new Date(terminalAt ?? message.created_at).getTime();
 	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
 	const elapsedText = formatTime(elapsedSeconds);
 	const contextUsageText = contextUsage ? formatContextUsage(contextUsage) : null;
@@ -608,14 +661,42 @@ export function MessageBubble({
 				<div className="flex flex-row items-center text-muted-foreground gap-x-4 px-2 w-full">
 					<Badge
 						variant="secondary"
-						aria-label={isRunning ? t('messageBubble.running') : undefined}
+                                                aria-label={
+                                                        isRunning
+                                                                ? t('messageBubble.running')
+                                                                : isFailed
+                                                                  ? t('messageBubble.failed')
+                                                                  : undefined
+                                                }
 					>
-						{isRunning ? (
+                                                {isRunning ? (
 							<Loader2 data-icon="inline-start" className="animate-spin" />
+                                                ) : isFailed ? (
+                                                        <AlertCircle
+                                                                data-icon="inline-start"
+                                                                className="text-destructive"
+                                                        />
 						) : (
 							<CheckCircle data-icon="inline-start" />
 						)}
 						<span className="tabular-nums tracking-tighter">{elapsedText}</span>
+                                                {isFailed && failureSummary && (
+                                                        <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                        <span className="ml-1 inline-flex max-w-[220px] cursor-help items-center gap-1 text-destructive">
+                                                                                <span className="truncate">
+                                                                                        {failureSummary}
+                                                                                </span>
+                                                                        </span>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent
+                                                                        sideOffset={6}
+                                                                        className="max-w-sm whitespace-pre-wrap break-words"
+                                                                >
+                                                                        {failureDetail || failureSummary}
+                                                                </TooltipContent>
+                                                        </Tooltip>
+                                                )}
 						{hasUsage && (
 							<>
 								<ArrowUp data-icon="inline-start" className="ml-1" />

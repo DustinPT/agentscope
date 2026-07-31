@@ -215,6 +215,9 @@ class Msg(BaseModel):
         content blocks are appended/updated by block-level events,
         ``finished_at`` is stamped by ``REPLY_END``, and ``usage`` is
         initialized then accumulated across each ``MODEL_CALL_END``.
+        ``REPLY_END.metadata`` is also merged into ``self.metadata``, allowing
+        terminal reply annotations such as ``context_usage`` or failure details
+        to persist on the message.
         Events whose ``reply_id`` does not match ``self.id`` are skipped with
         a warning. Block-level delta/end events whose target block cannot be
         found are also skipped with a warning.

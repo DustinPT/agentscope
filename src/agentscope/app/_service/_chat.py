@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from .._reply_state import (
+    get_current_reply_msg,
     is_reply_awaiting_tool_interaction,
     set_reply_checkpoint_replay_entry_id,
 )
@@ -56,6 +57,7 @@ from ...event import (
     CustomEvent,
     DataBlockDeltaEvent,
     ExternalExecutionResultEvent,
+    ReplyEndEvent,
     ReplyStartEvent,
     SessionInterruptEvent,
     ThinkingBlockDeltaEvent,
@@ -229,6 +231,208 @@ class ChatService:
             or checkpoint_state.char_count
             >= self._REPLY_CHECKPOINT_CHAR_THRESHOLD
         )
+
+    @staticmethod
+    def _stringify_error_detail(detail: Any) -> str:
+        """Convert an exception detail payload to a readable string."""
+        if detail is None:
+            return ""
+        if isinstance(detail, str):
+            return detail.strip()
+        return str(detail).strip()
+
+    @classmethod
+    def _format_exception_detail(cls, exc: Exception) -> str:
+        """Flatten an exception chain into a compact human-readable detail."""
+        parts: list[str] = []
+        seen: set[int] = set()
+        current: BaseException | None = exc
+
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, HTTPException):
+                message = cls._stringify_error_detail(current.detail)
+            else:
+                message = str(current).strip()
+            if not message:
+                message = current.__class__.__name__
+            parts.append(f"{current.__class__.__name__}: {message}")
+            current = current.__cause__ or current.__context__
+
+        return "\nCaused by: ".join(parts)
+
+    @staticmethod
+    def _extract_status_code(exc: Exception) -> int | None:
+        """Return an HTTP-style status code when one is available."""
+        if isinstance(exc, HTTPException):
+            return exc.status_code
+
+        status_code = getattr(exc, "status_code", None)
+        return status_code if isinstance(status_code, int) else None
+
+    def _build_reply_failure_metadata(
+        self,
+        exc: Exception,
+        failed_at: str,
+    ) -> dict[str, Any]:
+        """Build structured reply-error metadata from a runtime exception."""
+        status_code = self._extract_status_code(exc)
+        detail = self._format_exception_detail(exc)
+        lowered = detail.lower()
+
+        kind = "unknown"
+        summary = "Reply generation failed."
+        retryable = False
+
+        if status_code == 429 or (
+            "provider_rate_limit_exceeded" in lowered
+            or "rate limit" in lowered
+        ):
+            kind = "rate_limit"
+            summary = "Model service is rate limited."
+            retryable = True
+        elif status_code == 401 or (
+            "invalid_api_key" in lowered
+            or "incorrect api key" in lowered
+            or "authenticationerror" in lowered
+            or "authentication error" in lowered
+            or "unauthorized" in lowered
+        ):
+            kind = "auth"
+            summary = "Model authentication failed."
+        elif isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or (
+            "timed out" in lowered or "timeout" in lowered
+        ):
+            kind = "timeout"
+            summary = "Model request timed out."
+            retryable = True
+        elif "connection error" in lowered or "api connection" in lowered:
+            kind = "connection"
+            summary = "Model service connection failed."
+            retryable = True
+        elif status_code is not None:
+            kind = "http"
+            summary = "Model request failed."
+
+        return {
+            "terminal_state": "failed",
+            "run_failed_at": failed_at,
+            "run_error": {
+                "kind": kind,
+                "summary": summary,
+                "detail": detail,
+                "retryable": retryable,
+                "status_code": status_code,
+            },
+        }
+
+    def _build_failed_reply_end_event(
+        self,
+        session_id: str,
+        reply_id: str,
+        exc: Exception,
+    ) -> ReplyEndEvent:
+        """Build a terminal ``ReplyEndEvent`` that marks the reply as failed."""
+        failed_at = datetime.now().isoformat()
+        return ReplyEndEvent(
+            session_id=session_id,
+            reply_id=reply_id,
+            created_at=failed_at,
+            metadata=self._build_reply_failure_metadata(exc, failed_at),
+        )
+
+    @staticmethod
+    def _remove_empty_failed_reply_from_context(
+        agent: Agent,
+        reply_id: str,
+    ) -> None:
+        """Drop an empty failed reply from the session context tail."""
+        current_reply = get_current_reply_msg(agent)
+        if current_reply is None or current_reply.id != reply_id:
+            return
+        if current_reply.content:
+            return
+        if is_reply_awaiting_tool_interaction(agent):
+            return
+        agent.state.context.pop()
+
+    async def _finalize_failed_reply(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        agent: Agent,
+        reply_msg: Msg | None,
+        reply_started: bool,
+        checkpoint_state: _ReplyCheckpointState,
+        exc: Exception,
+    ) -> Msg | None:
+        """Best-effort finalize and persist the current reply as failed."""
+        reply_id = reply_msg.id if reply_msg is not None else agent.state.reply_id
+        current_reply = get_current_reply_msg(agent)
+        if current_reply is not None and current_reply.id != reply_id:
+            current_reply = None
+
+        target_reply = reply_msg
+        if target_reply is None and current_reply is not None:
+            target_reply = current_reply.model_copy(deep=True)
+
+        if target_reply is None and not reply_started:
+            return None
+
+        if target_reply is None:
+            target_reply = AssistantMsg(
+                id=reply_id,
+                name=agent.name,
+                content=[],
+            )
+
+        if target_reply.finished_at is not None:
+            return target_reply
+
+        failed_event = self._build_failed_reply_end_event(
+            session_id=session_id,
+            reply_id=reply_id,
+            exc=exc,
+        )
+
+        try:
+            entry_id = await self._message_bus.session_publish_event(
+                session_id,
+                failed_event.model_dump(mode="json"),
+            )
+            checkpoint_state.latest_replay_entry_id = entry_id
+        except Exception:
+            logger.warning(
+                "Failed to publish failed ReplyEndEvent for session %s reply %s.",
+                session_id,
+                reply_id,
+                exc_info=True,
+            )
+
+        target_reply.append_event(failed_event)
+        if current_reply is not None and current_reply is not target_reply:
+            current_reply.append_event(failed_event)
+
+        set_reply_checkpoint_replay_entry_id(
+            target_reply,
+            checkpoint_state.latest_replay_entry_id,
+        )
+        await self._storage.upsert_message(
+            user_id,
+            session_id,
+            target_reply,
+        )
+
+        self._remove_empty_failed_reply_from_context(agent, reply_id)
+        await self._storage.update_session_state(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            state=agent.state,
+        )
+        return target_reply
 
     async def _checkpoint_reply(
         self,
@@ -1117,95 +1321,77 @@ class ChatService:
         reply_msg: Msg | None = None
         async with self._message_bus.session_run(session_id):
             checkpoint_state = _ReplyCheckpointState()
+            reply_started = False
 
-            if input_msg is None or isinstance(input_msg, (Msg, list)):
-                # Case A: new reply (user message(s), or retrigger with
-                # empty input)
-                if isinstance(input_msg, (Msg, list)):
-                    input_msgs = (
-                        [input_msg]
-                        if isinstance(input_msg, Msg)
-                        else input_msg
-                    )
-                    for msg in input_msgs:
-                        await self._storage.upsert_message(
-                            user_id,
+            try:
+                if input_msg is None or isinstance(input_msg, (Msg, list)):
+                    # Case A: new reply (user message(s), or retrigger with
+                    # empty input)
+                    if isinstance(input_msg, (Msg, list)):
+                        input_msgs = (
+                            [input_msg]
+                            if isinstance(input_msg, Msg)
+                            else input_msg
+                        )
+                        for msg in input_msgs:
+                            await self._storage.upsert_message(
+                                user_id,
+                                session_id,
+                                msg,
+                            )
+
+                    async for event in agent.reply_stream(inputs=input_msg):
+                        entry_id = await self._message_bus.session_publish_event(
                             session_id,
-                            msg,
+                            event.model_dump(mode="json"),
                         )
+                        checkpoint_state.latest_replay_entry_id = entry_id
+                        if isinstance(event, ReplyStartEvent):
+                            reply_started = True
+                            reply_msg = AssistantMsg(
+                                id=event.reply_id,
+                                name=event.name,
+                                content=[],
+                            )
+                        elif reply_msg is not None:
+                            reply_msg.append_event(event)
+                            self._record_checkpoint_event(
+                                checkpoint_state,
+                                event,
+                            )
+                            await self._maybe_checkpoint_reply(
+                                user_id=user_id,
+                                session_id=session_id,
+                                agent_id=agent_id,
+                                reply_msg=reply_msg,
+                                agent=agent,
+                                checkpoint_state=checkpoint_state,
+                            )
 
-                async for event in agent.reply_stream(inputs=input_msg):
-                    entry_id = await self._message_bus.session_publish_event(
+                elif isinstance(
+                    input_msg,
+                    (UserConfirmResultEvent, ExternalExecutionResultEvent),
+                ):
+                    # Case B: continuation (UserConfirmResult / ExternalExecResult)
+                    reply_msg = await self._storage.get_message(
+                        user_id,
                         session_id,
-                        event.model_dump(mode="json"),
-                    )
-                    checkpoint_state.latest_replay_entry_id = entry_id
-                    if isinstance(event, ReplyStartEvent):
-                        reply_msg = AssistantMsg(
-                            id=event.reply_id,
-                            name=event.name,
-                            content=[],
-                        )
-                    elif reply_msg is not None:
-                        reply_msg.append_event(event)
-                        self._record_checkpoint_event(
-                            checkpoint_state,
-                            event,
-                        )
-                        await self._maybe_checkpoint_reply(
-                            user_id=user_id,
-                            session_id=session_id,
-                            agent_id=agent_id,
-                            reply_msg=reply_msg,
-                            agent=agent,
-                            checkpoint_state=checkpoint_state,
-                        )
-
-            elif isinstance(
-                input_msg,
-                (UserConfirmResultEvent, ExternalExecutionResultEvent),
-            ):
-                # Case B: continuation (UserConfirmResult / ExternalExecResult)
-                reply_msg = await self._storage.get_message(
-                    user_id,
-                    session_id,
-                    agent.state.reply_id,
-                )
-
-                if reply_msg is None:
-                    logger.warning(
-                        "Reply message %r not found in storage for session "
-                        "%r; tool-call state changes from the incoming event "
-                        "will not be persisted.",
                         agent.state.reply_id,
-                        session_id,
-                    )
-                elif input_msg:
-                    reply_msg.append_event(input_msg)
-                    self._record_checkpoint_event(
-                        checkpoint_state,
-                        input_msg,
-                    )
-                    await self._maybe_checkpoint_reply(
-                        user_id=user_id,
-                        session_id=session_id,
-                        agent_id=agent_id,
-                        reply_msg=reply_msg,
-                        agent=agent,
-                        checkpoint_state=checkpoint_state,
                     )
 
-                async for event in agent.reply_stream(inputs=input_msg):
-                    entry_id = await self._message_bus.session_publish_event(
-                        session_id,
-                        event.model_dump(mode="json"),
-                    )
-                    checkpoint_state.latest_replay_entry_id = entry_id
-                    if reply_msg is not None:
-                        reply_msg.append_event(event)
+                    if reply_msg is None:
+                        logger.warning(
+                            "Reply message %r not found in storage for session "
+                            "%r; tool-call state changes from the incoming event "
+                            "will not be persisted.",
+                            agent.state.reply_id,
+                            session_id,
+                        )
+                    elif input_msg:
+                        reply_msg.append_event(input_msg)
                         self._record_checkpoint_event(
                             checkpoint_state,
-                            event,
+                            input_msg,
                         )
                         await self._maybe_checkpoint_reply(
                             user_id=user_id,
@@ -1216,49 +1402,49 @@ class ChatService:
                             checkpoint_state=checkpoint_state,
                         )
 
-            else:
-                # Case C: session interrupt (interrupt awaiting tool calls
-                # without entering model reasoning)
-                reply_msg = await self._storage.get_message(
-                    user_id,
-                    session_id,
-                    agent.state.reply_id,
-                )
+                    async for event in agent.reply_stream(inputs=input_msg):
+                        entry_id = await self._message_bus.session_publish_event(
+                            session_id,
+                            event.model_dump(mode="json"),
+                        )
+                        checkpoint_state.latest_replay_entry_id = entry_id
+                        if reply_msg is not None:
+                            reply_msg.append_event(event)
+                            self._record_checkpoint_event(
+                                checkpoint_state,
+                                event,
+                            )
+                            await self._maybe_checkpoint_reply(
+                                user_id=user_id,
+                                session_id=session_id,
+                                agent_id=agent_id,
+                                reply_msg=reply_msg,
+                                agent=agent,
+                                checkpoint_state=checkpoint_state,
+                            )
 
-                if reply_msg is None:
-                    logger.warning(
-                        "Reply message %r not found in storage for session "
-                        "%r; interrupt state changes from the incoming event "
-                        "will not be persisted.",
+                else:
+                    # Case C: session interrupt (interrupt awaiting tool calls
+                    # without entering model reasoning)
+                    reply_msg = await self._storage.get_message(
+                        user_id,
+                        session_id,
                         agent.state.reply_id,
-                        session_id,
-                    )
-                elif input_msg:
-                    reply_msg.append_event(input_msg)
-                    self._record_checkpoint_event(
-                        checkpoint_state,
-                        input_msg,
-                    )
-                    await self._maybe_checkpoint_reply(
-                        user_id=user_id,
-                        session_id=session_id,
-                        agent_id=agent_id,
-                        reply_msg=reply_msg,
-                        agent=agent,
-                        checkpoint_state=checkpoint_state,
                     )
 
-                async for event in agent.reply_stream(inputs=input_msg):
-                    entry_id = await self._message_bus.session_publish_event(
-                        session_id,
-                        event.model_dump(mode="json"),
-                    )
-                    checkpoint_state.latest_replay_entry_id = entry_id
-                    if reply_msg is not None:
-                        reply_msg.append_event(event)
+                    if reply_msg is None:
+                        logger.warning(
+                            "Reply message %r not found in storage for session "
+                            "%r; interrupt state changes from the incoming event "
+                            "will not be persisted.",
+                            agent.state.reply_id,
+                            session_id,
+                        )
+                    elif input_msg:
+                        reply_msg.append_event(input_msg)
                         self._record_checkpoint_event(
                             checkpoint_state,
-                            event,
+                            input_msg,
                         )
                         await self._maybe_checkpoint_reply(
                             user_id=user_id,
@@ -1269,47 +1455,80 @@ class ChatService:
                             checkpoint_state=checkpoint_state,
                         )
 
-            # Persist the reply Msg (upsert: overwrite if same id, append
-            # if new).
-            if reply_msg is not None:
-                set_reply_checkpoint_replay_entry_id(
-                    reply_msg,
-                    checkpoint_state.latest_replay_entry_id,
+                    async for event in agent.reply_stream(inputs=input_msg):
+                        entry_id = await self._message_bus.session_publish_event(
+                            session_id,
+                            event.model_dump(mode="json"),
+                        )
+                        checkpoint_state.latest_replay_entry_id = entry_id
+                        if reply_msg is not None:
+                            reply_msg.append_event(event)
+                            self._record_checkpoint_event(
+                                checkpoint_state,
+                                event,
+                            )
+                            await self._maybe_checkpoint_reply(
+                                user_id=user_id,
+                                session_id=session_id,
+                                agent_id=agent_id,
+                                reply_msg=reply_msg,
+                                agent=agent,
+                                checkpoint_state=checkpoint_state,
+                            )
+
+                # Persist the reply Msg (upsert: overwrite if same id, append
+                # if new).
+                if reply_msg is not None:
+                    set_reply_checkpoint_replay_entry_id(
+                        reply_msg,
+                        checkpoint_state.latest_replay_entry_id,
+                    )
+                    await self._storage.upsert_message(
+                        user_id,
+                        session_id,
+                        reply_msg,
+                    )
+
+                # Persist the updated agent state. MUST happen inside the
+                # session lock: if we released the lock first, another
+                # process could acquire it and load a stale state from
+                # storage before this write lands.
+                await self._storage.update_session_state(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    state=agent.state,
                 )
-                await self._storage.upsert_message(
-                    user_id,
+
+                parked_on_awaiting_tool = is_reply_awaiting_tool_interaction(
+                    agent,
+                )
+
+                pending_inbox_entries = await self._message_bus.inbox_length(
                     session_id,
-                    reply_msg,
                 )
-
-            # Persist the updated agent state. MUST happen inside the
-            # session lock: if we released the lock first, another
-            # process could acquire it and load a stale state from
-            # storage before this write lands.
-            await self._storage.update_session_state(
-                user_id=user_id,
-                agent_id=agent_id,
-                session_id=session_id,
-                state=agent.state,
-            )
-
-            parked_on_awaiting_tool = is_reply_awaiting_tool_interaction(
-                agent,
-            )
-
-            pending_inbox_entries = await self._message_bus.inbox_length(
-                session_id,
-            )
-            needs_followup_wakeup = (
-                pending_inbox_entries > 0 and not parked_on_awaiting_tool
-            )
-            if needs_followup_wakeup:
-                logger.info(
-                    "ChatService: session %s finished with %d pending inbox "
-                    "entries; scheduling a follow-up wakeup.",
-                    session_id,
-                    pending_inbox_entries,
+                needs_followup_wakeup = (
+                    pending_inbox_entries > 0 and not parked_on_awaiting_tool
                 )
+                if needs_followup_wakeup:
+                    logger.info(
+                        "ChatService: session %s finished with %d pending inbox "
+                        "entries; scheduling a follow-up wakeup.",
+                        session_id,
+                        pending_inbox_entries,
+                    )
+            except Exception as exc:
+                reply_msg = await self._finalize_failed_reply(
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    agent=agent,
+                    reply_msg=reply_msg,
+                    reply_started=reply_started,
+                    checkpoint_state=checkpoint_state,
+                    exc=exc,
+                )
+                raise
 
         # ``session_run.__aexit__`` trims the replay log before
         # releasing the lock — see :meth:`MessageBus.session_run`.
