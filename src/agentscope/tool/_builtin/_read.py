@@ -34,7 +34,8 @@ Usage:
 - The file_path parameter must be an absolute path, not a relative path
 - By default, it reads up to 2000 lines starting from the beginning of the file
 - You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
-- Results are returned using cat -n format, with line numbers starting at 1
+- For text files, the result includes a summary header with completeness, total lines, returned range, and remaining lines
+- Text file contents are returned using cat -n format, with line numbers starting at 1
 - This tool allows you to read common image files (eg PNG, JPG, GIF, WEBP, etc). When reading an image file, the result includes the image as multimodal content."""  # noqa: E501
     """The description presented to the agent."""
 
@@ -202,7 +203,7 @@ Usage:
         limit: int = 2000,
         _agent_state: AgentState | None = None,
     ) -> ToolChunk:
-        """Read the file and return the content with line numbers."""
+        """Read the file and return the content with metadata."""
 
         # Validate file_path is absolute
         if not os.path.isabs(file_path):
@@ -309,6 +310,8 @@ Usage:
                 errors="replace",
             ).splitlines(keepends=True)
 
+            total_lines = len(lines)
+
             # Apply offset and limit (offset is 1-based)
             start_idx = offset - 1
             end_idx = start_idx + limit
@@ -331,13 +334,47 @@ Usage:
                 formatted_line = f"{i:6d}\t{line_content}"
                 formatted_lines.append(formatted_line)
 
-            # Join all lines
-            result = "\n".join(formatted_lines)
+            returned_lines = len(selected_lines)
+            remaining_lines = max(total_lines - end_idx, 0)
+            is_complete = end_idx >= total_lines
+
+            if returned_lines > 0:
+                start_line = offset
+                end_line = offset + returned_lines - 1
+                line_range = f"{start_line}-{end_line}"
+            else:
+                start_line = None
+                end_line = None
+                line_range = "none"
+
+            summary_lines = [
+                f"File: {file_path}",
+                f"Complete: {'yes' if is_complete else 'no'}",
+                f"Total lines: {total_lines}",
+                f"Returned lines: {returned_lines}",
+                f"Line range: {line_range}",
+                f"Remaining lines: {remaining_lines}",
+                "",
+            ]
+
+            # Join the summary and numbered file content into one text block.
+            result = "\n".join(summary_lines + formatted_lines)
 
             return ToolChunk(
                 content=[TextBlock(text=result)],
                 state=ToolResultState.SUCCESS,
                 is_last=True,
+                metadata={
+                    "file_path": file_path,
+                    "offset": offset,
+                    "limit": limit,
+                    "is_complete": is_complete,
+                    "total_lines": total_lines,
+                    "returned_lines": returned_lines,
+                    "remaining_lines": remaining_lines,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                },
             )
 
         except Exception as e:
