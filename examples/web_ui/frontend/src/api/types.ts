@@ -519,6 +519,7 @@ export interface ModelCard {
 	status: 'active' | 'deprecated' | 'sunset';
 	deprecated_at: string | null;
 	input_types: string[];
+        tool_result_media_types: string[] | null;
 	output_types: string[];
 	context_size: number;
 	output_size: number;

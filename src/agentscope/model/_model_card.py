@@ -40,6 +40,16 @@ class ModelCard(BaseModel):
     )
     """The model supported input types."""
 
+    tool_result_media_types: list[str] | None = Field(
+        default=None,
+        description=(
+            "The media types that can remain inside tool result blocks. "
+            "When omitted, runtime formatting falls back to ``input_types``."
+        ),
+        title="Tool result media types",
+    )
+    """The model supported tool result media types."""
+
     output_types: list[str] = Field(
         description="The supported model output types.",
         title="Output types",
@@ -160,6 +170,7 @@ class ModelCard(BaseModel):
             status=config.get("status", "active"),
             deprecated_at=config.get("deprecated_at"),
             input_types=config.get("input_types", ["text/plain"]),
+            tool_result_media_types=config.get("tool_result_media_types"),
             output_types=config.get("output_types", ["text/plain"]),
             context_size=config["context_size"],
             output_size=config["output_size"],

@@ -98,6 +98,8 @@ class OpenCodeGoChatModel(ChatModelBase):
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 200000,
+        formatter_input_media_types: list[str] | None = None,
+        formatter_tool_result_media_types: list[str] | None = None,
         formatter_input_types: list[str] | None = None,
         api_style: Literal["chat_completions", "anthropic_messages"] = (
             _API_STYLE_CHAT_COMPLETIONS
@@ -118,7 +120,14 @@ class OpenCodeGoChatModel(ChatModelBase):
                 f"Unsupported OpenCode Go api_style: {api_style!r}.",
             )
         self.api_style = api_style
-        self.formatter_input_types = formatter_input_types
+        self.formatter_input_media_types = (
+            formatter_input_media_types
+            if formatter_input_media_types is not None
+            else formatter_input_types
+        )
+        self.formatter_tool_result_media_types = (
+            formatter_tool_result_media_types
+        )
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -143,7 +152,12 @@ class OpenCodeGoChatModel(ChatModelBase):
             custom_yaml_dir=custom_yaml_dir,
         )
         if card is not None:
-            runtime_init_kwargs["formatter_input_types"] = card.input_types
+            runtime_init_kwargs["formatter_input_media_types"] = (
+                card.input_types
+            )
+            runtime_init_kwargs["formatter_tool_result_media_types"] = (
+                card.tool_result_media_types
+            )
         return runtime_init_kwargs
 
     def _to_openai_credential(self) -> OpenAICredential:
@@ -179,6 +193,10 @@ class OpenCodeGoChatModel(ChatModelBase):
                 max_retries=self.max_retries,
                 retry_delay=self.retry_delay,
                 context_size=self.context_size,
+                formatter_input_media_types=self.formatter_input_media_types,
+                formatter_tool_result_media_types=(
+                    self.formatter_tool_result_media_types
+                ),
             )
 
         openai_parameters = OpenAIChatModel.Parameters(
@@ -196,7 +214,10 @@ class OpenCodeGoChatModel(ChatModelBase):
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
             context_size=self.context_size,
-            formatter_input_types=self.formatter_input_types,
+            formatter_input_media_types=self.formatter_input_media_types,
+            formatter_tool_result_media_types=(
+                self.formatter_tool_result_media_types
+            ),
         )
 
     def _build_generate_kwargs(

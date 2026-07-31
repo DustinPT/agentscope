@@ -177,6 +177,21 @@ class ChatModelBase:
         self.retry_delay = retry_delay
         self.context_size = context_size
 
+    def _adapt_messages_for_formatter(
+        self,
+        messages: list[Msg],
+    ) -> list[Msg]:
+        """Adapt messages to formatter-consumable media capabilities."""
+        formatter = getattr(self, "formatter", None)
+        if formatter is None:
+            return deepcopy(messages)
+
+        adapt = getattr(formatter, "adapt_messages_for_model", None)
+        if callable(adapt):
+            return adapt(messages)
+
+        return deepcopy(messages)
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         """Return the exception types that should trigger a retry.
@@ -506,6 +521,7 @@ class ChatModelBase:
             `int`:
                 The number of tokens in the model.
         """
+        messages = self._adapt_messages_for_formatter(messages)
         cnt = 0
 
         acc_texts = []

@@ -121,6 +121,8 @@ class OpenAIChatModel(ChatModelBase):
         retry_delay: float = 1.0,
         context_size: int = 128000,
         formatter: FormatterBase | None = None,
+        formatter_input_media_types: list[str] | None = None,
+        formatter_tool_result_media_types: list[str] | None = None,
         formatter_input_types: list[str] | None = None,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
@@ -147,9 +149,17 @@ class OpenAIChatModel(ChatModelBase):
                 The formatter that converts ``Msg`` objects to the format
                 required by the OpenAI API. When ``None``, an
                 ``OpenAIChatFormatter`` instance will be used.
+            formatter_input_media_types (`list[str] | None`, defaults to \
+            `None`):
+                Optional input media capability list sourced from the model
+                card and forwarded to the default formatter.
+            formatter_tool_result_media_types (`list[str] | None`, defaults \
+            to `None`):
+                Optional tool-result media capability list sourced from the
+                model card and forwarded to the default formatter.
             formatter_input_types (`list[str] | None`, defaults to `None`):
-                Optional input capability list sourced from the model card and
-                forwarded to the default formatter.
+                Deprecated alias of ``formatter_input_media_types`` kept for
+                backward compatibility.
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
@@ -165,8 +175,17 @@ class OpenAIChatModel(ChatModelBase):
         )
         if formatter is None:
             formatter_kwargs: dict[str, Any] = {}
-            if formatter_input_types is not None:
-                formatter_kwargs["input_types"] = formatter_input_types
+            resolved_input_media_types = (
+                formatter_input_media_types
+                if formatter_input_media_types is not None
+                else formatter_input_types
+            )
+            if resolved_input_media_types is not None:
+                formatter_kwargs["input_types"] = resolved_input_media_types
+            if formatter_tool_result_media_types is not None:
+                formatter_kwargs["tool_result_media_types"] = (
+                    formatter_tool_result_media_types
+                )
             formatter = OpenAIChatFormatter(**formatter_kwargs)
         self.formatter = formatter
         self.client_kwargs = client_kwargs or {}
@@ -198,7 +217,12 @@ class OpenAIChatModel(ChatModelBase):
             custom_yaml_dir=custom_yaml_dir,
         )
         if card is not None:
-            runtime_init_kwargs["formatter_input_types"] = card.input_types
+            runtime_init_kwargs["formatter_input_media_types"] = (
+                card.input_types
+            )
+            runtime_init_kwargs["formatter_tool_result_media_types"] = (
+                card.tool_result_media_types
+            )
         return runtime_init_kwargs
 
     async def _call_api(
@@ -240,7 +264,8 @@ class OpenAIChatModel(ChatModelBase):
             },
         )
 
-        formatted_messages = await self.formatter.format(messages)
+        adapted_messages = self._adapt_messages_for_formatter(messages)
+        formatted_messages = await self.formatter.format(adapted_messages)
 
         kwargs: dict[str, Any] = {
             "model": model_name,

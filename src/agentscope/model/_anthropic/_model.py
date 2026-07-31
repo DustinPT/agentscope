@@ -64,6 +64,8 @@ class AnthropicChatModel(ChatModelBase):
         retry_delay: float = 1.0,
         context_size: int = 200000,
         formatter: FormatterBase | None = None,
+        formatter_input_media_types: list[str] | None = None,
+        formatter_tool_result_media_types: list[str] | None = None,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the Anthropic chat model.
@@ -89,6 +91,14 @@ class AnthropicChatModel(ChatModelBase):
                 The formatter that converts ``Msg`` objects to the format
                 required by the Anthropic API. When ``None``, an
                 ``AnthropicChatFormatter`` instance will be used.
+            formatter_input_media_types (`list[str] | None`, defaults to \
+            `None`):
+                Optional input media capability list sourced from the model
+                card and forwarded to the default formatter.
+            formatter_tool_result_media_types (`list[str] | None`, defaults \
+            to `None`):
+                Optional tool-result media capability list sourced from the
+                model card and forwarded to the default formatter.
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to
                 ``anthropic.AsyncAnthropic`` (e.g. ``timeout``,
@@ -103,7 +113,18 @@ class AnthropicChatModel(ChatModelBase):
             retry_delay=retry_delay,
             context_size=context_size,
         )
-        self.formatter = formatter or AnthropicChatFormatter()
+        if formatter is None:
+            formatter_kwargs: dict[str, Any] = {}
+            if formatter_input_media_types is not None:
+                formatter_kwargs["input_types"] = (
+                    formatter_input_media_types
+                )
+            if formatter_tool_result_media_types is not None:
+                formatter_kwargs["tool_result_media_types"] = (
+                    formatter_tool_result_media_types
+                )
+            formatter = AnthropicChatFormatter(**formatter_kwargs)
+        self.formatter = formatter
         self.client_kwargs = client_kwargs or {}
 
     @classmethod
@@ -116,6 +137,30 @@ class AnthropicChatModel(ChatModelBase):
             anthropic.RateLimitError,
             anthropic.InternalServerError,
         )
+
+    @classmethod
+    def get_runtime_init_kwargs(
+        cls,
+        model_name: str,
+        custom_yaml_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Include formatter capabilities derived from the model card."""
+        runtime_init_kwargs = super().get_runtime_init_kwargs(
+            model_name=model_name,
+            custom_yaml_dir=custom_yaml_dir,
+        )
+        card = cls.get_model_card(
+            model_name=model_name,
+            custom_yaml_dir=custom_yaml_dir,
+        )
+        if card is not None:
+            runtime_init_kwargs["formatter_input_media_types"] = (
+                card.input_types
+            )
+            runtime_init_kwargs["formatter_tool_result_media_types"] = (
+                card.tool_result_media_types
+            )
+        return runtime_init_kwargs
 
     async def _call_api(
         self,
@@ -188,7 +233,8 @@ class AnthropicChatModel(ChatModelBase):
         if fmt_tool_choice is not None:
             kwargs["tool_choice"] = fmt_tool_choice
 
-        formatted_messages = await self.formatter.format(messages)
+        adapted_messages = self._adapt_messages_for_formatter(messages)
+        formatted_messages = await self.formatter.format(adapted_messages)
 
         # Extract the system message
         if formatted_messages and formatted_messages[0]["role"] == "system":

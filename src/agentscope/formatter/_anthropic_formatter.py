@@ -173,6 +173,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             elif isinstance(out_block, DataBlock):
                                 fmt_block = self._format_anthropic_data_block(
                                     out_block,
+                                    check_input_support=False,
                                 )
                                 if fmt_block:
                                     tool_result_content.append(fmt_block)
@@ -225,6 +226,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
     def _format_anthropic_data_block(
         self,
         block: DataBlock,
+        check_input_support: bool = True,
     ) -> dict[str, Any] | None:
         """Format a DataBlock into Anthropic API format.
 
@@ -241,7 +243,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
         media_type = source.media_type
 
         # Check if media type is supported
-        if not any(
+        if check_input_support and not any(
             fnmatch.fnmatch(media_type, pattern)
             for pattern in self.supported_input_media_types
         ):
