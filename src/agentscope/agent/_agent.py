@@ -106,6 +106,95 @@ _CONTEXT_COMPRESS_FALLBACK_PROMPT = (
     "# Context to Preserve\n"
     "Keep each section concise and actionable.</system-hint>"
 )
+_TOOL_RESULT_PREVIEW_MAX_LINES = 2_000
+_TOOL_RESULT_PREVIEW_MAX_BYTES = 50 * 1024
+_TOOL_RESULT_TRUNCATION_MARKER = "... output truncated ..."
+
+
+def _utf8_take_prefix(text: str, maximum_bytes: int) -> str:
+    """Take a UTF-8 safe prefix without splitting a code point."""
+    collected: list[str] = []
+    used_bytes = 0
+    for char in text:
+        char_bytes = len(char.encode("utf-8"))
+        if used_bytes + char_bytes > maximum_bytes:
+            break
+        collected.append(char)
+        used_bytes += char_bytes
+    return "".join(collected)
+
+
+def _utf8_take_suffix(text: str, maximum_bytes: int) -> str:
+    """Take a UTF-8 safe suffix without splitting a code point."""
+    collected: list[str] = []
+    used_bytes = 0
+    for char in reversed(text):
+        char_bytes = len(char.encode("utf-8"))
+        if used_bytes + char_bytes > maximum_bytes:
+            break
+        collected.append(char)
+        used_bytes += char_bytes
+    return "".join(reversed(collected))
+
+
+def _count_lines(text: str) -> int:
+    """Count text lines using newline separators."""
+    return text.count("\n") + 1
+
+
+def _preview_sample(text: str, max_lines: int, max_bytes: int) -> tuple[str, str]:
+    """Build a bounded head/tail sample of the input text."""
+    lines = text.split("\n")
+    head_lines = (max_lines + 1) // 2
+    tail_lines = max_lines // 2
+    if len(lines) <= max_lines:
+        sampled = text
+    else:
+        sampled = "\n".join(
+            [
+                lines[:head_lines] and "\n".join(lines[:head_lines]) or "",
+                *(["\n".join(lines[-tail_lines:])] if tail_lines > 0 else []),
+            ],
+        )
+
+    if len(sampled.encode("utf-8")) <= max_bytes:
+        if len(lines) <= max_lines:
+            return sampled, ""
+        return (
+            "\n".join(lines[:head_lines]),
+            "\n".join(lines[-tail_lines:]) if tail_lines > 0 else "",
+        )
+
+    head_bytes = (max_bytes + 1) // 2
+    tail_bytes = max_bytes // 2
+    return (
+        _utf8_take_prefix(sampled, head_bytes),
+        _utf8_take_suffix(sampled, tail_bytes),
+    )
+
+
+def _build_bounded_preview(text: str, max_lines: int, max_bytes: int) -> str:
+    """Build an opencode-style bounded preview for oversized text."""
+    marker_only = "\n".join(
+        _utf8_take_prefix(
+            _TOOL_RESULT_TRUNCATION_MARKER,
+            max_bytes,
+        ).split("\n")[:max_lines],
+    )
+    marker_bytes = len(_TOOL_RESULT_TRUNCATION_MARKER.encode("utf-8"))
+    if max_lines <= 4 or max_bytes <= marker_bytes + 4:
+        return marker_only
+
+    head, tail = _preview_sample(
+        text,
+        max_lines - 4,
+        max_bytes - marker_bytes - 4,
+    )
+    if tail:
+        return (
+            f"{head}\n\n{_TOOL_RESULT_TRUNCATION_MARKER}\n\n{tail}"
+        )
+    return f"{head}\n\n{_TOOL_RESULT_TRUNCATION_MARKER}"
 
 
 class Agent:
@@ -1826,50 +1915,64 @@ class Agent:
                         tool_result_block,
                     )
 
-                    # If offload result is not empty, attach reminder to the
-                    # reserved context
+                    # If there are oversized merged text blocks, optionally
+                    # offload their full text and attach reminders to the
+                    # corresponding preview blocks in context.
                     if offload_tool_result_block is not None:
-                        reminder = (
+                        offload_paths: dict[str, str] = {}
+                        offload_outputs = offload_tool_result_block.output
+                        if isinstance(offload_outputs, str):
+                            offload_outputs = [TextBlock(text=offload_outputs)]
+
+                        if self.offloader:
+                            for block in offload_outputs:
+                                if not isinstance(block, TextBlock):
+                                    continue
+                                path = await self.offloader.offload_tool_result(
+                                    self.state.session_id,
+                                    ToolResultBlock(
+                                        id=tool_call.id,
+                                        name=tool_call.name,
+                                        output=block.text,
+                                        state=chunk.state,
+                                    ),
+                                )
+                                offload_paths[block.id] = path
+
+                        reserved_output = reserved_tool_result_block.output
+                        if isinstance(reserved_output, str):
+                            reserved_output = [TextBlock(text=reserved_output)]
+                            reserved_tool_result_block.output = reserved_output
+
+                        reminder_template = (
                             "\n<<<TRUNCATED>>>\n<system-reminder>The "
-                            "remaining content has been omitted for "
+                            "complete content has been truncated for "
                             "limited context.{offload_reminder}"
                             "</system-reminder>"
                         )
 
-                        offload_reminder = ""
-                        if self.offloader:
-                            path = await self.offloader.offload_tool_result(
-                                self.state.session_id,
-                                offload_tool_result_block,
+                        for block in reserved_output:
+                            if not isinstance(block, TextBlock):
+                                continue
+                            if not any(
+                                isinstance(offload_block, TextBlock)
+                                and offload_block.id == block.id
+                                for offload_block in offload_outputs
+                            ):
+                                continue
+
+                            offload_reminder = ""
+                            path = offload_paths.get(block.id)
+                            if path is not None:
+                                offload_reminder = (
+                                    f" You can refer to the file in "
+                                    f"'{path}' for the complete content if "
+                                    "needed."
+                                )
+
+                            block.text += reminder_template.format(
+                                offload_reminder=offload_reminder,
                             )
-
-                            offload_reminder = (
-                                f" You can refer to the file in '{path}' "
-                                f"for the truncated content if needed."
-                            )
-
-                        reminder = reminder.format(
-                            offload_reminder=offload_reminder,
-                        )
-
-                        # Insert the reminder to the tool result output
-                        if isinstance(reserved_tool_result_block.output, str):
-                            reserved_tool_result_block.output += reminder
-
-                        elif len(
-                            reserved_tool_result_block.output,
-                        ) > 0 and isinstance(
-                            reserved_tool_result_block.output[-1],
-                            TextBlock,
-                        ):
-                            reserved_tool_result_block.output[
-                                -1
-                            ].text += reminder
-
-                        else:
-                            reserved_tool_result_block.output += [
-                                TextBlock(text=reminder),
-                            ]
 
                     self._save_to_context([reserved_tool_result_block])
                     # Ends the tool call lifecycle.
@@ -2207,7 +2310,7 @@ class Agent:
         self,
         tool_result: ToolResultBlock,
     ) -> tuple[ToolResultBlock, ToolResultBlock | None]:
-        """Split the tool result for compression.
+        """Split tool results into preview content and optional offload text.
 
         Args:
             tool_result (`ToolResultBlock`):
@@ -2215,125 +2318,41 @@ class Agent:
 
         Returns:
             `tuple[ToolResultBlock, ToolResultBlock | None]`:
-                A tuple of the tool result blocks to reserved in context and
-                to offload (if any).
+                A tuple containing the tool result kept in context and the
+                oversized merged text blocks to offload (if any).
         """
-        n_tokens = await self.model.count_tokens(
-            [AssistantMsg(self.name, content=tool_result.output)],
-            None,
+        normalized_output = self._normalize_tool_result_output(
+            tool_result.output,
+        )
+        merged_output = self._merge_consecutive_text_blocks(
+            normalized_output,
         )
 
-        # Return the tool result without truncation
-        if n_tokens <= self.context_config.tool_result_limit:
-            return tool_result, None
+        reserved_blocks: list[TextBlock | DataBlock] = []
+        offload_blocks: list[TextBlock] = []
 
-        # Use a copied block for token counting
-        copied_tool_result = deepcopy(tool_result)
+        for block in merged_output:
+            if isinstance(block, DataBlock):
+                reserved_blocks.append(block)
+                continue
 
-        # Normalized into content blocks
-        if isinstance(copied_tool_result.output, str):
-            copied_tool_result.output = [
-                TextBlock(text=copied_tool_result.output),
-            ]
+            if self._tool_result_text_within_preview_limit(block.text):
+                reserved_blocks.append(block)
+                continue
 
-        # Find the index of the block that will exceed the limit
-        boundary_index = 0
-        for i in range(len(copied_tool_result.output) - 1, 0, -1):
-            copied_tool_result.output = tool_result.output[:i]
-            cur_tokens = await self.model.count_tokens(
-                [
-                    AssistantMsg(
-                        self.name,
-                        content=copied_tool_result.output,
-                    ),
-                ],
-                None,
+            reserved_blocks.append(
+                TextBlock(
+                    text=self._build_tool_result_text_preview(block.text),
+                    id=block.id,
+                ),
             )
-            if cur_tokens < self.context_config.tool_result_limit:
-                boundary_index = i
-                break
-
-        # The blocks to reserve and offload (deep copy to avoid
-        # modifying original)
-        reserved_blocks: list = [
-            deepcopy(b) for b in tool_result.output[:boundary_index]
-        ]
-        offload_blocks: list = [
-            deepcopy(b) for b in tool_result.output[boundary_index + 1 :]
-        ]
-
-        # Get the boundary block, if text block, we can truncate it
-        boundary_block = tool_result.output[boundary_index]
-        if isinstance(boundary_block, TextBlock):
-            # Truncate it
-            truncated_text = boundary_block.text
-            cur_tokens = await self.model.count_tokens(
-                [AssistantMsg(self.name, content=reserved_blocks)],
-                None,
-            )
-            cur_tokens_plus = await self.model.count_tokens(
-                [
-                    AssistantMsg(
-                        self.name,
-                        content=reserved_blocks + [boundary_block],
-                    ),
-                ],
-                None,
-            )
-            # Truncate the text by proportion of tokens
-            token_delta = cur_tokens_plus - cur_tokens
-            remaining_token_budget = (
-                self.context_config.tool_result_limit - cur_tokens
-            )
-            if token_delta <= 0:
-                reserved_tokens = (
-                    len(truncated_text) if remaining_token_budget > 0 else 0
-                )
-            else:
-                reserved_tokens = int(
-                    remaining_token_budget / token_delta * len(truncated_text),
-                )
-            reserved_tokens = max(
-                0,
-                min(len(truncated_text), reserved_tokens),
-            )
-
-            reserved_text = truncated_text[:reserved_tokens]
-            offload_text = truncated_text[reserved_tokens:]
-
-            if reserved_text:
-                if (
-                    len(reserved_blocks) > 0
-                    and reserved_blocks[-1].type == "text"
-                ):
-                    reserved_blocks[-1].text += reserved_text
-
-                else:
-                    reserved_blocks.append(
-                        TextBlock(text=reserved_text, id=boundary_block.id),
-                    )
-
-            if offload_text:
-                if (
-                    len(offload_blocks) > 0
-                    and offload_blocks[0].type == "text"
-                ):
-                    offload_blocks[0].text = (
-                        offload_text + offload_blocks[0].text
-                    )
-
-                else:
-                    offload_blocks.insert(
-                        0,
-                        TextBlock(text=offload_text, id=boundary_block.id),
-                    )
-
-        else:
-            # Drop the boundary block if inseparable
-            offload_blocks.insert(0, boundary_block)
+            offload_blocks.append(TextBlock(text=block.text, id=block.id))
 
         if len(offload_blocks) == 0:
-            return tool_result, None
+            return (
+                tool_result.model_copy(update={"output": reserved_blocks}),
+                None,
+            )
 
         # Create new ToolResultBlock instances for reserved and offload
         reserved_tool_result = ToolResultBlock(
@@ -2350,6 +2369,64 @@ class Agent:
         )
 
         return reserved_tool_result, offload_tool_result
+
+    @staticmethod
+    def _normalize_tool_result_output(
+        output: str | list[TextBlock | DataBlock],
+    ) -> list[TextBlock | DataBlock]:
+        """Normalize tool result output into content blocks."""
+        if isinstance(output, str):
+            return [TextBlock(text=output)]
+        return [deepcopy(block) for block in output]
+
+    @staticmethod
+    def _merge_consecutive_text_blocks(
+        blocks: list[TextBlock | DataBlock],
+    ) -> list[TextBlock | DataBlock]:
+        """Merge consecutive text blocks and preserve DataBlock boundaries."""
+        merged_blocks: list[TextBlock | DataBlock] = []
+        text_parts: list[str] = []
+        text_block_id: str | None = None
+
+        def flush_text() -> None:
+            nonlocal text_parts, text_block_id
+            if text_block_id is None:
+                return
+            merged_blocks.append(
+                TextBlock(text="".join(text_parts), id=text_block_id),
+            )
+            text_parts = []
+            text_block_id = None
+
+        for block in blocks:
+            if isinstance(block, TextBlock):
+                if text_block_id is None:
+                    text_block_id = block.id
+                text_parts.append(block.text)
+                continue
+
+            flush_text()
+            merged_blocks.append(deepcopy(block))
+
+        flush_text()
+        return merged_blocks
+
+    @staticmethod
+    def _tool_result_text_within_preview_limit(text: str) -> bool:
+        """Return whether the merged tool-result text fits preview limits."""
+        return (
+            _count_lines(text) <= _TOOL_RESULT_PREVIEW_MAX_LINES
+            and len(text.encode("utf-8")) <= _TOOL_RESULT_PREVIEW_MAX_BYTES
+        )
+
+    @staticmethod
+    def _build_tool_result_text_preview(text: str) -> str:
+        """Build the bounded preview for an oversized tool-result text."""
+        return _build_bounded_preview(
+            text,
+            _TOOL_RESULT_PREVIEW_MAX_LINES,
+            _TOOL_RESULT_PREVIEW_MAX_BYTES,
+        )
 
     # ======================================================================
     # Agent internal utility methods

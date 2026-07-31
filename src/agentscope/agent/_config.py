@@ -116,17 +116,6 @@ class ContextConfig(BaseModel):
     """The structured model used to guide the agent to generate the
     structured compressed summary."""
 
-    tool_result_limit: int = Field(
-        title="Tool Result Limit",
-        default=3000,
-        description=(
-            "The maximum length of the tool results in tokens. "
-            "If exceeded, the tool result will be truncated."
-        ),
-    )
-    """The tool result limit to avoid tool result bursting."""
-
-
 class ReActConfig(BaseModel):
     """The reasoning related configuration"""
 

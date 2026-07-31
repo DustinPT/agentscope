@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- renderer constant is co-located with its inline component by design */
-import type { ToolResultBlock } from '@agentscope-ai/agentscope/message';
+import type { DataBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { useState } from 'react';
 
 import { CornerLine, ToolStateIcon } from './_shared';
@@ -24,14 +24,68 @@ function getFilePath(input: string): string {
  * non-text blocks. Returns 0 when the result is missing or empty. */
 function countResultLines(result?: ToolResultBlock): number {
 	if (!result) return 0;
-	let str: string;
+        let textParts: string[];
 	if (typeof result.output === 'string') {
-		str = result.output;
+                textParts = [result.output];
 	} else {
-		str = result.output.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+                textParts = result.output.filter((b) => b.type === 'text').map((b) => b.text);
 	}
+        const str = textParts.filter(Boolean).join('\n');
 	if (!str) return 0;
 	return str.split('\n').length;
+}
+
+function getDataUrl(block: DataBlock): string {
+        if (block.source.type === 'url') {
+                return block.source.url;
+        }
+        return `data:${block.source.media_type};base64,${block.source.data}`;
+}
+
+function renderReadResult(result?: ToolResultBlock) {
+        if (!result) return null;
+
+        if (typeof result.output === 'string') {
+                return (
+                        <pre className="max-h-80 overflow-auto rounded-md bg-muted px-3 py-2 whitespace-pre-wrap break-all">
+                                {result.output}
+                        </pre>
+                );
+        }
+
+        return result.output.map((block, index) => {
+                if (block.type === 'text') {
+                        return (
+                                <pre
+                                        key={`${block.id}-${index}`}
+                                        className="max-h-80 overflow-auto rounded-md bg-muted px-3 py-2 whitespace-pre-wrap break-all"
+                                >
+                                        {block.text}
+                                </pre>
+                        );
+                }
+
+                const mainType = block.source.media_type.split('/')[0];
+                if (mainType === 'image') {
+                        return (
+                                <img
+                                        key={`${block.id}-${index}`}
+                                        src={getDataUrl(block)}
+                                        alt={block.name || 'Read image result'}
+                                        className="max-h-96 max-w-full rounded-md border object-contain"
+                                />
+                        );
+                }
+
+                return (
+                        <div
+                                key={`${block.id}-${index}`}
+                                className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground"
+                        >
+                                {block.name || block.source.media_type}
+                        </div>
+                );
+        });
 }
 
 /** Collapse consecutive Read calls of the same `file_path` into one bucket so
@@ -91,15 +145,20 @@ function ReadGroup({ calls, t }: { calls: ToolCallWithResult[]; t: TFunction }) 
 							return (
 								<div
 									key={call.id}
-									className="flex flex-row gap-x-2 items-center pl-2 text-xs"
+                                                                        className="flex flex-col gap-y-2 pl-2 text-xs"
 								>
-									<CornerLine />
-									<span className="text-muted-foreground">
-										{t('tool.read.lineCount', {
-											count: lines,
-											formatted: formatNumber(lines),
-										})}
-									</span>
+                                                                        <div className="flex flex-row gap-x-2 items-center">
+                                                                                <CornerLine />
+                                                                                <span className="text-muted-foreground">
+                                                                                        {t('tool.read.lineCount', {
+                                                                                                count: lines,
+                                                                                                formatted: formatNumber(lines),
+                                                                                        })}
+                                                                                </span>
+                                                                        </div>
+                                                                        <div className="pl-5 space-y-2 text-sm text-foreground">
+                                                                                {renderReadResult(result)}
+                                                                        </div>
 								</div>
 							);
 						})}

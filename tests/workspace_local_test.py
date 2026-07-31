@@ -15,7 +15,7 @@ from urllib.request import url2pathname
 
 import aiofiles
 from utils import AnyString, MockModel
-from agentscope.agent import Agent, ContextConfig
+from agentscope.agent import Agent
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import AgentState
 from agentscope.tool import Toolkit, ToolBase, ToolChunk
@@ -37,7 +37,7 @@ from agentscope.message import (
 
 
 class _LongResultTool(ToolBase):
-    """A mock tool that returns a long string result for offload testing."""
+    """A mock tool that returns a long text result plus a DataBlock."""
 
     name: str = "long_result_tool"
     description: str = "A tool that returns a long string."
@@ -68,7 +68,7 @@ class _LongResultTool(ToolBase):
         can also verify base64 data offloading."""
         return ToolChunk(
             content=[
-                TextBlock(text="0" * 30000),
+                TextBlock(text="0" * 60000),
                 DataBlock(
                     name="fake_image.png",
                     source=Base64Source(
@@ -813,25 +813,21 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
         """Test integration with the agent when offloading tool result.
 
         This test verifies that:
-        1. A long tool result is split into a reserved part (kept in context)
-           and an offloaded part (written to disk).
-        2. The reserved tool result block in the context is truncated and
-           contains a system reminder pointing to the offload file.
-        3. The offloaded file contains the truncated remainder.
-        4. A second reply with a fresh tool call produces a new offload file.
+        1. A long text tool result is preview-truncated in context.
+        2. The complete merged text is offloaded to disk when an offloader is
+           configured.
+        3. The DataBlock remains in the tool result and is not written into the
+           offload file.
         """
         with tempfile.TemporaryDirectory() as workdir:
             session_id = "test_session"
-            model = MockModel(stream=False)
+            model = MockModel(stream=False, context_size=1_000_000)
             agent = Agent(
                 name="Friday",
                 system_prompt="You're a helpful assistant named Friday.",
                 model=model,
                 toolkit=Toolkit(
                     tools=[_LongResultTool()],
-                ),
-                context_config=ContextConfig(
-                    tool_result_limit=50,
                 ),
                 offloader=LocalWorkspace(
                     workdir=workdir,
@@ -877,76 +873,63 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             async with aiofiles.open(offload_path_1, "r") as f:
                 offload_content = await f.read()
 
-            # The base64 payload is hashed with sha256 and persisted under
-            # `{workdir}/data/{hash}.{ext}` with the decoded bytes.
-            b64_data = "AAECAwQF"
-            data_hash = hashlib.sha256(b64_data.encode()).hexdigest()
-            data_file_path = os.path.join(
-                workdir,
-                "data",
-                f"{data_hash}.png",
-            )
-            self.assertTrue(os.path.exists(data_file_path))
-            async with aiofiles.open(data_file_path, "rb") as f:
-                self.assertEqual(await f.read(), base64.b64decode(b64_data))
-
-            # The full text is "0" * 30000 followed by a base64 DataBlock;
-            # tool_result_limit=50 reserves ~200 chars of text in context, the
-            # remaining 29800 chars + the DataBlock placeholder are offloaded.
-            data_url = Path(data_file_path).as_uri()
-            expected_offload_content = (
-                "0" * 29800 + f"<data url='{data_url}' name='fake_image.png' "
-                f"media_type='image/png'/>"
-            )
-            self.assertEqual(offload_content, expected_offload_content)
+            self.assertEqual(offload_content, "0" * 60000)
 
             # === Assert context content ===
+            preview_text = agent._build_tool_result_text_preview("0" * 60000)
             reminder_1 = (
-                "\n<<<TRUNCATED>>>\n<system-reminder>The remaining content "
-                "has been omitted for limited context. You can refer to the "
-                f"file in '{offload_path_1}' for the truncated content if "
+                "\n<<<TRUNCATED>>>\n<system-reminder>The complete content "
+                "has been truncated for limited context. You can refer to the "
+                f"file in '{offload_path_1}' for the complete content if "
                 "needed.</system-reminder>"
             )
-            expected_first_msg = {
-                "id": AnyString(),
-                "name": "Friday",
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_call",
-                        "id": "1",
-                        "name": "long_result_tool",
-                        "input": "{}",
-                        "state": "finished",
-                        "suggested_rules": [],
+            self.assertEqual(len(agent.state.context), 1)
+            first_msg = agent.state.context[0].model_dump()
+            self.assertEqual(first_msg["name"], "Friday")
+            self.assertEqual(first_msg["role"], "assistant")
+            self.assertIsNone(first_msg["finished_at"])
+            self.assertIsNone(first_msg["usage"])
+            self.assertIn("context_usage", first_msg["metadata"])
+
+            tool_call_block = first_msg["content"][0]
+            self.assertEqual(
+                tool_call_block,
+                {
+                    "type": "tool_call",
+                    "id": "1",
+                    "name": "long_result_tool",
+                    "input": "{}",
+                    "state": "finished",
+                    "suggested_rules": [],
+                },
+            )
+
+            tool_result_block = first_msg["content"][1]
+            self.assertEqual(tool_result_block["type"], "tool_result")
+            self.assertEqual(tool_result_block["id"], "1")
+            self.assertEqual(tool_result_block["name"], "long_result_tool")
+            self.assertEqual(tool_result_block["state"], "success")
+            self.assertEqual(
+                tool_result_block["output"][0]["text"],
+                preview_text + reminder_1,
+            )
+            self.assertEqual(
+                tool_result_block["output"][1],
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "base64",
+                        "data": "AAECAwQF",
+                        "media_type": "image/png",
                     },
-                    {
-                        "type": "tool_result",
-                        "id": "1",
-                        "name": "long_result_tool",
-                        "output": [
-                            {
-                                "type": "text",
-                                "text": "0" * 200 + reminder_1,
-                                "id": AnyString(),
-                            },
-                        ],
-                        "state": "success",
-                    },
-                    {
-                        "type": "text",
-                        "text": "End_1.",
-                        "id": AnyString(),
-                    },
-                ],
-                "metadata": {},
-                "created_at": AnyString(),
-                "finished_at": None,
-                "usage": None,
-            }
-            self.assertListEqual(
-                [_.model_dump() for _ in agent.state.context],
-                [expected_first_msg],
+                    "name": "fake_image.png",
+                },
+            )
+
+            self.assertEqual(
+                first_msg["content"][2]["text"],
+                "End_1.",
             )
 
     async def test_offload_context(self) -> None:

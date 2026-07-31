@@ -16,7 +16,6 @@ export interface ChatModelConfig {
 export interface ContextConfig {
 	trigger_ratio?: number;
 	reserve_ratio?: number;
-	tool_result_limit?: number;
 	compression_prompt?: string;
 	summary_template?: string;
 }
