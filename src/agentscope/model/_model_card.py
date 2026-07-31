@@ -44,7 +44,8 @@ class ModelCard(BaseModel):
         default=None,
         description=(
             "The media types that can remain inside tool result blocks. "
-            "When omitted, runtime formatting falls back to ``input_types``."
+            "When omitted, tool results are treated as text-only unless the "
+            "model card explicitly declares supported media types."
         ),
         title="Tool result media types",
     )

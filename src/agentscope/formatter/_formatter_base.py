@@ -44,8 +44,8 @@ class FormatterBase(BaseModel):
         default=None,
         description=(
             "The media types that are allowed to remain inside a "
-            "``ToolResultBlock``. When omitted, the formatter falls back to "
-            "the media capabilities declared in ``input_types``."
+            "``ToolResultBlock``. When omitted, no media type is kept inside "
+            "tool results unless the model card explicitly declares it."
         ),
     )
     """The media types that can remain in tool result blocks."""
@@ -63,11 +63,7 @@ class FormatterBase(BaseModel):
     @property
     def supported_tool_result_media_types(self) -> list[str]:
         """Return the media-type patterns accepted inside tool results."""
-        source = (
-            self.tool_result_media_types
-            if self.tool_result_media_types is not None
-            else self.supported_input_media_types
-        )
+        source = self.tool_result_media_types or []
         return [
             t
             for t in source
