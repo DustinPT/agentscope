@@ -22,6 +22,8 @@ from ._schema import (
     CreateSessionResponse,
     ListMessagesResponse,
     ListSessionsResponse,
+    RollbackSessionRequest,
+    RollbackSessionResponse,
     SessionExportResponse,
     SessionView,
     SubAgentSessionView,
@@ -518,8 +520,41 @@ async def list_messages(
         limit=limit,
     )
     return ListMessagesResponse(
-        messages=messages,
+        messages=ChatService.sanitize_public_messages(messages),
         is_running=await message_bus.session_is_running(session_id),
+    )
+
+
+@session_router.post(
+    "/{session_id}/rollback",
+    response_model=RollbackSessionResponse,
+    summary="Rollback a session before a user message",
+)
+async def rollback_session(
+    session_id: str,
+    body: RollbackSessionRequest,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    user_id: str = Depends(get_current_user_id),
+    session_service: SessionService = Depends(get_session_service),
+) -> RollbackSessionResponse:
+    """Rollback the current session before the target user message."""
+    (
+        _session,
+        restored_message,
+        remaining_message_count,
+    ) = await session_service.rollback_to_before_message(
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        message_id=body.message_id,
+    )
+    return RollbackSessionResponse(
+        session_id=session_id,
+        rolled_back_from_message_id=body.message_id,
+        remaining_message_count=remaining_message_count,
+        restored_draft_message=ChatService.sanitize_public_message(
+            restored_message,
+        ),
     )
 
 

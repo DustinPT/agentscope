@@ -105,6 +105,14 @@ class ChatService:
     _REPLY_CHECKPOINT_CHAR_THRESHOLD = 2_000
     """Maximum model-output characters to buffer locally before checkpointing."""
 
+    _ROLLBACK_SNAPSHOT_METADATA_KEY = "rollback_snapshot"
+    """Message metadata key storing the pre-user-message rollback snapshot."""
+
+    _PRIVATE_MESSAGE_METADATA_KEYS = frozenset(
+        {_ROLLBACK_SNAPSHOT_METADATA_KEY},
+    )
+    """Message metadata keys that must never be exposed publicly."""
+
     def __init__(
         self,
         storage: StorageBase,
@@ -219,6 +227,65 @@ class ChatService:
         """Accumulate counters for a reply event that was appended locally."""
         checkpoint_state.event_count += 1
         checkpoint_state.char_count += self._checkpoint_char_delta(event)
+
+    @classmethod
+    def _build_rollback_snapshot(cls, state) -> dict[str, Any]:
+        """Build a JSON-safe rollback snapshot from the current agent state."""
+        state_dump = state.model_dump(mode="json")
+        return {
+            "summary": deepcopy(state_dump.get("summary", "")),
+            "context": deepcopy(state_dump.get("context", [])),
+            "tasks_context": deepcopy(state_dump.get("tasks_context", {})),
+            "tool_context": deepcopy(state_dump.get("tool_context", {})),
+            "permission_context": deepcopy(
+                state_dump.get("permission_context", {}),
+            ),
+        }
+
+    @classmethod
+    def attach_rollback_snapshot(cls, msg: Msg, state) -> Msg:
+        """Attach a pre-send rollback snapshot to a user message."""
+        if msg.role != "user":
+            return msg
+        metadata = dict(msg.metadata or {})
+        metadata[cls._ROLLBACK_SNAPSHOT_METADATA_KEY] = (
+            cls._build_rollback_snapshot(state)
+        )
+        return msg.model_copy(update={"metadata": metadata}, deep=True)
+
+    @classmethod
+    def sanitize_public_message(cls, message: Msg) -> Msg:
+        """Strip private message metadata before returning it publicly."""
+        metadata = dict(message.metadata or {})
+        changed = False
+        for key in cls._PRIVATE_MESSAGE_METADATA_KEYS:
+            if key in metadata:
+                metadata.pop(key, None)
+                changed = True
+        if not changed:
+            return message
+        return message.model_copy(update={"metadata": metadata}, deep=True)
+
+    @classmethod
+    def sanitize_public_messages(cls, messages: list[Msg]) -> list[Msg]:
+        """Strip private metadata from a list of messages."""
+        return [cls.sanitize_public_message(message) for message in messages]
+
+    @classmethod
+    def sanitize_public_message_payload(
+        cls,
+        message: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Strip private metadata keys from a serialized message payload."""
+        sanitized = dict(message)
+        metadata = sanitized.get("metadata")
+        if isinstance(metadata, dict):
+            sanitized["metadata"] = {
+                key: value
+                for key, value in metadata.items()
+                if key not in cls._PRIVATE_MESSAGE_METADATA_KEYS
+            }
+        return sanitized
 
     def _should_checkpoint_reply(
         self,
@@ -734,9 +801,10 @@ class ChatService:
                 and message.get("role") == "system"
             ):
                 continue
+            sanitized_payload = self.sanitize_public_message_payload(message)
             sanitized_messages.append(
                 {
-                    **message,
+                    **sanitized_payload,
                     "content": [
                         self._sanitize_export_block(
                             block,
@@ -1337,7 +1405,10 @@ class ChatService:
                             await self._storage.upsert_message(
                                 user_id,
                                 session_id,
-                                msg,
+                                self.attach_rollback_snapshot(
+                                    msg,
+                                    agent.state,
+                                ),
                             )
 
                     async for event in agent.reply_stream(inputs=input_msg):

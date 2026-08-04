@@ -1021,6 +1021,23 @@ class RedisStorage(StorageBase):
         raw_list = await self._client.lrange(key, offset, offset + limit - 1)
         return [Msg.model_validate_json(raw) for raw in raw_list]
 
+    async def replace_messages(
+        self,
+        user_id: str,
+        session_id: str,
+        messages: list[Msg],
+    ) -> None:
+        """Replace the full persisted message list for a session."""
+        key = self._message_key(user_id, session_id)
+        await self._client.delete(key)
+        if not messages:
+            return
+        await self._client.rpush(
+            key,
+            *[message.model_dump_json() for message in messages],
+        )
+        await self._refresh_key_ttl(key)
+
     # ------------------------------------------------------------------
     # Team persistence
     # ------------------------------------------------------------------

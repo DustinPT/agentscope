@@ -18,6 +18,7 @@ import {
 	Gauge,
 	Loader2,
 	MessageSquareQuote,
+        RotateCcw,
 	Wrench,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -550,6 +551,8 @@ interface MessageBubbleProps {
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => void;
+        onRollback?: (message: Msg) => void | Promise<void>;
+        rollbacking?: boolean;
 	containerRef?: (node: HTMLDivElement | null) => void;
 	highlighted?: boolean;
 }
@@ -574,6 +577,8 @@ interface MessageBubbleProps {
 export function MessageBubble({
 	message,
 	onUserConfirm,
+        onRollback,
+        rollbacking = false,
 	containerRef,
 	highlighted = false,
 }: MessageBubbleProps) {
@@ -629,7 +634,7 @@ export function MessageBubble({
 			ref={containerRef}
 			data-message-id={message.id}
 			className={cn(
-				'mb-4 flex w-full max-w-full flex-col rounded-2xl transition-colors',
+                                'group mb-4 flex w-full max-w-full flex-col rounded-2xl transition-colors',
 				isUser ? 'items-end' : 'items-start',
 				highlighted && 'bg-primary/6 ring-1 ring-primary/20',
 			)}
@@ -657,6 +662,27 @@ export function MessageBubble({
 					)}
 				</div>
 			)}
+                        {isUser && onRollback && (
+                                <div className="mt-2 flex w-fit items-center px-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                                        <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 px-2 text-xs text-muted-foreground"
+                                                onClick={() => void onRollback(message)}
+                                                disabled={rollbacking}
+                                        >
+                                                {rollbacking ? (
+                                                        <Loader2 className="size-3 animate-spin" />
+                                                ) : (
+                                                        <RotateCcw className="size-3" />
+                                                )}
+                                                {rollbacking
+                                                        ? t('messageBubble.rollbacking')
+                                                        : t('messageBubble.rollback')}
+                                        </Button>
+                                </div>
+                        )}
 			{showFooter && (
 				<div className="flex flex-row items-center text-muted-foreground gap-x-4 px-2 w-full">
 					<Badge

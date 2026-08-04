@@ -178,6 +178,17 @@ export interface CancelSessionResponse {
 	released: boolean;
 }
 
+export interface RollbackSessionRequest {
+        message_id: string;
+}
+
+export interface RollbackSessionResponse {
+        session_id: string;
+        rolled_back_from_message_id: string;
+        remaining_message_count: number;
+        restored_draft_message: Msg;
+}
+
 export interface UpdateSessionRequest {
 	name?: string;
 	chat_model_config?: ChatModelConfig;

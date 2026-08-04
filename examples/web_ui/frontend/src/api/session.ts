@@ -4,6 +4,8 @@ import type {
 	AgentEvent,
 	CreateSessionRequest,
 	CreateSessionResponse,
+        RollbackSessionRequest,
+        RollbackSessionResponse,
 	SessionListResponse,
         SessionExportOptions,
         SessionExportResponse,
@@ -34,6 +36,15 @@ export const sessionApi = {
 		client.post<CancelSessionResponse>(`/sessions/${sessionId}/cancel`, undefined, {
 			agent_id: agentId,
 		}),
+
+        rollback: (
+                sessionId: string,
+                agentId: string,
+                body: RollbackSessionRequest,
+        ) =>
+                client.post<RollbackSessionResponse>(`/sessions/${sessionId}/rollback`, body, {
+                        agent_id: agentId,
+                }),
 
 	messages: (sessionId: string, agentId: string, offset = 0, limit = 50) =>
 		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {

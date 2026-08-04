@@ -46,13 +46,17 @@ component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
 import asyncio
+import uuid
 from typing import TYPE_CHECKING
+
+from fastapi import HTTPException
 
 from ..message_bus import MessageBus
 from ..storage import StorageBase
 from ..._logging import logger
 from ...event import SessionInterruptEvent
 from ...message import ToolCallState
+from ...state import AgentState
 
 if TYPE_CHECKING:
     from .._manager import ChatRunRegistry
@@ -429,6 +433,88 @@ class SessionService:
         # idempotent no-ops; only schedule record + indexes remain.
         return await self._storage.delete_schedule(user_id, schedule_id)
 
+    async def rollback_to_before_message(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> tuple:
+        """Rollback the current session to the state before a user message."""
+        session = await self._storage.get_session(user_id, agent_id, session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Session '{session_id}' not found.",
+            )
+
+        await self.cancel_session_run(session_id, timeout=10.0)
+        messages = await self._list_all_messages(user_id, session_id)
+
+        target_index = -1
+        target_message = None
+        for index, message in enumerate(messages):
+            if message.id == message_id:
+                target_index = index
+                target_message = message
+                break
+
+        if target_message is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Message '{message_id}' not found in session.",
+            )
+        if target_message.role != "user":
+            raise HTTPException(
+                status_code=400,
+                detail="Rollback is only supported for user messages.",
+            )
+
+        snapshot = target_message.metadata.get("rollback_snapshot")
+        if not isinstance(snapshot, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Rollback is not supported for this historical message "
+                    "because no rollback snapshot was stored."
+                ),
+            )
+
+        restored_state = AgentState.model_validate(
+            {
+                **snapshot,
+                "session_id": session_id,
+                "cur_iter": 0,
+                "reply_id": uuid.uuid4().hex,
+            },
+        )
+        retained_messages = messages[:target_index]
+
+        await self._storage.replace_messages(
+            user_id=user_id,
+            session_id=session_id,
+            messages=retained_messages,
+        )
+        await self._storage.update_session_state(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            state=restored_state,
+        )
+        await self._bus.session_purge(session_id)
+
+        updated_session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if updated_session is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Session '{session_id}' not found after rollback.",
+            )
+        return updated_session, target_message, len(retained_messages)
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -560,6 +646,31 @@ class SessionService:
                 await self._descendant_sessions(user_id, child.id),
             )
         return descendants
+
+    async def _list_all_messages(
+        self,
+        user_id: str,
+        session_id: str,
+        *,
+        batch_size: int = 200,
+    ) -> list:
+        """Fetch the full persisted message list for a session."""
+        messages = []
+        offset = 0
+        while True:
+            batch = await self._storage.list_messages(
+                user_id,
+                session_id,
+                offset=offset,
+                limit=batch_size,
+            )
+            if not batch:
+                break
+            messages.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += len(batch)
+        return messages
 
     async def _cancel_runs(self, session_ids: list[str]) -> None:
         """Cancel every in-flight run in ``session_ids`` concurrently.

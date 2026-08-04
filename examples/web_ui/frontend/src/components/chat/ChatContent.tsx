@@ -4,7 +4,7 @@ import { useRef, useEffect } from 'react';
 
 import { EmptyMessage } from './Empty';
 import { MessageBubble } from '@/components/chat/MessageBubble';
-import { TextInput } from '@/components/chat/TextInput.tsx';
+import { TextInput, type ProcessedFile } from '@/components/chat/TextInput.tsx';
 import { cn } from '@/lib/utils';
 
 interface ChatContentProps {
@@ -15,6 +15,8 @@ interface ChatContentProps {
 	disabled: boolean;
 	onSend: (content: ContentBlock[]) => void;
 	onStop?: () => void | Promise<void>;
+        onRollbackMessage?: (message: Msg) => void | Promise<void>;
+        rollbackingMessageId?: string | null;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
 		confirm: boolean,
@@ -34,6 +36,10 @@ interface ChatContentProps {
 	allowedInputTypes: string[];
 	/** @see TextInputProps.fileProcessor */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
+        value?: string;
+        onValueChange?: (value: string) => void;
+        files?: ProcessedFile[];
+        onFilesChange?: (files: ProcessedFile[]) => void;
 }
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
@@ -44,6 +50,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	disabled,
 	onSend,
 	onStop,
+        onRollbackMessage,
+        rollbackingMessageId,
 	onUserConfirm,
 	autoComplete,
 	className,
@@ -53,6 +61,10 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	scrollViewportCommand,
 	allowedInputTypes,
 	fileProcessor,
+        value,
+        onValueChange,
+        files,
+        onFilesChange,
 }) => {
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -179,6 +191,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 								key={message.id}
 								message={message}
 								onUserConfirm={onUserConfirm}
+                                                                onRollback={onRollbackMessage}
+                                                                rollbacking={rollbackingMessageId === message.id}
 								containerRef={registerMessageRef(message.id)}
 								highlighted={activeMessageId === message.id}
 							/>
@@ -198,6 +212,10 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				autoComplete={autoComplete}
 				allowedInputTypes={allowedInputTypes}
 				fileProcessor={fileProcessor}
+                                value={value}
+                                onValueChange={onValueChange}
+                                files={files}
+                                onFilesChange={onFilesChange}
 			/>
 		</div>
 	);

@@ -1,4 +1,5 @@
 import type { Msg } from '@agentscope-ai/agentscope/message';
+import type { DataBlock, TextBlock } from '@agentscope-ai/agentscope/message';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import { ArrowDownToLine, ArrowLeft, ArrowUpToLine, Bot, Download, List, Toolbox } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -12,9 +13,11 @@ import {
 	getSupportedInputTypes,
 } from '@/components/chat/inputUtils';
 import { TaskPanel } from '@/components/chat/TaskPanel';
+import type { ProcessedFile } from '@/components/chat/TextInput';
 import { UserMessageDirectory } from '@/components/chat/UserMessageDirectory';
 import { buildUserMessageOutline } from '@/components/chat/userMessageOutline';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { SessionExportDialog } from '@/components/dialog/SessionExportDialog';
 import { WorkspaceDrawer } from '@/components/drawer/WorkspaceDrawer.tsx';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
@@ -123,6 +126,10 @@ export function ChatViewport({
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [outlineOpen, setOutlineOpen] = useState(false);
         const [exportOpen, setExportOpen] = useState(false);
+        const [draftText, setDraftText] = useState('');
+        const [draftFiles, setDraftFiles] = useState<ProcessedFile[]>([]);
+        const [rollbackingMessageId, setRollbackingMessageId] = useState<string | null>(null);
+        const [rollbackConfirmMessage, setRollbackConfirmMessage] = useState<Msg | null>(null);
 	const [scrollTargetMessageId, setScrollTargetMessageId] = useState<string | null>(null);
 	const [scrollViewportCommand, setScrollViewportCommand] = useState<{
 		type: 'top' | 'bottom';
@@ -136,7 +143,7 @@ export function ChatViewport({
 		// TODO: handle permission_context updates when permission UI is built
 	}, []);
 
-	const { msgs, streaming, canStop, send, onUserConfirm, cancelCurrentRun } = useMessages(
+        const { msgs, streaming, canStop, send, onUserConfirm, cancelCurrentRun, reload } = useMessages(
 		agentId,
 		sessionId,
 		{
@@ -191,9 +198,29 @@ export function ChatViewport({
 
 	useEffect(() => {
 		setOutlineOpen(false);
+                setDraftText('');
+                setDraftFiles([]);
+                setRollbackingMessageId(null);
+                setRollbackConfirmMessage(null);
 		setScrollTargetMessageId(null);
 		setScrollViewportCommand(null);
 	}, [sessionId]);
+
+        const restoreDraftFromMessage = useCallback((message: Msg) => {
+                const text = message.content
+                        .filter((block): block is TextBlock => block.type === 'text')
+                        .map((block) => block.text)
+                        .join('\n');
+                const files = message.content
+                        .filter((block): block is DataBlock => block.type === 'data')
+                        .map((block) => ({
+                                name: block.name ?? 'attachment',
+                                status: 'done' as const,
+                                block,
+                        }));
+                setDraftText(text);
+                setDraftFiles(files);
+        }, []);
 
 	const selectedModelCard = useMemo(() => {
 		if (!selectedModel) return null;
@@ -370,6 +397,30 @@ export function ChatViewport({
                 [agentId, sessionId, t],
         );
 
+        const handleRollbackMessage = useCallback((message: Msg) => {
+                setRollbackConfirmMessage(message);
+        }, []);
+
+        const confirmRollbackMessage = useCallback(
+                async (message: Msg) => {
+                        if (!sessionId || !agentId) return;
+                        setRollbackingMessageId(message.id);
+                        try {
+                                const response = await sessionApi.rollback(sessionId, agentId, {
+                                        message_id: message.id,
+                                });
+                                await reload();
+                                restoreDraftFromMessage(response.restored_draft_message);
+                                setRollbackConfirmMessage(null);
+                        } catch {
+                                toast.error(t('chat.rollbackFailed'));
+                        } finally {
+                                setRollbackingMessageId(null);
+                        }
+                },
+                [agentId, reload, restoreDraftFromMessage, sessionId, t],
+        );
+
 	return (
 		<>
 			<main className="flex size-full">
@@ -443,11 +494,17 @@ export function ChatViewport({
 							disabled={selectedModel === null}
 							onSend={send}
 							onStop={cancelCurrentRun}
+                                                        onRollbackMessage={handleRollbackMessage}
+                                                        rollbackingMessageId={rollbackingMessageId}
 							onUserConfirm={onUserConfirm}
 							allowedInputTypes={getSupportedInputTypes(
 								selectedModelCard?.input_types,
 							)}
 							fileProcessor={buildContentBlockFromFile}
+                                                        value={draftText}
+                                                        onValueChange={setDraftText}
+                                                        files={draftFiles}
+                                                        onFilesChange={setDraftFiles}
 						/>
 					</div>
 				</div>
@@ -513,6 +570,22 @@ export function ChatViewport({
                                 open={exportOpen}
                                 onOpenChange={setExportOpen}
                                 onConfirm={handleSessionExport}
+                        />
+                        <DeleteDialog
+                                open={!!rollbackConfirmMessage}
+                                onOpenChange={(open) => {
+                                        if (!open) {
+                                                setRollbackConfirmMessage(null);
+                                        }
+                                }}
+                                title={t('chat.rollbackConfirmTitle')}
+                                description={t('chat.rollbackConfirmDescription')}
+                                confirmLabel={t('chat.rollbackConfirmAction')}
+                                onConfirm={async () => {
+                                        if (rollbackConfirmMessage) {
+                                                await confirmRollbackMessage(rollbackConfirmMessage);
+                                        }
+                                }}
                         />
 		</>
 	);

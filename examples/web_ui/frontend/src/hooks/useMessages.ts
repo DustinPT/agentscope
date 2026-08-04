@@ -506,6 +506,15 @@ export function useMessages(
 		setStreaming(false);
 	}, [agentId, sessionId, audioManager]);
 
+        const reload = useCallback(async () => {
+                if (!agentId || !sessionId) return;
+                const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
+                msgsRef.current = messages;
+                currentReplyRef.current = null;
+                scheduleUpdate();
+                setStreaming(is_running);
+        }, [agentId, sessionId, scheduleUpdate]);
+
 	/**
 	 * Confirm or deny a tool call (human-in-the-loop). Fires a
 	 * ``POST /chat/`` with a ``UserConfirmResultEvent``; events
@@ -570,6 +579,7 @@ export function useMessages(
 		send,
 		onUserConfirm,
 		cancelCurrentRun,
+                reload,
 		abort,
 	};
 }

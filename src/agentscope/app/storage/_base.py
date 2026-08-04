@@ -474,6 +474,22 @@ class StorageBase(ABC):
             `list[Msg]`: Messages in chronological order.
         """
 
+    @abstractmethod
+    async def replace_messages(
+        self,
+        user_id: str,
+        session_id: str,
+        messages: list[Msg],
+    ) -> None:
+        """Replace the full persisted message list for a session.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            messages (`list[Msg]`): Full replacement message list in
+                chronological order.
+        """
+
     # ------------------------------------------------------------------
     # Team persistence
     # ------------------------------------------------------------------

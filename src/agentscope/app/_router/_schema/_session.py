@@ -2,6 +2,7 @@
 """Request / response schemas for the session router."""
 from pydantic import BaseModel, Field
 
+from ....message import Msg
 from ....permission import PermissionMode
 from ...storage import AgentRecord, ChatModelConfig, SessionRecord, TeamRecord
 
@@ -110,6 +111,35 @@ class CancelSessionResponse(BaseModel):
         description=(
             "Whether the session's distributed run lock was confirmed "
             "released before the request returned."
+        ),
+    )
+
+
+class RollbackSessionRequest(BaseModel):
+    """Request body for rolling a session back before a user message."""
+
+    message_id: str = Field(
+        description=(
+            "User message id to roll back before. The target message "
+            "itself is restored into the draft area and removed from "
+            "the persisted timeline."
+        ),
+    )
+
+
+class RollbackSessionResponse(BaseModel):
+    """Response body after a successful session rollback."""
+
+    session_id: str = Field(description="The rolled-back session id.")
+    rolled_back_from_message_id: str = Field(
+        description="The user message id that was used as the rollback target.",
+    )
+    remaining_message_count: int = Field(
+        description="Number of persisted messages left after rollback.",
+    )
+    restored_draft_message: Msg = Field(
+        description=(
+            "The original user message content restored to the input area."
         ),
     )
 
