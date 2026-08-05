@@ -97,8 +97,24 @@ Usage:
     @staticmethod
     def _is_binary_file(file_bytes: bytes, media_type: str | None) -> bool:
         """Detect whether a file should be treated as binary."""
-        if media_type and not media_type.startswith("text/"):
-            return True
+        if media_type:
+            textual_application_types = {
+                "application/json",
+                "application/ld+json",
+                "application/xml",
+                "application/javascript",
+                "application/x-javascript",
+                "application/yaml",
+                "application/x-yaml",
+                "application/toml",
+            }
+            if not (
+                media_type.startswith("text/")
+                or media_type in textual_application_types
+                or media_type.endswith("+json")
+                or media_type.endswith("+xml")
+            ):
+                return True
 
         if b"\x00" in file_bytes:
             return True
