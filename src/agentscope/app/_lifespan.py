@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             storage=storage,
             workspace_manager=workspace_manager,
             agent_asset_store=app.state.agent_asset_store,
+            attachment_store=app.state.attachment_store,
             scheduler_manager=scheduler,
             background_task_manager=bg_manager,
             message_bus=message_bus,
@@ -79,6 +80,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.session_service = SessionService(
             storage=storage,
             message_bus=message_bus,
+            workspace_manager=workspace_manager,
+            attachment_store=app.state.attachment_store,
             chat_service=chat_service,
             chat_run_registry=chat_run_registry,
         )

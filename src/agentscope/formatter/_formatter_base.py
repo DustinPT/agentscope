@@ -9,6 +9,7 @@ from abc import abstractmethod
 from copy import deepcopy
 from fnmatch import fnmatch
 from typing import Any, List, AsyncGenerator
+from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel, Field
 
@@ -138,6 +139,16 @@ class FormatterBase(BaseModel):
         main_type = source.media_type.split("/")[0]
 
         if isinstance(source, URLSource):
+            parsed = urlparse(str(source.url))
+            if parsed.scheme == "file":
+                local_path = unquote(parsed.path or "")
+                if parsed.netloc and parsed.netloc != "localhost":
+                    local_path = f"//{parsed.netloc}{local_path}"
+                return (
+                    f"<system-reminder>A(n) {main_type} file is "
+                    f"returned and saved locally at: {local_path}."
+                    f"</system-reminder>"
+                )
             return (
                 f"<system-reminder>A(n) {main_type} file is returned "
                 f"and can be accessed at the URL: {source.url}."

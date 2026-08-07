@@ -33,7 +33,7 @@ interface ChatContentProps {
 		nonce: number;
 	} | null;
 	/** @see TextInputProps.allowedInputTypes */
-	allowedInputTypes: string[];
+        allowedInputTypes?: string[];
 	/** @see TextInputProps.fileProcessor */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
         value?: string;

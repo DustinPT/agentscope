@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { agentApi } from '@/api';
 import type {
+        AgentComposeResponse,
 	AgentMCPAsset,
 	AgentRecord,
 	AgentSkillAsset,
@@ -56,7 +57,7 @@ interface Props {
 	onOpenChange: (open: boolean) => void;
 	agent: AgentRecord;
 	agents: AgentRecord[];
-	composeUpdate: (agentId: string, body: FormData) => Promise<AgentRecord>;
+        composeUpdate: (agentId: string, body: FormData) => Promise<AgentComposeResponse>;
 	onUpdated?: () => void;
 }
 

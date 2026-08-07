@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from .._reply_state import get_reply_checkpoint_replay_entry_id
@@ -485,12 +485,14 @@ async def update_session(
 )
 async def list_messages(
     session_id: str,
+    request: Request,
     agent_id: str = Query(description="Agent the session belongs to."),
     offset: int = Query(0, ge=0, description="Pagination offset."),
     limit: int = Query(50, ge=1, le=200, description="Max messages."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
+    chat_service: ChatService = Depends(get_chat_service),
 ) -> ListMessagesResponse:
     """Return persisted messages for a session.
 
@@ -520,7 +522,10 @@ async def list_messages(
         limit=limit,
     )
     return ListMessagesResponse(
-        messages=ChatService.sanitize_public_messages(messages),
+        messages=chat_service.hydrate_public_messages(
+            messages,
+            request=request,
+        ),
         is_running=await message_bus.session_is_running(session_id),
     )
 

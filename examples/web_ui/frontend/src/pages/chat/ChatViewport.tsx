@@ -10,7 +10,6 @@ import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import {
 	buildContentBlockFromFile,
-	getSupportedInputTypes,
 } from '@/components/chat/inputUtils';
 import { TaskPanel } from '@/components/chat/TaskPanel';
 import type { ProcessedFile } from '@/components/chat/TextInput';
@@ -497,9 +496,7 @@ export function ChatViewport({
                                                         onRollbackMessage={handleRollbackMessage}
                                                         rollbackingMessageId={rollbackingMessageId}
 							onUserConfirm={onUserConfirm}
-							allowedInputTypes={getSupportedInputTypes(
-								selectedModelCard?.input_types,
-							)}
+                                                        allowedInputTypes={undefined}
 							fileProcessor={buildContentBlockFromFile}
                                                         value={draftText}
                                                         onValueChange={setDraftText}

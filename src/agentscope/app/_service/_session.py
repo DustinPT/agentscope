@@ -53,10 +53,12 @@ from fastapi import HTTPException
 
 from ..message_bus import MessageBus
 from ..storage import StorageBase
+from ..workspace_manager import WorkspaceManagerBase
 from ..._logging import logger
 from ...event import SessionInterruptEvent
 from ...message import ToolCallState
 from ...state import AgentState
+from ._attachment_store import AttachmentStore
 
 if TYPE_CHECKING:
     from .._manager import ChatRunRegistry
@@ -90,6 +92,8 @@ class SessionService:
         self,
         storage: StorageBase,
         message_bus: MessageBus,
+        workspace_manager: WorkspaceManagerBase,
+        attachment_store: AttachmentStore,
         chat_service: "ChatService | None" = None,
         chat_run_registry: "ChatRunRegistry | None" = None,
     ) -> None:
@@ -101,6 +105,8 @@ class SessionService:
         """
         self._storage = storage
         self._bus = message_bus
+        self._workspace_manager = workspace_manager
+        self._attachment_store = attachment_store
         self._chat_service = chat_service
         self._chat_run_registry = chat_run_registry
 
@@ -321,6 +327,7 @@ class SessionService:
             user_id,
             session_id,
         )
+        session = await self._storage.get_session(user_id, agent_id, session_id)
         descendant_sids = [session.id for session in descendant_sessions]
         all_sids = list(
             dict.fromkeys([session_id, *worker_sids, *descendant_sids]),
@@ -328,11 +335,17 @@ class SessionService:
 
         await self._cancel_runs(all_sids)
         for descendant in reversed(descendant_sessions):
+            await self._delete_session_attachments(
+                user_id,
+                descendant,
+            )
             await self._storage.delete_session(
                 user_id,
                 descendant.agent_id,
                 descendant.id,
             )
+        if session is not None:
+            await self._delete_session_attachments(user_id, session)
         deleted = await self._storage.delete_session(
             user_id,
             agent_id,
@@ -490,6 +503,11 @@ class SessionService:
         )
         retained_messages = messages[:target_index]
 
+        await self._prune_session_attachments(
+            user_id=user_id,
+            session=session,
+            kept_message_ids={message.id for message in retained_messages},
+        )
         await self._storage.replace_messages(
             user_id=user_id,
             session_id=session_id,
@@ -518,6 +536,46 @@ class SessionService:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    async def _resolve_workspace_for_session(
+        self,
+        user_id: str,
+        session,
+    ):
+        """Return the current runtime workspace for one session."""
+        return await self._workspace_manager.get_workspace(
+            user_id,
+            session.agent_id,
+            session.id,
+            session.config.workspace_id,
+        )
+
+    async def _delete_session_attachments(
+        self,
+        user_id: str,
+        session,
+    ) -> None:
+        """Delete all persisted attachments for one session."""
+        workspace = await self._resolve_workspace_for_session(user_id, session)
+        await self._attachment_store.delete_session_attachments(
+            workspace,
+            session_id=session.id,
+        )
+
+    async def _prune_session_attachments(
+        self,
+        *,
+        user_id: str,
+        session,
+        kept_message_ids: set[str],
+    ) -> None:
+        """Delete attachments that no longer belong to retained messages."""
+        workspace = await self._resolve_workspace_for_session(user_id, session)
+        await self._attachment_store.prune_session_attachments(
+            workspace,
+            session_id=session.id,
+            kept_message_ids=kept_message_ids,
+        )
 
     async def _team_worker_session_ids(
         self,

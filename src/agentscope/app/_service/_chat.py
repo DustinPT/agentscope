@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from .._reply_state import (
     get_current_reply_msg,
@@ -65,10 +65,13 @@ from ...event import (
     ToolCallDeltaEvent,
     UserConfirmResultEvent,
 )
+from ...formatter import FormatterBase
+from ...middleware import MiddlewareBase
 from ...message import AssistantMsg, Msg, SystemMsg
 from ...permission import AdditionalWorkingDirectory
 from ...state import ToolRuntimeContext
 from ._agent_asset_store import AgentAssetStore
+from ._attachment_store import AttachmentStore
 
 
 @dataclass
@@ -83,6 +86,42 @@ class _ReplyCheckpointState:
         """Clear counters after a checkpoint write."""
         self.event_count = 0
         self.char_count = 0
+
+
+class _AttachmentModelCallMiddleware(MiddlewareBase):
+    """Expand attachment references just before the model call."""
+
+    def __init__(
+        self,
+        attachment_store: AttachmentStore,
+        workspace,
+    ) -> None:
+        self._attachment_store = attachment_store
+        self._workspace = workspace
+
+    async def on_model_call(
+        self,
+        agent: Agent,
+        input_kwargs: dict,
+        next_handler,
+    ):
+        current_model = input_kwargs["current_model"]
+        formatter = getattr(current_model, "formatter", None)
+        if formatter is not None and not isinstance(formatter, FormatterBase):
+            formatter = None
+        materialized_messages = (
+            await self._attachment_store.materialize_messages_for_model(
+                input_kwargs["messages"],
+                workspace=self._workspace,
+                formatter=formatter,
+            )
+        )
+        return await next_handler(
+            current_model=current_model,
+            messages=materialized_messages,
+            tools=input_kwargs["tools"],
+            tool_choice=input_kwargs["tool_choice"],
+        )
 
 
 class ChatService:
@@ -124,6 +163,7 @@ class ChatService:
         chat_run_registry: ChatRunRegistry,
         *,
         agent_asset_store: AgentAssetStore | None = None,
+        attachment_store: AttachmentStore | None = None,
         extra_agent_middlewares: AgentMiddlewareFactory | None = None,
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
@@ -177,6 +217,7 @@ class ChatService:
         self._storage = storage
         self._workspace_manager = workspace_manager
         self._agent_asset_store = agent_asset_store
+        self._attachment_store = attachment_store or AttachmentStore()
         self._scheduler_manager = scheduler_manager
         self._background_task_manager = background_task_manager
         self._message_bus = message_bus
@@ -271,6 +312,86 @@ class ChatService:
     def sanitize_public_messages(cls, messages: list[Msg]) -> list[Msg]:
         """Strip private metadata from a list of messages."""
         return [cls.sanitize_public_message(message) for message in messages]
+
+    async def _dehydrate_message_for_storage(
+        self,
+        message: Msg,
+        *,
+        workspace,
+        session_id: str,
+    ) -> Msg:
+        """Persist message attachments to workspace and store references."""
+        return await self._attachment_store.persist_message_attachments(
+            message,
+            workspace=workspace,
+            session_id=session_id,
+        )
+
+    async def _dehydrate_messages_for_storage(
+        self,
+        messages: list[Msg],
+        *,
+        workspace,
+        session_id: str,
+    ) -> list[Msg]:
+        """Persist attachments for multiple messages."""
+        return [
+            await self._dehydrate_message_for_storage(
+                message,
+                workspace=workspace,
+                session_id=session_id,
+            )
+            for message in messages
+        ]
+
+    async def _build_state_for_storage(
+        self,
+        *,
+        state,
+        workspace,
+        session_id: str,
+    ):
+        """Create a storage-safe state snapshot with dehydrated context."""
+        state_copy = state.model_copy(deep=True)
+        if state_copy.context:
+            state_copy.context = await self._dehydrate_messages_for_storage(
+                list(state_copy.context),
+                workspace=workspace,
+                session_id=session_id,
+            )
+        return state_copy
+
+    def _hydrate_message_for_public(
+        self,
+        message: Msg,
+        *,
+        request: Request | None = None,
+        user_id: str | None = None,
+    ) -> Msg:
+        """Expose attachment references as public download URLs."""
+        hydrated = self._attachment_store.hydrate_message_for_public(
+            message,
+            request=request,
+            user_id=user_id,
+        )
+        return self.sanitize_public_message(hydrated)
+
+    def hydrate_public_messages(
+        self,
+        messages: list[Msg],
+        *,
+        request: Request | None = None,
+        user_id: str | None = None,
+    ) -> list[Msg]:
+        """Expose a message list with private metadata stripped."""
+        return [
+            self._hydrate_message_for_public(
+                message,
+                request=request,
+                user_id=user_id,
+            )
+            for message in messages
+        ]
 
     @classmethod
     def sanitize_public_message_payload(
@@ -431,6 +552,7 @@ class ChatService:
         session_id: str,
         agent_id: str,
         agent: Agent,
+        workspace,
         reply_msg: Msg | None,
         reply_started: bool,
         checkpoint_state: _ReplyCheckpointState,
@@ -490,7 +612,11 @@ class ChatService:
         await self._storage.upsert_message(
             user_id,
             session_id,
-            target_reply,
+            await self._dehydrate_message_for_storage(
+                target_reply,
+                workspace=workspace,
+                session_id=session_id,
+            ),
         )
 
         self._remove_empty_failed_reply_from_context(agent, reply_id)
@@ -498,7 +624,11 @@ class ChatService:
             user_id=user_id,
             agent_id=agent_id,
             session_id=session_id,
-            state=agent.state,
+            state=await self._build_state_for_storage(
+                state=agent.state,
+                workspace=workspace,
+                session_id=session_id,
+            ),
         )
         return target_reply
 
@@ -508,6 +638,7 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
+        workspace,
         reply_msg: Msg,
         agent: Agent,
         checkpoint_state: _ReplyCheckpointState,
@@ -520,13 +651,21 @@ class ChatService:
         await self._storage.upsert_message(
             user_id,
             session_id,
-            reply_msg,
+            await self._dehydrate_message_for_storage(
+                reply_msg,
+                workspace=workspace,
+                session_id=session_id,
+            ),
         )
         await self._storage.update_session_state(
             user_id=user_id,
             agent_id=agent_id,
             session_id=session_id,
-            state=agent.state,
+            state=await self._build_state_for_storage(
+                state=agent.state,
+                workspace=workspace,
+                session_id=session_id,
+            ),
         )
 
     async def _maybe_checkpoint_reply(
@@ -535,6 +674,7 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
+        workspace,
         reply_msg: Msg | None,
         agent: Agent,
         checkpoint_state: _ReplyCheckpointState,
@@ -548,6 +688,7 @@ class ChatService:
             user_id=user_id,
             session_id=session_id,
             agent_id=agent_id,
+            workspace=workspace,
             reply_msg=reply_msg,
             agent=agent,
             checkpoint_state=checkpoint_state,
@@ -1093,7 +1234,10 @@ class ChatService:
             session_id=session_id,
         )
         export_messages = [
-            message.model_dump(mode="json")
+            self._hydrate_message_for_public(
+                message,
+                user_id=user_id,
+            ).model_dump(mode="json")
             for message in messages
         ]
 
@@ -1319,6 +1463,10 @@ class ChatService:
                 message_bus=self._message_bus,
                 session_id=session_id,
             ),
+            _AttachmentModelCallMiddleware(
+                attachment_store=self._attachment_store,
+                workspace=workspace,
+            ),
         ]
         if agent_record.data.react_config.enable_tool_offload:
             middlewares.append(
@@ -1415,6 +1563,7 @@ class ChatService:
         # ----------------------------------------------------------------
         needs_followup_wakeup = False
         reply_msg: Msg | None = None
+        runtime_input_msg = input_msg
         async with self._message_bus.session_run(session_id):
             checkpoint_state = _ReplyCheckpointState()
             reply_started = False
@@ -1429,17 +1578,31 @@ class ChatService:
                             if isinstance(input_msg, Msg)
                             else input_msg
                         )
+                        persisted_input_msgs: list[Msg] = []
                         for msg in input_msgs:
-                            await self._storage.upsert_message(
-                                user_id,
-                                session_id,
+                            stored_msg = await self._dehydrate_message_for_storage(
                                 self.attach_rollback_snapshot(
                                     msg,
                                     agent.state,
                                 ),
+                                workspace=workspace,
+                                session_id=session_id,
                             )
+                            persisted_input_msgs.append(stored_msg)
+                            await self._storage.upsert_message(
+                                user_id,
+                                session_id,
+                                stored_msg,
+                            )
+                        runtime_input_msg = (
+                            persisted_input_msgs[0]
+                            if isinstance(input_msg, Msg)
+                            else persisted_input_msgs
+                        )
 
-                    async for event in agent.reply_stream(inputs=input_msg):
+                    async for event in agent.reply_stream(
+                        inputs=runtime_input_msg,
+                    ):
                         entry_id = await self._message_bus.session_publish_event(
                             session_id,
                             event.model_dump(mode="json"),
@@ -1462,6 +1625,7 @@ class ChatService:
                                 user_id=user_id,
                                 session_id=session_id,
                                 agent_id=agent_id,
+                                workspace=workspace,
                                 reply_msg=reply_msg,
                                 agent=agent,
                                 checkpoint_state=checkpoint_state,
@@ -1496,6 +1660,7 @@ class ChatService:
                             user_id=user_id,
                             session_id=session_id,
                             agent_id=agent_id,
+                            workspace=workspace,
                             reply_msg=reply_msg,
                             agent=agent,
                             checkpoint_state=checkpoint_state,
@@ -1517,6 +1682,7 @@ class ChatService:
                                 user_id=user_id,
                                 session_id=session_id,
                                 agent_id=agent_id,
+                                workspace=workspace,
                                 reply_msg=reply_msg,
                                 agent=agent,
                                 checkpoint_state=checkpoint_state,
@@ -1549,6 +1715,7 @@ class ChatService:
                             user_id=user_id,
                             session_id=session_id,
                             agent_id=agent_id,
+                            workspace=workspace,
                             reply_msg=reply_msg,
                             agent=agent,
                             checkpoint_state=checkpoint_state,
@@ -1570,6 +1737,7 @@ class ChatService:
                                 user_id=user_id,
                                 session_id=session_id,
                                 agent_id=agent_id,
+                                workspace=workspace,
                                 reply_msg=reply_msg,
                                 agent=agent,
                                 checkpoint_state=checkpoint_state,
@@ -1585,7 +1753,11 @@ class ChatService:
                     await self._storage.upsert_message(
                         user_id,
                         session_id,
-                        reply_msg,
+                        await self._dehydrate_message_for_storage(
+                            reply_msg,
+                            workspace=workspace,
+                            session_id=session_id,
+                        ),
                     )
 
                 # Persist the updated agent state. MUST happen inside the
@@ -1596,7 +1768,11 @@ class ChatService:
                     user_id=user_id,
                     agent_id=agent_id,
                     session_id=session_id,
-                    state=agent.state,
+                    state=await self._build_state_for_storage(
+                        state=agent.state,
+                        workspace=workspace,
+                        session_id=session_id,
+                    ),
                 )
 
                 parked_on_awaiting_tool = is_reply_awaiting_tool_interaction(
@@ -1622,6 +1798,7 @@ class ChatService:
                     session_id=session_id,
                     agent_id=agent_id,
                     agent=agent,
+                    workspace=workspace,
                     reply_msg=reply_msg,
                     reply_started=reply_started,
                     checkpoint_state=checkpoint_state,

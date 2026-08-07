@@ -15,6 +15,7 @@ import {
 	ChevronDownIcon,
 	CirclePlay,
 	Copy,
+        FileText,
 	Gauge,
 	Loader2,
 	MessageSquareQuote,
@@ -120,6 +121,22 @@ function getRunFailedAt(message: Msg): string | null {
 function formatContextUsage(metadata: ContextUsageMetadata): string {
 	const percentage = Math.round(Math.max(0, metadata.usage_ratio) * 100);
 	return `${percentage}%(${formatNumber(metadata.current_tokens)}/${formatNumber(metadata.max_context_tokens)})`;
+}
+
+function getAttachmentDisplayName(block: DataBlock): string {
+        if (block.name?.trim()) return block.name.trim();
+        if (block.source.type === 'url') {
+                try {
+                        const pathname = new URL(block.source.url).pathname;
+                        const rawName = pathname.split('/').filter(Boolean).at(-1);
+                        if (rawName) {
+                                return decodeURIComponent(rawName);
+                        }
+                } catch {
+                        // Ignore malformed URLs and fall through.
+                }
+        }
+        return block.source.media_type;
 }
 
 /**
@@ -481,7 +498,23 @@ function renderBlock(
 				case 'video':
 					return <video key={index} controls src={data} />;
 			}
-			return null;
+                        return (
+                                <Item key={index} variant="outline" className="max-w-full">
+                                        <ItemContent className="flex items-center justify-between gap-3">
+                                                <div className="min-w-0 flex items-center gap-2">
+                                                        <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                        <span className="truncate text-sm">
+                                                                {getAttachmentDisplayName(block)}
+                                                        </span>
+                                                </div>
+                                                <Button asChild size="sm" variant="ghost" className="shrink-0">
+                                                        <a href={data} target="_blank" rel="noreferrer">
+                                                                Download
+                                                        </a>
+                                                </Button>
+                                        </ItemContent>
+                                </Item>
+                        );
 		}
 
 		case 'hint': {

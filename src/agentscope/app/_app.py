@@ -3,10 +3,11 @@
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
-from ._service import AgentAssetStore
+from ._service import AgentAssetStore, AttachmentStore
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
+    attachment_router,
     chat_router,
     credential_router,
     model_router,
@@ -146,6 +147,7 @@ def create_app(
     app.state.agent_asset_store = AgentAssetStore(
         agent_asset_root or ".agent_assets",
     )
+    app.state.attachment_store = AttachmentStore()
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
@@ -168,6 +170,7 @@ def create_app(
     # Built-in routers
     for router in (
         agent_router,
+        attachment_router,
         chat_router,
         credential_router,
         schedule_router,

@@ -5,7 +5,6 @@ import type { PermissionMode, ChatModelConfig } from '@/api';
 import { EmptyMessage } from '@/components/chat/Empty';
 import {
 	buildContentBlockFromFile,
-	getSupportedInputTypes,
 } from '@/components/chat/inputUtils';
 import { TextInput, type ProcessedFile } from '@/components/chat/TextInput';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
@@ -147,9 +146,7 @@ export function SessionDraftComposer({
 								onSend={onSubmit}
 								focusKey={`draft:${agentId}`}
 								disabled={submitting || draft.chatModelConfig === null}
-								allowedInputTypes={getSupportedInputTypes(
-									selectedModelCard?.input_types,
-								)}
+                                                                allowedInputTypes={undefined}
 								fileProcessor={buildContentBlockFromFile}
 								value={draft.text}
 								onValueChange={(value) =>
