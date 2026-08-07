@@ -67,6 +67,7 @@ from ...event import (
 )
 from ...message import AssistantMsg, Msg, SystemMsg
 from ...permission import AdditionalWorkingDirectory
+from ...state import ToolRuntimeContext
 from ._agent_asset_store import AgentAssetStore
 
 
@@ -840,6 +841,22 @@ class ChatService:
         }
 
     @staticmethod
+    def _refresh_tool_runtime_context(
+        *,
+        state,
+        session_id: str,
+        workspace_id: str,
+        workdir: str,
+    ) -> None:
+        """Refresh per-run tool runtime context on the live agent state."""
+        state.session_id = session_id
+        state.tool_context.runtime_context = ToolRuntimeContext(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            workdir=workdir,
+        )
+
+    @staticmethod
     def _build_fallback_export_system_message(
         *,
         system_prompt: str,
@@ -882,7 +899,6 @@ class ChatService:
         )
 
         session_state = deepcopy(session_record.state)
-        session_state.session_id = session_id
         if (
             workspace.workdir
             not in session_state.permission_context.working_directories
@@ -893,6 +909,12 @@ class ChatService:
                 path=workspace.workdir,
                 source="session",
             )
+        self._refresh_tool_runtime_context(
+            state=session_state,
+            session_id=session_id,
+            workspace_id=session_record.config.workspace_id,
+            workdir=workspace.workdir,
+        )
 
         runtime_session = session_record.model_copy(deep=True)
         runtime_session.state = session_state
@@ -1260,6 +1282,12 @@ class ChatService:
                 path=workspace.workdir,
                 source="session",
             )
+        self._refresh_tool_runtime_context(
+            state=session_record.state,
+            session_id=session_id,
+            workspace_id=session_record.config.workspace_id,
+            workdir=workspace.workdir,
+        )
 
         # ----------------------------------------------------------------
         # 2. Toolkit (workspace tools + planning + TaskStop + schedule +

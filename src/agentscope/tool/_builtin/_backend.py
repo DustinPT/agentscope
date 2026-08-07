@@ -89,6 +89,10 @@ class BackendBase(ABC):
     async def write_file(self, path: str, data: bytes) -> None:
         """Write ``data`` to ``path``, creating parent directories."""
 
+    @abstractmethod
+    async def ensure_dir(self, path: str) -> None:
+        """Create ``path`` as a directory if it does not already exist."""
+
     async def write_stream(
         self,
         path: str,
@@ -312,6 +316,9 @@ class LocalBackend(BackendBase):
             os.makedirs(parent, exist_ok=True)
         async with aiofiles.open(path, mode="wb") as f:
             await f.write(data)
+
+    async def ensure_dir(self, path: str) -> None:
+        os.makedirs(path, exist_ok=True)
 
     async def write_stream(
         self,

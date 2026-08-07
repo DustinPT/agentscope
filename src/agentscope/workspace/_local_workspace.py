@@ -33,7 +33,7 @@ from ..message import (
 from ..skill import Skill
 from ..tool import (
     ToolBase,
-    Bash,
+    CreateProjectDirectory,
     Edit,
     Glob,
     Grep,
@@ -665,6 +665,7 @@ class LocalWorkspace(WorkspaceBase):
             Grep(backend=backend),
             Read(backend=backend),
             Write(backend=backend),
+            CreateProjectDirectory(backend=backend),
         ]
 
     async def list_skills(self) -> list[Skill]:

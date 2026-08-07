@@ -79,6 +79,19 @@ class FileVersionCacheEntry(BaseModel):
         }
 
 
+class ToolRuntimeContext(BaseModel):
+    """Lightweight runtime-only context injected before tool execution."""
+
+    session_id: str
+    """The current session id."""
+
+    workspace_id: str
+    """The workspace id bound to the current session."""
+
+    workdir: str
+    """The agent-visible workspace root directory."""
+
+
 class ToolContext(BaseModel):
     """The tool context, e.g. tool cache"""
 
@@ -94,6 +107,16 @@ class ToolContext(BaseModel):
     activated_groups: list[str] = Field(default_factory=list)
     """The names of the activated tool groups, each group contains a set of
     tools."""
+
+    runtime_context: ToolRuntimeContext | None = Field(
+        default=None,
+        exclude=True,
+    )
+    """Runtime-only tool context refreshed by the service layer each run.
+
+    This field is intentionally excluded from default serialization so it does
+    not leak into persisted session state or generic snapshots.
+    """
 
     async def get_cache(
         self,

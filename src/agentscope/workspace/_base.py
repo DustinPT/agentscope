@@ -125,7 +125,15 @@ class WorkspaceBase:
 
     async def list_tools(self) -> list[ToolBase]:
         """Built-in tools scoped to this workspace."""
-        from ..tool import Bash, Edit, Glob, Grep, Read, Write
+        from ..tool import (
+            Bash,
+            CreateProjectDirectory,
+            Edit,
+            Glob,
+            Grep,
+            Read,
+            Write,
+        )
 
         backend = self.get_backend()
         glob_kwargs: dict = {"backend": backend}
@@ -138,6 +146,7 @@ class WorkspaceBase:
             Grep(backend=backend),
             Read(backend=backend),
             Write(backend=backend),
+            CreateProjectDirectory(backend=backend),
         ]
 
     def get_backend(self) -> BackendBase:

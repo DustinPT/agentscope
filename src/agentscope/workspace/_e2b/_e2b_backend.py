@@ -67,3 +67,6 @@ class E2BBackend(BackendBase):
         if parent:
             await self.exec_shell(["mkdir", "-p", parent])
         await self._sandbox.files.write(path, data)
+
+    async def ensure_dir(self, path: str) -> None:
+        await self.exec_shell(["mkdir", "-p", path])

@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
 """Builtin tool for creating the current task's project directory."""
 
-import os
 from typing import Any, List
 
+from ...exception import DeveloperOrientedException
 from ...message import TextBlock, ToolResultState
 from ...permission import (
     PermissionBehavior,
     PermissionContext,
     PermissionDecision,
 )
+from ...state import AgentState
+from ._backend import BackendBase, LocalBackend
 from .._base import ToolBase, ToolMiddlewareBase
 from .._response import ToolChunk
 
@@ -34,20 +36,16 @@ class CreateProjectDirectory(ToolBase):
     is_read_only: bool = False
     is_concurrency_safe: bool = True
     is_external_tool: bool = False
+    is_state_injected: bool = True
 
     def __init__(
         self,
-        workdir: str,
-        session_id: str,
+        backend: BackendBase | None = None,
         middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
-        """Initialize the tool with the current workspace root and session."""
+        """Initialize the tool."""
         super().__init__(middlewares=middlewares)
-        self._project_dir = os.path.join(
-            os.path.abspath(workdir),
-            "projects",
-            session_id,
-        )
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -61,10 +59,28 @@ class CreateProjectDirectory(ToolBase):
             message="Project directory creation is allowed.",
         )
 
-    async def call(self) -> ToolChunk:
+    async def call(self, _agent_state: AgentState) -> ToolChunk:
         """Create or reuse the fixed project directory."""
-        existed = os.path.isdir(self._project_dir)
-        os.makedirs(self._project_dir, exist_ok=True)
+        if not isinstance(_agent_state, AgentState):
+            raise DeveloperOrientedException(
+                "Error: CreateProjectDirectory requires AgentState to be "
+                f"provided, got {_agent_state} instead.",
+            )
+
+        runtime_context = _agent_state.tool_context.runtime_context
+        if runtime_context is None:
+            raise DeveloperOrientedException(
+                "Error: CreateProjectDirectory requires "
+                "tool_context.runtime_context to be populated before use.",
+            )
+
+        project_dir = self._backend.join_path(
+            runtime_context.workdir,
+            "projects",
+            runtime_context.session_id,
+        )
+        existed = await self._backend.is_dir(project_dir)
+        await self._backend.ensure_dir(project_dir)
 
         action = "already exists" if existed else "created"
         return ToolChunk(
@@ -72,7 +88,7 @@ class CreateProjectDirectory(ToolBase):
                 TextBlock(
                     text=(
                         f"Project directory {action}: "
-                        f"{self._project_dir}"
+                        f"{project_dir}"
                     ),
                 ),
             ],

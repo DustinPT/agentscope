@@ -92,3 +92,6 @@ class DockerBackend(BackendBase):
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
         await self._container.put_archive(parent, buf.getvalue())
+
+    async def ensure_dir(self, path: str) -> None:
+        await self.exec_shell(["mkdir", "-p", path])

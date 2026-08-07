@@ -17,14 +17,13 @@ from .._tools import AgentCreate, SubAgentRun, TeamCreate, TeamDelete, TeamSay
 from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
 from ...tool import (
-    CreateProjectDirectory,
     TaskCreate,
     TaskGet,
     TaskList,
     TaskUpdate,
     Toolkit,
 )
-from ...workspace import LocalWorkspace, WorkspaceBase
+from ...workspace import WorkspaceBase
 
 
 async def get_toolkit(
@@ -131,14 +130,6 @@ optional):
         )
         if group_name is None or group_name in enabled_builtin_tool_groups:
             tools.append(tool)
-
-    if isinstance(workspace, LocalWorkspace):
-        tools.append(
-            CreateProjectDirectory(
-                workdir=workspace.workdir,
-                session_id=session_record.id,
-            ),
-        )
 
     # Planning tools — always on.
     tools += [TaskCreate(), TaskList(), TaskGet(), TaskUpdate()]
