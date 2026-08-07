@@ -19,13 +19,34 @@ from pathlib import Path
 
 # ── shared constants ───────────────────────────────────────────────
 
+DEFAULT_WORKSPACE_INSTRUCTIONS = """<workspace>You have access to a {backend} \
+workspace at {workdir} with the following structure:
+
+```
+{workdir}
+├── data/        # offloaded multimodal files (images, etc.) — system-managed
+├── skills/      # reusable skills, each in its own subdirectory
+└── sessions/    # offloaded session context and tool results — system-managed
+```
+</workspace>"""
+
+DEFAULT_DATA_DIR = "data"
+DEFAULT_SKILLS_DIR = "skills"
+DEFAULT_SESSIONS_DIR = "sessions"
+DEFAULT_MCP_FILE = ".mcp"
+DEFAULT_GATEWAY_VENV = ".venv"
+DEFAULT_GATEWAY_LOG = "gateway.log"
+DEFAULT_GATEWAY_SCRIPT = "_mcp_gateway_app.py"
+DEFAULT_GLOB_HELPER_SCRIPT = "_glob_helper.py"
+
 #: Minimum Python packages the gateway script needs at runtime.
 #: Both Docker (image build) and E2B (sandbox bootstrap) install this
 #: same tuple into the gateway venv before adding ``agentscope`` itself.
 _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
-    "mcp",
+    "mcp<2.0.0",
     "uvicorn",
     "fastapi",
+    "httpx",
 )
 
 #: Basename set excluded when packaging the agentscope source tree
@@ -159,5 +180,14 @@ def _read_gateway_script_bytes() -> bytes:
     return (
         _res.files("agentscope.workspace._mcp_gateway")
         .joinpath("_mcp_gateway_app.py")
+        .read_bytes()
+    )
+
+
+def _read_glob_helper_bytes() -> bytes:
+    """Read the standalone glob helper script as bytes."""
+    return (
+        _res.files("agentscope.tool._builtin._scripts")
+        .joinpath("_glob_helper.py")
         .read_bytes()
     )

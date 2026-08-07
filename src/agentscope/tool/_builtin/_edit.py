@@ -4,8 +4,7 @@ import fnmatch
 import os
 from typing import Any, List
 
-import aiofiles
-
+from ._backend import BackendBase, LocalBackend
 from .._base import ToolBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
@@ -90,6 +89,7 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the edit tool.
 
@@ -110,6 +110,7 @@ Usage:
         """
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -233,7 +234,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         old_string: str,
@@ -243,7 +244,7 @@ Usage:
     ) -> ToolChunk:
         """Execute the edit and return the result."""
         # Validate file_path is absolute
-        if not os.path.isabs(file_path):
+        if not self._backend.isabs(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -258,7 +259,7 @@ Usage:
             )
 
         # Check file exists
-        if not os.path.exists(file_path):
+        if not await self._backend.file_exists(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File not found: {file_path}"),
@@ -305,12 +306,9 @@ Usage:
                 )
         # Read the current file content only after version validation passes.
         try:
-            async with aiofiles.open(
-                file_path,
-                "r",
-                encoding="utf-8",
-            ) as f:
-                content = await f.read()
+            content = (
+                await self._backend.read_file(file_path)
+            ).decode("utf-8")
         except Exception as e:
             return ToolChunk(
                 content=[TextBlock(text=f"Error reading file: {str(e)}")],
@@ -362,12 +360,10 @@ Usage:
 
         # Write updated content back to file
         try:
-            async with aiofiles.open(
+            await self._backend.write_file(
                 file_path,
-                "w",
-                encoding="utf-8",
-            ) as f:
-                await f.write(updated_content)
+                updated_content.encode("utf-8"),
+            )
         except Exception as e:
             return ToolChunk(
                 content=[TextBlock(text=f"Error writing file: {str(e)}")],

@@ -2,11 +2,9 @@
 """The write tool in agentscope."""
 import fnmatch
 import os
-from pathlib import Path
 from typing import Any, List
 
-import aiofiles
-
+from ._backend import BackendBase, LocalBackend
 from .._base import ToolBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
@@ -68,6 +66,7 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the write tool.
 
@@ -88,6 +87,7 @@ Usage:
         """
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -211,7 +211,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         content: str,
@@ -219,7 +219,7 @@ Usage:
     ) -> ToolChunk:
         """Write content to a file and return the result."""
         # Validate that file_path is absolute
-        if not os.path.isabs(file_path):
+        if not self._backend.isabs(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -233,7 +233,7 @@ Usage:
 
         # Existing files can only be overwritten when the current version
         # still matches a file version the model already knows.
-        if os.path.exists(file_path) and _agent_state is not None:
+        if await self._backend.file_exists(file_path) and _agent_state is not None:
             cache = await _agent_state.tool_context.get_cache(file_path)
             if cache is None or not await _agent_state.tool_context.validate_cached_version(  # noqa: E501
                 file_path,
@@ -254,13 +254,7 @@ Usage:
                     is_last=True,
                 )
 
-        # Create parent directories if they don't exist
-        parent_dir = Path(file_path).parent
-        os.makedirs(parent_dir, exist_ok=True)
-
-        # Write content to file
-        async with aiofiles.open(file_path, mode="w", encoding="utf-8") as f:
-            await f.write(content)
+        await self._backend.write_file(file_path, content.encode("utf-8"))
 
         if _agent_state is not None:
             await _agent_state.tool_context.cache_file_version(

@@ -30,7 +30,7 @@ from typing import Self
 from ..mcp import MCPClient
 from ..message import Msg, ToolResultBlock
 from ..skill import Skill
-from ..tool import ToolBase
+from ..tool import BackendBase, ToolBase
 
 DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS = """Local directory boundary:
 1. Only treat a local path as a user directory when the user has explicitly provided it or explicitly authorized checking it.
@@ -63,10 +63,19 @@ class WorkspaceBase:
     is_alive: bool
     """If the workspace is still operational."""
 
+    _backend: BackendBase | None
+    """Current execution backend for builtin tools."""
+
+    @property
+    def _glob_helper_path(self) -> str | None:
+        """Optional backend-side path to the glob helper script."""
+        return None
+
     def __init__(self, workspace_id: str | None) -> None:
         """Initialize the workspace base instance."""
         self.workspace_id = workspace_id or uuid.uuid4().hex
         self.is_alive = False
+        self._backend = None
 
     # ── lifecycle (developer) ──────────────────────────────────────
 
@@ -114,9 +123,31 @@ class WorkspaceBase:
 
     # ── for Agent: tool & resource discovery ───────────────────────
 
-    @abstractmethod
     async def list_tools(self) -> list[ToolBase]:
         """Built-in tools scoped to this workspace."""
+        from ..tool import Bash, Edit, Glob, Grep, Read, Write
+
+        backend = self.get_backend()
+        glob_kwargs: dict = {"backend": backend}
+        if self._glob_helper_path is not None:
+            glob_kwargs["glob_helper_path"] = self._glob_helper_path
+        return [
+            Bash(cwd=self.workdir, backend=backend),
+            Edit(backend=backend),
+            Glob(**glob_kwargs),
+            Grep(backend=backend),
+            Read(backend=backend),
+            Write(backend=backend),
+        ]
+
+    def get_backend(self) -> BackendBase:
+        """Return the workspace's active builtin-tool backend."""
+        if self._backend is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no active backend. "
+                "Initialize the workspace before requesting its backend.",
+            )
+        return self._backend
 
     @abstractmethod
     async def list_mcps(self) -> list[MCPClient]:

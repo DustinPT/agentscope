@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """The grep tool in agentscope."""
-import asyncio
 import fnmatch
 import os
-import shutil
 from typing import Any, List, Literal
 
+from ._backend import BackendBase, LocalBackend
 from .._base import ToolBase
-from ..._logging import logger
 from ...permission import (
     PermissionContext,
     PermissionDecision,
@@ -157,16 +155,12 @@ class Grep(ToolBase):
     is_external_tool: bool = False
     is_state_injected: bool = False
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        backend: BackendBase | None = None,
+    ) -> None:
         """Initialize the grep tool."""
-        self._rg_path = shutil.which("rg")
-        if self._rg_path is None:
-            logger.warning(
-                "ripgrep (rg) binary not found. To use the Grep tool, "
-                "install ripgrep: pip install agentscope[tools] or "
-                "brew install ripgrep / apt install ripgrep / "
-                "choco install ripgrep",
-            )
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -269,42 +263,31 @@ class Grep(ToolBase):
         timeout: int = 30,
     ) -> list[str]:
         """Run ripgrep and return output lines."""
-        full_args: list = [self._rg_path, *args, search_path]
-
-        proc = await asyncio.create_subprocess_exec(
-            *full_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        result = await self._backend.exec_shell(
+            ["rg", *args, search_path],
+            timeout=float(timeout),
         )
-
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError as e:
-            proc.kill()
-            await proc.communicate()
+        if result.exit_code == -1 and result.stderr == b"timed out":
             raise RipgrepTimeoutError(
                 f"Ripgrep search timed out after {timeout} seconds. "
                 "Try searching a more specific path or pattern.",
                 [],
-            ) from e
-
-        # returncode 0 = matches found, 1 = no matches (both are success)
-        if proc.returncode not in (0, 1):
-            error_msg = stderr.decode("utf-8", errors="ignore").strip()
-            raise RuntimeError(
-                f"ripgrep error (code {proc.returncode}): {error_msg}",
             )
 
-        raw = stdout.decode("utf-8", errors="ignore")
+        # returncode 0 = matches found, 1 = no matches (both are success)
+        if result.exit_code not in (0, 1):
+            error_msg = result.stderr.decode("utf-8", errors="ignore").strip()
+            raise RuntimeError(
+                f"ripgrep error (code {result.exit_code}): {error_msg}",
+            )
+
+        raw = result.stdout.decode("utf-8", errors="ignore")
         lines = [
             line.rstrip("\r") for line in raw.split("\n") if line.rstrip("\r")
         ]
         return lines
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         pattern: str,
         path: str | None = None,
@@ -342,21 +325,7 @@ class Grep(ToolBase):
             n: Show line numbers (content mode only, default True)
             **kwargs: Additional parameters (-A, -B, -C)
         """
-        if self._rg_path is None:
-            return ToolChunk(
-                content=[
-                    TextBlock(
-                        text="ripgrep (rg) not found. Please install it: "
-                        "macOS: brew install ripgrep | "
-                        "Linux: apt/yum install ripgrep | "
-                        "Windows: choco install ripgrep",
-                    ),
-                ],
-                state=ToolResultState.ERROR,
-                is_last=True,
-            )
-
-        search_path = path or os.getcwd()
+        search_path = path or await self._backend.getcwd()
 
         args: list[str] = ["--hidden"]
 

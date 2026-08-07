@@ -63,6 +63,7 @@ from .._gateway_client import (
     GatewayClient,
     GatewayMCPClient,
 )
+from ._docker_backend import DockerBackend
 from ._make_dockerfile import (
     CONTAINER_DATA_DIR,
     CONTAINER_SESSIONS_DIR,
@@ -272,6 +273,7 @@ class DockerWorkspace(WorkspaceBase):
         self._gateway_token = uuid.uuid4().hex
 
         await self._create_and_start_container()
+        self._backend = DockerBackend(self._container, CONTAINER_WORKDIR)
 
         await self._write_gateway_config()
         await self._start_gateway_process()
@@ -386,6 +388,7 @@ class DockerWorkspace(WorkspaceBase):
                 pass
             self._client = None
 
+        self._backend = None
         self.is_alive = False
 
     # ── instructions ────────────────────────────────────────────
@@ -402,12 +405,8 @@ class DockerWorkspace(WorkspaceBase):
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
-        """Built-in tools exposed by the workspace itself.
-
-        Always empty — every tool reaches the agent through an MCP
-        server registered on the in-container gateway.
-        """
-        return []
+        """Built-in tools exposed by the workspace itself."""
+        return await super().list_tools()
 
     async def list_mcps(self) -> list[MCPClient]:
         """Return one :class:`GatewayMCPClient` per registered MCP.

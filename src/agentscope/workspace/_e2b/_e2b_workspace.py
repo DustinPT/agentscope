@@ -94,8 +94,10 @@ from ._bootstrap import (
 from .._utils import (
     _agentscope_version,
     _is_released_install,
+    _read_glob_helper_bytes,
     _read_gateway_script_bytes,
 )
+from ._e2b_backend import E2BBackend
 
 
 _DEFAULT_INSTRUCTIONS = f"""<workspace>
@@ -266,6 +268,7 @@ class E2BWorkspace(WorkspaceBase):
             return
 
         await self._attach_or_create_sandbox()
+        self._backend = E2BBackend(self._sandbox, SANDBOX_WORKDIR)
 
         # If the gateway script is missing, the sandbox is fresh (or
         # a prior bootstrap was interrupted). Re-running bootstrap is
@@ -382,6 +385,7 @@ class E2BWorkspace(WorkspaceBase):
                 logger.warning("E2BWorkspace: pause failed: %s", e)
             self._sandbox = None
 
+        self._backend = None
         self.is_alive = False
 
     # ── instructions ────────────────────────────────────────────
@@ -398,8 +402,8 @@ class E2BWorkspace(WorkspaceBase):
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
-        """No built-in tools — every tool reaches the agent via MCP."""
-        return []
+        """Built-in tools exposed by the workspace itself."""
+        return await super().list_tools()
 
     async def list_mcps(self) -> list[MCPClient]:
         """Return one :class:`GatewayMCPClient` per registered MCP.
@@ -875,6 +879,10 @@ class E2BWorkspace(WorkspaceBase):
 
         # Upload the gateway script last so its presence is the
         # idempotency marker we probe in :meth:`initialize`.
+        await self._sandbox.files.write(
+            f"{GATEWAY_HOME}/_glob_helper.py",
+            _read_glob_helper_bytes(),
+        )
         await self._sandbox.files.write(
             GATEWAY_SCRIPT,
             _read_gateway_script_bytes(),

@@ -40,6 +40,8 @@ from ..tool import (
     Read,
     Write,
 )
+from ..tool._builtin._backend import LocalBackend
+from ..tool._builtin._powershell import PowerShell
 from .._logging import logger
 
 
@@ -139,6 +141,7 @@ class LocalWorkspace(WorkspaceBase):
         self.skill_paths: list[str] = list(skill_paths or [])
 
         # ── runtime state ───────────────────────────────────────
+        self._backend = LocalBackend()
         self._mcps: list[MCPClient] = []
 
         self._skill_lock = asyncio.Lock()
@@ -647,14 +650,21 @@ class LocalWorkspace(WorkspaceBase):
                 await asyncio.to_thread(shutil.rmtree, path)
 
     async def list_tools(self) -> list[ToolBase]:
-        """List all tools available in the workspace."""
+        """Return builtin tools, using PowerShell as the shell on Windows."""
+        if os.name != "nt":
+            return await super().list_tools()
+
+        backend = self.get_backend()
+        glob_kwargs: dict = {"backend": backend}
+        if self._glob_helper_path is not None:
+            glob_kwargs["glob_helper_path"] = self._glob_helper_path
         return [
-            Bash(cwd=self.workdir),
-            Edit(),
-            Glob(),
-            Grep(),
-            Read(),
-            Write(),
+            PowerShell(cwd=self.workdir, backend=backend),
+            Edit(backend=backend),
+            Glob(**glob_kwargs),
+            Grep(backend=backend),
+            Read(backend=backend),
+            Write(backend=backend),
         ]
 
     async def list_skills(self) -> list[Skill]:

@@ -2,7 +2,7 @@
 """Builtin tool for creating the current task's project directory."""
 
 import os
-from typing import Any
+from typing import Any, List
 
 from ...message import TextBlock, ToolResultState
 from ...permission import (
@@ -10,7 +10,7 @@ from ...permission import (
     PermissionContext,
     PermissionDecision,
 )
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._response import ToolChunk
 
 
@@ -35,8 +35,14 @@ class CreateProjectDirectory(ToolBase):
     is_concurrency_safe: bool = True
     is_external_tool: bool = False
 
-    def __init__(self, workdir: str, session_id: str) -> None:
+    def __init__(
+        self,
+        workdir: str,
+        session_id: str,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+    ) -> None:
         """Initialize the tool with the current workspace root and session."""
+        super().__init__(middlewares=middlewares)
         self._project_dir = os.path.join(
             os.path.abspath(workdir),
             "projects",
@@ -55,7 +61,7 @@ class CreateProjectDirectory(ToolBase):
             message="Project directory creation is allowed.",
         )
 
-    async def __call__(self) -> ToolChunk:
+    async def call(self) -> ToolChunk:
         """Create or reuse the fixed project directory."""
         existed = os.path.isdir(self._project_dir)
         os.makedirs(self._project_dir, exist_ok=True)

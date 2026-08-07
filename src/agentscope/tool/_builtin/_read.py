@@ -3,11 +3,9 @@
 import base64
 import fnmatch
 import mimetypes
-import os
 from typing import Any, List
 
-import aiofiles
-
+from ._backend import BackendBase, LocalBackend
 from .._base import ToolBase
 from ...permission import (
     PermissionContext,
@@ -74,6 +72,7 @@ Usage:
     def __init__(
         self,
         max_line_characters: int = 2000,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the read tool.
 
@@ -87,6 +86,7 @@ Usage:
         """
 
         self._max_line_characters = max_line_characters
+        self._backend = backend or LocalBackend()
 
     @staticmethod
     def _guess_media_type(file_path: str) -> str | None:
@@ -200,7 +200,7 @@ Usage:
         if not file_path:
             return []
 
-        parent = os.path.dirname(file_path)
+        parent = self._backend.dirname(file_path)
         pattern = (parent.rstrip("/") + "/**") if parent else "**"
 
         return [
@@ -212,7 +212,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         offset: int = 1,
@@ -222,7 +222,7 @@ Usage:
         """Read the file and return the content with metadata."""
 
         # Validate file_path is absolute
-        if not os.path.isabs(file_path):
+        if not self._backend.isabs(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -235,7 +235,7 @@ Usage:
             )
 
         # Check file exists
-        if not os.path.exists(file_path):
+        if not await self._backend.file_exists(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File does not exist: {file_path}"),
@@ -245,7 +245,7 @@ Usage:
             )
 
         # Check it's not a directory
-        if os.path.isdir(file_path):
+        if await self._backend.is_dir(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -258,8 +258,7 @@ Usage:
             )
 
         try:
-            async with aiofiles.open(file_path, mode="rb") as f:
-                file_bytes = await f.read()
+            file_bytes = await self._backend.read_file(file_path)
 
             media_type = self._guess_media_type(file_path)
 
@@ -300,7 +299,7 @@ Usage:
                                 ),
                                 media_type=media_type,
                             ),
-                            name=os.path.basename(file_path),
+                            name=self._backend.basename(file_path),
                         ),
                     ],
                     state=ToolResultState.SUCCESS,

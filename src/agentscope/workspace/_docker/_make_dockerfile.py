@@ -40,6 +40,7 @@ from .._utils import (
     _is_released_install,
     _is_source_ignored,
     _read_gateway_script_bytes,
+    _read_glob_helper_bytes,
 )
 
 # ── shared constants (also imported by _docker_workspace) ──────────
@@ -245,10 +246,12 @@ def prepare_build_context(
     # them into the build context so the Dockerfile can ``COPY`` them
     # to ``GATEWAY_SCRIPT``.
     gateway_script_bytes = _read_gateway_script_bytes()
+    glob_helper_bytes = _read_glob_helper_bytes()
 
     copy_files: dict[str, bytes] = {
         "requirements.txt": requirements_text.encode("utf-8"),
         "_mcp_gateway_app.py": gateway_script_bytes,
+        "_glob_helper.py": glob_helper_bytes,
     }
     if source_root is not None:
         # Synthetic entry: the directory tree is too large to inline, so we
@@ -264,6 +267,7 @@ def prepare_build_context(
         copy_files["requirements.txt"],
     )
     (ctx_dir / "_mcp_gateway_app.py").write_bytes(gateway_script_bytes)
+    (ctx_dir / "_glob_helper.py").write_bytes(glob_helper_bytes)
     if source_root is not None:
         shutil.copytree(
             source_root,

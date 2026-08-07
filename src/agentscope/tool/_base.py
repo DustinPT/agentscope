@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """The tool protocol in agentscope."""
+import inspect
 import os
 from abc import abstractmethod, ABC
 from pathlib import Path
-from typing import AsyncGenerator, Any, List
+from typing import AsyncGenerator, Any, Callable, List
 
 from pydantic import BaseModel
 
@@ -30,6 +31,19 @@ class ParamsBase(BaseModel):
         exported schema.
         """
         return _remove_title_field(super().model_json_schema(*args, **kwargs))
+
+
+class ToolMiddlewareBase(ABC):
+    """Base class for tool middlewares."""
+
+    @abstractmethod
+    async def on_tool_call(
+        self,
+        tool: "ToolBase",
+        input_kwargs: dict[str, Any],
+        next_handler: Callable[..., AsyncGenerator["ToolChunk", None]],
+    ) -> AsyncGenerator["ToolChunk", None]:
+        """Intercept a single tool invocation."""
 
 
 class ToolBase(ABC):
@@ -67,6 +81,84 @@ class ToolBase(ABC):
     """List of dangerous directories that should be protected from
     auto-editing."""
 
+    def __init__(
+        self,
+        middlewares: List["ToolMiddlewareBase"] | None = None,
+    ) -> None:
+        """Initialize the tool with optional middlewares."""
+        self._middlewares: List["ToolMiddlewareBase"] = (
+            middlewares if middlewares is not None else []
+        )
+
+    async def call(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> "ToolChunk" | AsyncGenerator["ToolChunk", None]:
+        """Execute the tool logic."""
+        if not self.is_external_tool:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not implement call",
+            )
+
+        raise RuntimeError(
+            f"{self.__class__.__name__} is an external tool and should not "
+            f"be called directly",
+        )
+
+    async def __call__(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> "ToolChunk" | AsyncGenerator["ToolChunk", None]:
+        """Invoke the tool and apply registered middlewares."""
+        if args:
+            raise TypeError(
+                f"{type(self).__name__} must be called with keyword arguments "
+                f"only, but got {len(args)} positional argument(s).",
+            )
+
+        middlewares = getattr(self, "_middlewares", [])
+        if not middlewares:
+            if inspect.isasyncgenfunction(self.call):
+                return self.call(**kwargs)
+            return await self.call(**kwargs)
+
+        async def execute_chain(
+            index: int = 0,
+            **chain_kwargs: Any,
+        ) -> AsyncGenerator["ToolChunk", None]:
+            if index >= len(middlewares):
+                result = self.call(**chain_kwargs)
+                if inspect.isasyncgen(result):
+                    async for chunk in result:
+                        yield chunk
+                    return
+
+                result = await result
+                if inspect.isasyncgen(result):
+                    async for chunk in result:
+                        yield chunk
+                    return
+
+                yield result
+                return
+
+            async def next_handler(
+                **next_kwargs: Any,
+            ) -> AsyncGenerator["ToolChunk", None]:
+                async for chunk in execute_chain(index + 1, **next_kwargs):
+                    yield chunk
+
+            async for chunk in middlewares[index].on_tool_call(
+                self,
+                chain_kwargs,
+                next_handler,
+            ):
+                yield chunk
+
+        return execute_chain(**kwargs)
+
     @abstractmethod
     async def check_permissions(
         self,
@@ -99,7 +191,7 @@ class ToolBase(ABC):
         """
         return self.is_read_only
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -132,7 +224,7 @@ class ToolBase(ABC):
         # None rule_content = tool-name-level rule, matches everything
         return rule_content is None
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List[PermissionRule]:
@@ -269,19 +361,3 @@ class ToolBase(ABC):
                 return True
 
         return False
-
-    async def __call__(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ) -> ToolChunk | AsyncGenerator[ToolChunk, None]:
-        """Invoke the tool with the given arguments."""
-        if not self.is_external_tool:
-            raise NotImplementedError(
-                f"{self.__class__.__name__} does not implement __call__",
-            )
-
-        raise RuntimeError(
-            f"{self.__class__.__name__} is an external tool and should not "
-            f"be called directly",
-        )
