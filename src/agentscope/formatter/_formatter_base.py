@@ -8,6 +8,7 @@ import tempfile
 from abc import abstractmethod
 from copy import deepcopy
 from fnmatch import fnmatch
+from pathlib import Path
 from typing import Any, List, AsyncGenerator
 from urllib.parse import unquote, urlparse
 
@@ -133,8 +134,65 @@ class FormatterBase(BaseModel):
 
         return stable_path
 
+    @staticmethod
+    def _build_markdown_link(label: str, url: str) -> str:
+        """Build a markdown link for fallback text."""
+        escaped_label = label.replace("\\", "\\\\").replace("]", "\\]")
+        return f"[{escaped_label}]({url})"
+
+    @staticmethod
+    def _build_fallback_link_label(
+        main_type: str,
+        file_name: str | None,
+    ) -> str:
+        """Build a concise label for a fallback markdown link."""
+        if file_name:
+            return file_name
+        return f"{main_type} file"
+
     def _build_data_block_fallback_text(self, block: DataBlock) -> str:
-        """Convert a data block into a textual fallback reference."""
+        """Convert a message data block into a markdown link."""
+        source = block.source
+        main_type = source.media_type.split("/")[0]
+
+        if isinstance(source, URLSource):
+            parsed = urlparse(str(source.url))
+            if parsed.scheme == "file":
+                local_path = unquote(parsed.path or "")
+                if parsed.netloc and parsed.netloc != "localhost":
+                    local_path = f"//{parsed.netloc}{local_path}"
+                return self._build_markdown_link(
+                    self._build_fallback_link_label(
+                        main_type,
+                        os.path.basename(local_path) or None,
+                    ),
+                    str(source.url),
+                )
+            return self._build_markdown_link(
+                self._build_fallback_link_label(
+                    main_type,
+                    os.path.basename(unquote(parsed.path or "")) or None,
+                ),
+                str(source.url),
+            )
+
+        if isinstance(source, Base64Source):
+            stable_path = self._materialize_base64_source(source)
+            return self._build_markdown_link(
+                self._build_fallback_link_label(
+                    main_type,
+                    os.path.basename(stable_path) or None,
+                ),
+                Path(stable_path).as_uri(),
+            )
+
+        return f"{main_type} file ({type(source).__name__})"
+
+    def _build_tool_result_data_block_fallback_text(
+        self,
+        block: DataBlock,
+    ) -> str:
+        """Convert a tool-result data block into a textual fallback reference."""
         source = block.source
         main_type = source.media_type.split("/")[0]
 
@@ -257,7 +315,9 @@ class FormatterBase(BaseModel):
 
             adapted_output.append(
                 TextBlock(
-                    text=self._build_data_block_fallback_text(out_block),
+                    text=self._build_tool_result_data_block_fallback_text(
+                        out_block,
+                    ),
                 ),
             )
 
@@ -368,7 +428,7 @@ class FormatterBase(BaseModel):
 
             elif isinstance(block, DataBlock):
                 textual_output.append(
-                    self._build_data_block_fallback_text(block),
+                    self._build_tool_result_data_block_fallback_text(block),
                 )
 
         return "\n".join(textual_output), []
