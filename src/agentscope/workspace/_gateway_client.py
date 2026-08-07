@@ -57,6 +57,7 @@ class GatewayMCPTool(ToolBase):
         tool: mcp.types.Tool,
         gateway_url: str,
         token: str,
+        namespace: str = "",
         http: httpx.AsyncClient | None = None,
         timeout: float | None = None,
     ) -> None:
@@ -110,6 +111,7 @@ class GatewayMCPTool(ToolBase):
         self._tool = tool
         self._gateway_url = gateway_url.rstrip("/")
         self._token = token
+        self._namespace = namespace
         self._http = http
         self._timeout = timeout
 
@@ -163,6 +165,7 @@ class GatewayMCPTool(ToolBase):
                 url,
                 json={"arguments": kwargs},
                 headers=headers,
+                params={"namespace": self._namespace},
             )
             if resp.status_code >= 400:
                 # Surface gateway-side error as a failed ToolChunk so
@@ -201,6 +204,7 @@ class GatewayMCPClient(MCPClient):
 
     _gateway_url: str = PrivateAttr(default="")
     _gateway_token: str = PrivateAttr(default="")
+    _gateway_namespace: str = PrivateAttr(default="")
     _http_timeout: float | None = PrivateAttr(default=None)
     _http: httpx.AsyncClient | None = PrivateAttr(default=None)
 
@@ -223,6 +227,7 @@ class GatewayMCPClient(MCPClient):
         *,
         gateway_url: str,
         token: str,
+        namespace: str = "",
         http: httpx.AsyncClient | None,
         timeout: float | None,
         connected: bool = False,
@@ -261,6 +266,7 @@ class GatewayMCPClient(MCPClient):
         """
         self._gateway_url = gateway_url.rstrip("/")
         self._gateway_token = token
+        self._gateway_namespace = namespace
         self._http = http
         self._http_timeout = timeout
         if connected:
@@ -291,6 +297,7 @@ class GatewayMCPClient(MCPClient):
                 f"{self._gateway_url}/mcps",
                 json=body,
                 headers=_bearer_headers(self._gateway_token),
+                params={"namespace": self._gateway_namespace},
             )
             if resp.status_code >= 400:
                 raise RuntimeError(
@@ -327,6 +334,7 @@ class GatewayMCPClient(MCPClient):
                 resp = await http.delete(
                     f"{self._gateway_url}/mcps/{self.name}",
                     headers=_bearer_headers(self._gateway_token),
+                    params={"namespace": self._gateway_namespace},
                 )
                 if resp.status_code >= 400 and not ignore_errors:
                     raise RuntimeError(
@@ -364,6 +372,7 @@ class GatewayMCPClient(MCPClient):
             resp = await http.get(
                 f"{self._gateway_url}/mcps/{self.name}/tools",
                 headers=_bearer_headers(self._gateway_token),
+                params={"namespace": self._gateway_namespace},
             )
             resp.raise_for_status()
             data = resp.json()
@@ -439,6 +448,7 @@ class GatewayMCPClient(MCPClient):
             tool=tool,
             gateway_url=self._gateway_url,
             token=self._gateway_token,
+            namespace=self._gateway_namespace,
             http=self._http,
             timeout=self._http_timeout,
         )
@@ -520,7 +530,11 @@ class GatewayClient:
             return False
         return resp.status_code == 200
 
-    async def list_mcps(self) -> list[GatewayMCPClient]:
+    async def list_mcps(
+        self,
+        *,
+        namespace: str = "",
+    ) -> list[GatewayMCPClient]:
         """Fetch every MCP currently registered on the gateway.
 
         The returned clients are marked as already connected (via
@@ -542,15 +556,24 @@ class GatewayClient:
         resp = await self._client().get(
             f"{self.base_url}/mcps",
             headers=self._headers(),
+            params={"namespace": namespace},
         )
         resp.raise_for_status()
-        return [self.make_client(spec, connected=True) for spec in resp.json()]
+        return [
+            self.make_client(
+                spec,
+                connected=True,
+                namespace=namespace,
+            )
+            for spec in resp.json()
+        ]
 
     def make_client(
         self,
         spec: dict[str, Any],
         *,
         connected: bool = False,
+        namespace: str = "",
     ) -> GatewayMCPClient:
         """Build a :class:`GatewayMCPClient` wired to this gateway.
 
@@ -583,6 +606,7 @@ class GatewayClient:
         client.attach(
             gateway_url=self.base_url,
             token=self.token,
+            namespace=namespace,
             http=self._client(),
             timeout=self.timeout,
             connected=connected,

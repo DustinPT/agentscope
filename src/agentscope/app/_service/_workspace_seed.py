@@ -124,7 +124,7 @@ async def sync_workspace_mcp_assets(
 
     runtime_mcps: list[MCPClient] = []
     for asset in expected_mcp_assets:
-        runtime_dir = f"{workspace.workdir}/mcps/{asset.name}"
+        runtime_dir = workspace.mcp_asset_runtime_dir(asset.name)
         runtime_mcps.append(
             _resolve_asset_client(
                 asset,

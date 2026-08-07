@@ -38,7 +38,7 @@ from typing import Self
 
 from agentscope._logging import logger
 from agentscope.mcp import MCPClient
-from agentscope.workspace import E2BWorkspace
+from agentscope.workspace import AgentWorkspaceView, E2BWorkspace
 from agentscope.workspace._e2b._bootstrap import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
@@ -160,7 +160,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         workspace_id: str | None,
         user_id: str,
         agent_id: str,
-    ) -> E2BWorkspace:
+    ) -> AgentWorkspaceView:
         """Construct an :class:`E2BWorkspace` and run its full ``initialize``.
 
         ``workspace_id=None`` lets :class:`WorkspaceBase` allocate a
@@ -195,7 +195,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         default_mcps: list[MCPClient] | None = None,
         mcp_assets: list[AgentMCPAsset] | None = None,
         skill_assets: list[AgentSkillAsset] | None = None,
-    ) -> E2BWorkspace:
+    ) -> AgentWorkspaceView:
         """Return an initialised workspace, reattaching on cache miss.
 
         On miss the manager calls ``E2BWorkspace(workspace_id=…)`` and
@@ -224,8 +224,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 ``agentscope.workspace.id`` metadata.
 
         Returns:
-            `E2BWorkspace`:
-                A live, initialised workspace.
+            `AgentWorkspaceView`:
+                A live, initialised agent-scoped workspace view.
         """
         del session_id  # accepted for interface parity; not used here
 
@@ -234,13 +234,14 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             if cached is not None:
                 ws, _ = cached
                 self._cache[workspace_id] = (ws, time.monotonic())
+                view = AgentWorkspaceView(ws, agent_id)
                 await sync_workspace_state(
-                    ws,
+                    view,
                     expected_mcps=default_mcps or [],
                     expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
                 )
-                return ws
+                return view
 
         # Cache miss: build under the lock to prevent two concurrent
         # get_workspace(workspace_id=X) calls from creating two
@@ -250,34 +251,36 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             if cached is not None:
                 ws, _ = cached
                 self._cache[workspace_id] = (ws, time.monotonic())
+                view = AgentWorkspaceView(ws, agent_id)
                 await sync_workspace_state(
-                    ws,
+                    view,
                     expected_mcps=default_mcps or [],
                     expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
                 )
-                return ws
+                return view
 
             ws = await self._build_and_start(
                 workspace_id=workspace_id,
                 user_id=user_id,
                 agent_id=agent_id,
             )
+            view = AgentWorkspaceView(ws, agent_id)
             await sync_workspace_state(
-                ws,
+                view,
                 expected_mcps=default_mcps or [],
                 expected_mcp_assets=mcp_assets or [],
                 expected_skills=skill_assets or [],
             )
             self._cache[workspace_id] = (ws, time.monotonic())
-            return ws
+            return view
 
     async def create_workspace(
         self,
         user_id: str,
         agent_id: str,
         session_id: str,
-    ) -> E2BWorkspace:
+    ) -> AgentWorkspaceView:
         """Build a brand-new workspace and track it.
 
         A fresh ``workspace_id`` is allocated by
@@ -295,8 +298,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 here).
 
         Returns:
-            `E2BWorkspace`:
-                The newly built workspace, already initialised.
+            `AgentWorkspaceView`:
+                The newly built agent-scoped workspace view.
         """
         del session_id  # accepted for interface parity; not used here
 
@@ -307,7 +310,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         )
         async with self._lock:
             self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return ws
+        return AgentWorkspaceView(ws, agent_id)
 
     async def close(self, workspace_id: str) -> None:
         """Close (= pause the sandbox) and evict a single workspace.

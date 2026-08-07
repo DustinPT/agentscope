@@ -93,9 +93,8 @@ class LocalWorkspace(WorkspaceBase):
     Layout::
 
         {workdir}/
-        ├── .mcp          # persisted MCP client configs (JSON array)
+        ├── agents/       # per-agent MCP / skill / asset directories
         ├── data/         # offloaded multimodal files
-        ├── skills/       # skill subdirectories
         └── sessions/     # per-session context and tool-result files
     """  # noqa: E501
 
@@ -142,7 +141,7 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()
-        self._mcps: list[MCPClient] = []
+        self._agent_mcps: dict[str, list[MCPClient]] = {}
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
@@ -150,47 +149,86 @@ class LocalWorkspace(WorkspaceBase):
     async def initialize(self) -> None:
         """Initialise the workspace.
 
-        MCP state is restored from ``.mcp`` if it exists; otherwise
-        ``default_mcps`` are used and persisted so the next start picks
-        them up from disk. ``skill_paths`` are seeded on first use.
-
-        Idempotent: a no-op when the workspace is already alive.
+        Prepares only the shared filesystem root. Agent-scoped MCP and
+        skill resources are restored lazily when an
+        :class:`AgentWorkspaceView` binds to this runtime.
         """
         if self.is_alive:
             return
 
         os.makedirs(self.workdir, exist_ok=True)
+        for subdir in ("agents", "sessions", "data", "projects"):
+            os.makedirs(os.path.join(self.workdir, subdir), exist_ok=True)
 
-        # Restore or seed MCPs
-        mcp_file = os.path.join(self.workdir, ".mcp")
+        self.is_alive = True
+
+    async def get_instructions(self) -> str:
+        """Get the workspace instructions."""
+        return self.instructions
+
+    def _default_agent_id(self) -> str:
+        """Fallback agent namespace for direct workspace usage."""
+        return self.workspace_id
+
+    def _agent_resource_root(self, agent_id: str) -> str:
+        """Return the agent-scoped resource root."""
+        return os.path.join(self.workdir, "agents", agent_id)
+
+    def _agent_mcp_file(self, agent_id: str) -> str:
+        """Return the agent-scoped MCP persistence file."""
+        return os.path.join(self._agent_resource_root(agent_id), ".mcp")
+
+    def _agent_skills_dir(self, agent_id: str) -> str:
+        """Return the agent-scoped skills directory."""
+        return os.path.join(self._agent_resource_root(agent_id), "skills")
+
+    def _agent_mcps_dir(self, agent_id: str) -> str:
+        """Return the agent-scoped MCP asset directory."""
+        return os.path.join(self._agent_resource_root(agent_id), "mcps")
+
+    async def _ensure_agent_dirs(self, agent_id: str) -> None:
+        """Ensure the agent-scoped resource directories exist."""
+        resource_root = self._agent_resource_root(agent_id)
+        os.makedirs(resource_root, exist_ok=True)
+        os.makedirs(self._agent_skills_dir(agent_id), exist_ok=True)
+        os.makedirs(self._agent_mcps_dir(agent_id), exist_ok=True)
+
+    async def _load_agent_mcps(self, agent_id: str) -> list[MCPClient]:
+        """Load and cache one agent's MCP client list."""
+        cached = self._agent_mcps.get(agent_id)
+        if cached is not None:
+            return cached
+
+        await self._ensure_agent_dirs(agent_id)
+        mcp_file = self._agent_mcp_file(agent_id)
+        mcps: list[MCPClient] = []
         if await aiofiles.ospath.exists(mcp_file):
             try:
-                async with aiofiles.open(mcp_file, "r", encoding="utf-8") as f:
+                async with aiofiles.open(
+                    mcp_file,
+                    "r",
+                    encoding="utf-8",
+                ) as f:
                     raw_content = await f.read()
                 raw_list = json.loads(raw_content) if raw_content.strip() else []
-                for m in raw_list:
+                for item in raw_list:
                     try:
-                        self._mcps.append(MCPClient.model_validate(m))
+                        mcps.append(MCPClient.model_validate(item))
                     except Exception as e:
                         logger.warning(
                             "Skipping invalid MCP entry '%s': %s",
-                            m.get("name", "?"),
+                            item.get("name", "?"),
                             e,
                         )
             except Exception as e:
                 logger.warning(
-                    "Failed to load .mcp from %s: %s. Resetting to defaults.",
+                    "Failed to load .mcp from %s: %s. Resetting to empty.",
                     mcp_file,
                     str(e),
                 )
-                self._mcps = list(self.default_mcps)
-                await self._save_mcp_file()
-        else:
-            self._mcps = list(self.default_mcps)
-            await self._save_mcp_file()
 
         failed: list[MCPClient] = []
-        for mcp in self._mcps:
+        for mcp in mcps:
             if mcp.is_stateful and not mcp.is_connected:
                 try:
                     await mcp.connect()
@@ -202,109 +240,127 @@ class LocalWorkspace(WorkspaceBase):
                     )
                     failed.append(mcp)
         for mcp in failed:
-            self._mcps.remove(mcp)
+            mcps.remove(mcp)
 
-        # Seed skills
-        skills_dir = os.path.join(self.workdir, "skills")
-        os.makedirs(skills_dir, exist_ok=True)
+        self._agent_mcps[agent_id] = mcps
+        await self._save_agent_mcp_file(agent_id)
+        return mcps
 
-        skills_file = await self._load_skills_file(skills_dir)
-        existing: dict[str, _SkillEntry] = skills_file["skills"]
-
-        # Build fast-lookup sets from the current index
-        existing_hashes: set[str] = {e["hash"] for e in existing.values()}
-        existing_agent_names: set[str] = {
-            e["skill_name"] for e in existing.values()
-        }
-        existing_dir_names: set[str] = set(existing.keys())
-
-        updated = False
-        for skill_path in self.skill_paths:
-            result = await self._validate_and_hash_skill(skill_path)
-            if result is None:
-                continue
-
-            _, raw_name, skill_hash = result
-
-            # Skip if already present (by content hash)
-            if skill_hash in existing_hashes:
-                logger.info(
-                    "Skill '%s' (hash: %s...) already exists, skipping",
-                    raw_name,
-                    skill_hash[:8],
+    async def _save_agent_mcp_file(self, agent_id: str) -> None:
+        """Persist one agent's MCP client list to its own ``.mcp`` file."""
+        await self._ensure_agent_dirs(agent_id)
+        mcp_file = self._agent_mcp_file(agent_id)
+        try:
+            async with aiofiles.open(mcp_file, "w", encoding="utf-8") as f:
+                await f.write(
+                    json.dumps(
+                        [
+                            m.model_dump()
+                            for m in self._agent_mcps.get(agent_id, [])
+                        ],
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
                 )
-                continue
+        except Exception as e:
+            logger.warning("Failed to save .mcp to %s: %s", mcp_file, str(e))
 
-            # Resolve agent-facing name conflict
-            agent_name = raw_name
-            counter = 1
-            while agent_name in existing_agent_names:
-                agent_name = f"{raw_name} ({counter})"
-                counter += 1
+    async def _ensure_agent_seeded(self, agent_id: str) -> None:
+        """Seed default MCPs and skills once for a fresh agent namespace."""
+        await self._ensure_agent_dirs(agent_id)
 
-            # Resolve directory name conflict
-            base_dir = _sanitize_dir_name(raw_name)
-            dir_name = base_dir
-            counter = 1
-            while dir_name in existing_dir_names:
-                dir_name = f"{base_dir}_{counter}"
-                counter += 1
+        async with self._mcp_lock:
+            mcps = await self._load_agent_mcps(agent_id)
+            if not mcps and self.default_mcps:
+                seeded: list[MCPClient] = []
+                for mcp in self.default_mcps:
+                    model = MCPClient.model_validate(mcp.model_dump(mode="json"))
+                    if model.is_stateful and not model.is_connected:
+                        try:
+                            await model.connect()
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to connect seeded MCP '%s': %s",
+                                model.name,
+                                e,
+                            )
+                            continue
+                    seeded.append(model)
+                self._agent_mcps[agent_id] = seeded
+                await self._save_agent_mcp_file(agent_id)
 
-            dest_path = os.path.join(skills_dir, dir_name)
+        async with self._skill_lock:
+            skills_dir = self._agent_skills_dir(agent_id)
+            skills_file = await self._load_skills_file(skills_dir)
+            if skills_file["skills"] or not self.skill_paths:
+                return
 
-            # Defensive path-traversal check
-            if not os.path.realpath(dest_path).startswith(
-                os.path.realpath(skills_dir) + os.sep,
-            ):
-                logger.warning(
-                    "Skill '%s' resolves outside skills_dir, skipping",
-                    raw_name,
+            existing: dict[str, _SkillEntry] = skills_file["skills"]
+            existing_hashes: set[str] = {e["hash"] for e in existing.values()}
+            existing_agent_names: set[str] = {
+                e["skill_name"] for e in existing.values()
+            }
+            existing_dir_names: set[str] = set(existing.keys())
+
+            updated = False
+            for skill_path in self.skill_paths:
+                result = await self._validate_and_hash_skill(skill_path)
+                if result is None:
+                    continue
+
+                _, raw_name, skill_hash = result
+                if skill_hash in existing_hashes:
+                    continue
+
+                agent_name = raw_name
+                counter = 1
+                while agent_name in existing_agent_names:
+                    agent_name = f"{raw_name} ({counter})"
+                    counter += 1
+
+                base_dir = _sanitize_dir_name(raw_name)
+                dir_name = base_dir
+                counter = 1
+                while dir_name in existing_dir_names:
+                    dir_name = f"{base_dir}_{counter}"
+                    counter += 1
+
+                dest_path = os.path.join(skills_dir, dir_name)
+                if not os.path.realpath(dest_path).startswith(
+                    os.path.realpath(skills_dir) + os.sep,
+                ):
+                    continue
+                try:
+                    await asyncio.to_thread(
+                        shutil.copytree,
+                        skill_path,
+                        dest_path,
+                        dirs_exist_ok=False,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to seed skill '%s' from %s: %s",
+                        raw_name,
+                        skill_path,
+                        str(e),
+                    )
+                    continue
+
+                existing[dir_name] = {
+                    "hash": skill_hash,
+                    "skill_name": agent_name,
+                }
+                existing_hashes.add(skill_hash)
+                existing_agent_names.add(agent_name)
+                existing_dir_names.add(dir_name)
+                updated = True
+
+            if updated:
+                skills_file["skills"] = existing
+                skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
+                    skills_dir,
                 )
-                continue
-
-            try:
-                await asyncio.to_thread(
-                    shutil.copytree,
-                    skill_path,
-                    dest_path,
-                    dirs_exist_ok=False,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to copy skill '%s' from %s: %s",
-                    raw_name,
-                    skill_path,
-                    str(e),
-                )
-                continue
-
-            logger.info(
-                "Copied skill '%s' (agent name: '%s') from %s to %s",
-                raw_name,
-                agent_name,
-                skill_path,
-                dest_path,
-            )
-
-            entry: _SkillEntry = {"hash": skill_hash, "skill_name": agent_name}
-            existing[dir_name] = entry
-            existing_hashes.add(skill_hash)
-            existing_agent_names.add(agent_name)
-            existing_dir_names.add(dir_name)
-            updated = True
-
-        if updated:
-            skills_file["skills"] = existing
-            skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
-                skills_dir,
-            )
-            await self._save_skills_file(skills_dir, skills_file)
-
-        self.is_alive = True
-
-    async def get_instructions(self) -> str:
-        """Get the workspace instructions."""
-        return self.instructions
+                await self._save_skills_file(skills_dir, skills_file)
 
     async def _load_skills_file(self, skills_dir: str) -> _SkillsFile:
         """Load the .skills index file, returning an empty structure if absent.
@@ -600,51 +656,48 @@ class LocalWorkspace(WorkspaceBase):
         spin up an ad-hoc session per call and have nothing to close.
         """
         async with self._mcp_lock:
-            for mcp in self._mcps:
-                if mcp.is_stateful and mcp.is_connected:
-                    try:
-                        await mcp.close()
-                    except Exception as e:
-                        logger.warning(
-                            (
-                                "Failed to close MCP %r "
-                                "when closing local workspace: %s"
-                            ),
-                            mcp.name,
-                            e,
-                        )
+            for mcps in self._agent_mcps.values():
+                for mcp in mcps:
+                    if mcp.is_stateful and mcp.is_connected:
+                        try:
+                            await mcp.close()
+                        except Exception as e:
+                            logger.warning(
+                                (
+                                    "Failed to close MCP %r "
+                                    "when closing local workspace: %s"
+                                ),
+                                mcp.name,
+                                e,
+                            )
         self.is_alive = False
 
     async def reset(self) -> None:
         """Return the workspace to an empty state.
 
-        Closes and drops all MCPs (including the persisted ``.mcp``)
-        and deletes ``skills/``, ``sessions/``, and ``data/``.
-        ``default_mcps`` and ``skill_paths`` are not re-seeded.
+        Closes and drops all agent-scoped MCPs and deletes
+        ``agents/``, ``sessions/``, ``data/``, and ``projects/``.
         """
         async with self._mcp_lock:
-            for mcp in self._mcps:
-                if mcp.is_stateful and mcp.is_connected:
-                    try:
-                        await mcp.close()
-                    except Exception as e:
-                        logger.warning(
-                            "MCP %r close failed during reset: %s",
-                            mcp.name,
-                            e,
-                        )
-            self._mcps = []
-
-            mcp_file = os.path.join(self.workdir, ".mcp")
-            if await aiofiles.ospath.exists(mcp_file):
-                await asyncio.to_thread(os.remove, mcp_file)
+            for mcps in self._agent_mcps.values():
+                for mcp in mcps:
+                    if mcp.is_stateful and mcp.is_connected:
+                        try:
+                            await mcp.close()
+                        except Exception as e:
+                            logger.warning(
+                                "MCP %r close failed during reset: %s",
+                                mcp.name,
+                                e,
+                            )
+            self._agent_mcps = {}
 
         async with self._skill_lock:
-            path = os.path.join(self.workdir, "skills")
+            path = os.path.join(self.workdir, "agents")
             if await aiofiles.ospath.isdir(path):
                 await asyncio.to_thread(shutil.rmtree, path)
 
-        for sub in ("sessions", "data"):
+        for sub in ("sessions", "data", "projects"):
             path = os.path.join(self.workdir, sub)
             if await aiofiles.ospath.isdir(path):
                 await asyncio.to_thread(shutil.rmtree, path)
@@ -669,6 +722,10 @@ class LocalWorkspace(WorkspaceBase):
         ]
 
     async def list_skills(self) -> list[Skill]:
+        """List skills for the direct-use default agent namespace."""
+        return await self._list_agent_skills(self._default_agent_id())
+
+    async def _list_agent_skills(self, agent_id: str) -> list[Skill]:
         """List all skills available in the workspace.
 
         The method uses the .skills index for agent-facing names, compares the
@@ -679,7 +736,8 @@ class LocalWorkspace(WorkspaceBase):
             `list[Skill]`:
                 A list of Skill objects found in the workspace.
         """
-        skills_dir = os.path.join(self.workdir, "skills")
+        await self._ensure_agent_seeded(agent_id)
+        skills_dir = self._agent_skills_dir(agent_id)
         async with self._skill_lock:
             if not await aiofiles.ospath.isdir(skills_dir):
                 return []
@@ -874,54 +932,78 @@ class LocalWorkspace(WorkspaceBase):
             return None
 
     async def list_mcps(self) -> list[MCPClient]:
-        """Return all MCP clients attached to this workspace."""
-        return self._mcps
+        """Return MCPs for the direct-use default agent namespace."""
+        return await self._list_agent_mcps(self._default_agent_id())
+
+    async def _list_agent_mcps(
+        self,
+        agent_id: str,
+    ) -> list[MCPClient]:
+        """Return MCPs scoped to one agent namespace."""
+        await self._ensure_agent_seeded(agent_id)
+        return await self._load_agent_mcps(agent_id)
 
     async def _save_mcp_file(self) -> None:
-        """Persist the current MCP client list to ``.mcp`` in workdir."""
-        mcp_file = os.path.join(self.workdir, ".mcp")
-        try:
-            # callers have lock.
-            async with aiofiles.open(mcp_file, "w", encoding="utf-8") as f:
-                await f.write(
-                    json.dumps(
-                        [m.model_dump() for m in self._mcps],
-                        indent=2,
-                        ensure_ascii=False,
-                    ),
-                )
-        except Exception as e:
-            logger.warning("Failed to save .mcp to %s: %s", mcp_file, str(e))
+        """Persist MCPs for the direct-use default agent namespace."""
+        await self._save_agent_mcp_file(self._default_agent_id())
 
     async def add_mcp(self, mcp_client: MCPClient) -> None:
+        """Add an MCP to the direct-use default agent namespace."""
+        await self._add_agent_mcp(self._default_agent_id(), mcp_client)
+
+    async def _add_agent_mcp(
+        self,
+        agent_id: str,
+        mcp_client: MCPClient,
+    ) -> None:
         """Add an MCP client, connect it if stateful, and persist.
 
         Args:
             mcp_client: The MCP client to add.
         """
         async with self._mcp_lock:
+            mcps = await self._load_agent_mcps(agent_id)
             if mcp_client.is_stateful and not mcp_client.is_connected:
                 await mcp_client.connect()
-            self._mcps.append(mcp_client)
-            await self._save_mcp_file()
+            mcps.append(mcp_client)
+            self._agent_mcps[agent_id] = mcps
+            await self._save_agent_mcp_file(agent_id)
 
     async def remove_mcp(self, name: str) -> None:
+        """Remove an MCP from the direct-use default agent namespace."""
+        await self._remove_agent_mcp(self._default_agent_id(), name)
+
+    async def _remove_agent_mcp(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Remove an MCP client by name, disconnecting it if stateful.
 
         Args:
             name: The ``name`` field of the client to remove.
         """
         async with self._mcp_lock:
-            for i, mcp in enumerate(self._mcps):
+            mcps = await self._load_agent_mcps(agent_id)
+            for i, mcp in enumerate(mcps):
                 if mcp.name == name:
                     if mcp.is_stateful and mcp.is_connected:
                         await mcp.close()
-                    self._mcps.pop(i)
-                    await self._save_mcp_file()
+                    mcps.pop(i)
+                    self._agent_mcps[agent_id] = mcps
+                    await self._save_agent_mcp_file(agent_id)
                     return
         logger.warning("MCP client %r not found in workspace", name)
 
     async def add_skill(self, skill_path: str) -> None:
+        """Add a skill to the direct-use default agent namespace."""
+        await self._add_agent_skill(self._default_agent_id(), skill_path)
+
+    async def _add_agent_skill(
+        self,
+        agent_id: str,
+        skill_path: str,
+    ) -> None:
         """Add a skill to the workspace by copying from the given path.
 
         The skill directory must contain a valid ``SKILL.md`` file with
@@ -938,7 +1020,7 @@ class LocalWorkspace(WorkspaceBase):
             ValueError: If the skill at ``skill_path`` is invalid (missing or
                 malformed ``SKILL.md``).
         """
-        skills_dir = os.path.join(self.workdir, "skills")
+        skills_dir = self._agent_skills_dir(agent_id)
         async with self._skill_lock:
             os.makedirs(skills_dir, exist_ok=True)
 
@@ -1015,6 +1097,14 @@ class LocalWorkspace(WorkspaceBase):
             await self._save_skills_file(skills_dir, skills_file)
 
     async def remove_skill(self, name: str) -> None:
+        """Remove a skill from the direct-use default agent namespace."""
+        await self._remove_agent_skill(self._default_agent_id(), name)
+
+    async def _remove_agent_skill(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Remove a skill from the workspace by its agent-facing name.
 
         The skill directory is deleted from disk and the ``.skills`` index is
@@ -1027,7 +1117,7 @@ class LocalWorkspace(WorkspaceBase):
                 ``.skills`` index, i.e. the ``name`` field from ``SKILL.md``
                 possibly with a numeric suffix for de-duplication).
         """
-        skills_dir = os.path.join(self.workdir, "skills")
+        skills_dir = self._agent_skills_dir(agent_id)
         async with self._skill_lock:
             if not await aiofiles.ospath.isdir(skills_dir):
                 logger.warning(
@@ -1079,8 +1169,23 @@ class LocalWorkspace(WorkspaceBase):
         source_dir: str,
         content_hash: str,
     ) -> tuple[str, bool]:
+        """Sync an MCP asset for the direct-use default agent namespace."""
+        return await self._sync_agent_mcp_asset(
+            self._default_agent_id(),
+            name,
+            source_dir,
+            content_hash,
+        )
+
+    async def _sync_agent_mcp_asset(
+        self,
+        agent_id: str,
+        name: str,
+        source_dir: str,
+        content_hash: str,
+    ) -> tuple[str, bool]:
         """Copy one MCP asset directory into ``mcps/`` under the workspace."""
-        target_root = os.path.join(self.workdir, "mcps")
+        target_root = self._agent_mcps_dir(agent_id)
         target_dir = os.path.join(target_root, name)
         marker_file = os.path.join(target_dir, ".agentscope_asset_hash")
         async with self._mcp_lock:
@@ -1113,15 +1218,32 @@ class LocalWorkspace(WorkspaceBase):
         return target_dir, True
 
     async def remove_mcp_asset(self, name: str) -> None:
+        """Remove an MCP asset from the direct-use default agent namespace."""
+        await self._remove_agent_mcp_asset(self._default_agent_id(), name)
+
+    async def _remove_agent_mcp_asset(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Delete one MCP asset directory from ``mcps/``."""
-        target_dir = os.path.join(self.workdir, "mcps", name)
+        target_dir = os.path.join(self._agent_mcps_dir(agent_id), name)
         async with self._mcp_lock:
             if await aiofiles.ospath.isdir(target_dir):
                 await asyncio.to_thread(shutil.rmtree, target_dir)
 
     async def list_mcp_asset_names(self) -> list[str]:
+        """List MCP assets for the direct-use default agent namespace."""
+        return await self._list_agent_mcp_asset_names(
+            self._default_agent_id(),
+        )
+
+    async def _list_agent_mcp_asset_names(
+        self,
+        agent_id: str,
+    ) -> list[str]:
         """List MCP asset directory names from ``mcps/``."""
-        target_root = os.path.join(self.workdir, "mcps")
+        target_root = self._agent_mcps_dir(agent_id)
         async with self._mcp_lock:
             if not await aiofiles.ospath.isdir(target_root):
                 return []

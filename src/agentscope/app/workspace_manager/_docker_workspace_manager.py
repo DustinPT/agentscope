@@ -28,10 +28,12 @@ constructor):
 import asyncio
 import os
 import time
+import uuid
 from typing import Self
 
 from agentscope._logging import logger
 from agentscope.mcp import MCPClient
+from agentscope.workspace import AgentWorkspaceView
 from agentscope.workspace._docker import DockerWorkspace
 from agentscope.workspace._docker._make_dockerfile import (
     DEFAULT_BASE_IMAGE,
@@ -124,14 +126,14 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
 
     # ── isolation helpers ─────────────────────────────────────────
 
-    def _workdir_for(self, user_id: str, agent_id: str) -> str:
-        """Resolve the host workdir for ``(user_id, agent_id)``.
+    def _workdir_for(self, user_id: str, workspace_id: str) -> str:
+        """Resolve the host workdir for ``(user_id, workspace_id)``.
 
-        Two-level layout — ``<basedir>/<user_id>/<agent_id>`` — so
+        Two-level layout — ``<basedir>/<user_id>/<workspace_id>`` — so
         different users never share a bind-mount even when their
-        ``agent_id`` collides.
+        workspace ids collide.
         """
-        return os.path.join(self._basedir, user_id, agent_id)
+        return os.path.join(self._basedir, user_id, workspace_id)
 
     # ── workspace construction ────────────────────────────────────
 
@@ -140,15 +142,14 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         *,
         workspace_id: str,
         user_id: str,
-        agent_id: str,
-    ) -> DockerWorkspace:
-        """Create a :class:`DockerWorkspace` for ``(user_id, agent_id)``
+    ) -> AgentWorkspaceView:
+        """Create a :class:`DockerWorkspace` for ``(user_id, workspace_id)``
         and run its full ``initialize``.
 
         ``workspace_id`` is forwarded so the container name is
         deterministic and the same id round-trips through the cache.
         """
-        workdir = self._workdir_for(user_id, agent_id)
+        workdir = self._workdir_for(user_id, workspace_id)
         os.makedirs(workdir, exist_ok=True)
         ws = DockerWorkspace(
             workspace_id=workspace_id,
@@ -175,7 +176,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         default_mcps: list[MCPClient] | None = None,
         mcp_assets: list[AgentMCPAsset] | None = None,
         skill_assets: list[AgentSkillAsset] | None = None,
-    ) -> DockerWorkspace:
+    ) -> AgentWorkspaceView:
         """Return an initialised workspace, building one on cache miss.
 
         On miss the manager calls ``DockerWorkspace(workspace_id=…)``
@@ -200,8 +201,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 key and the container name suffix.
 
         Returns:
-            `DockerWorkspace`:
-                A live, initialised workspace.
+            `AgentWorkspaceView`:
+                A live, initialised agent-scoped workspace view.
         """
         del session_id  # accepted for interface parity; not used here
 
@@ -210,13 +211,14 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             if cached is not None:
                 ws, _ = cached
                 self._cache[workspace_id] = (ws, time.monotonic())
+                view = AgentWorkspaceView(ws, agent_id)
                 await sync_workspace_state(
-                    ws,
+                    view,
                     expected_mcps=default_mcps or [],
                     expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
                 )
-                return ws
+                return view
 
         # Cache miss: build under the lock to prevent two concurrent
         # get_workspace(workspace_id=X) calls from creating two
@@ -226,34 +228,35 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             if cached is not None:
                 ws, _ = cached
                 self._cache[workspace_id] = (ws, time.monotonic())
+                view = AgentWorkspaceView(ws, agent_id)
                 await sync_workspace_state(
-                    ws,
+                    view,
                     expected_mcps=default_mcps or [],
                     expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
                 )
-                return ws
+                return view
 
             ws = await self._build_and_start(
                 workspace_id=workspace_id,
                 user_id=user_id,
-                agent_id=agent_id,
             )
+            view = AgentWorkspaceView(ws, agent_id)
             await sync_workspace_state(
-                ws,
+                view,
                 expected_mcps=default_mcps or [],
                 expected_mcp_assets=mcp_assets or [],
                 expected_skills=skill_assets or [],
             )
             self._cache[workspace_id] = (ws, time.monotonic())
-            return ws
+            return view
 
     async def create_workspace(
         self,
         user_id: str,
         agent_id: str,
         session_id: str,
-    ) -> DockerWorkspace:
+    ) -> AgentWorkspaceView:
         """Build a brand-new workspace and track it.
 
         A fresh ``workspace_id`` is allocated by
@@ -271,14 +274,16 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 here).
 
         Returns:
-            `DockerWorkspace`:
-                The newly built workspace, already initialised.
+            `AgentWorkspaceView`:
+                The newly built agent-scoped workspace view.
         """
         del session_id  # accepted for interface parity; not used here
 
-        workdir = self._workdir_for(user_id, agent_id)
+        workspace_id = uuid.uuid4().hex
+        workdir = self._workdir_for(user_id, workspace_id)
         os.makedirs(workdir, exist_ok=True)
         ws = DockerWorkspace(
+            workspace_id=workspace_id,
             workdir=workdir,
             base_image=self._base_image,
             node_version=self._node_version,
@@ -291,7 +296,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         await ws.initialize()
         async with self._lock:
             self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return ws
+        return AgentWorkspaceView(ws, agent_id)
 
     async def close(self, workspace_id: str) -> None:
         """Close and evict a single workspace from the cache.

@@ -24,8 +24,8 @@ workspace at {workdir} with the following structure:
 
 ```
 {workdir}
+├── agents/      # per-agent MCP / skill / asset directories
 ├── data/        # offloaded multimodal files (images, etc.) — system-managed
-├── skills/      # reusable skills, each in its own subdirectory
 └── sessions/    # offloaded session context and tool results — system-managed
 ```
 </workspace>"""

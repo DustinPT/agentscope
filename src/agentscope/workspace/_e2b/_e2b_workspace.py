@@ -66,7 +66,6 @@ from .._base import (
 )
 from .._gateway_client import (
     GatewayClient,
-    GatewayMCPClient,
 )
 from ._bootstrap import (
     DEFAULT_GATEWAY_PORT,
@@ -79,11 +78,9 @@ from ._bootstrap import (
     GATEWAY_SCRIPT,
     GATEWAY_VENV_PY,
     METADATA_WORKSPACE_ID_KEY,
+    SANDBOX_AGENTS_DIR,
     SANDBOX_DATA_DIR,
-    SANDBOX_MCPS_DIR,
-    SANDBOX_MCP_FILE,
     SANDBOX_SESSIONS_DIR,
-    SANDBOX_SKILLS_DIR,
     SANDBOX_WORKDIR,
     bootstrap_commands,
     build_source_tarball,
@@ -225,8 +222,7 @@ class E2BWorkspace(WorkspaceBase):
         self._sandbox: Any = None  # e2b.AsyncSandbox
         self._gateway: GatewayClient | None = None
         self._gateway_token: str = ""
-        self._mcps: list[MCPClient] = []
-        self._gateway_clients: dict[str, GatewayMCPClient] = {}
+        self._loaded_agent_namespaces: set[str] = set()
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
 
@@ -253,14 +249,12 @@ class E2BWorkspace(WorkspaceBase):
         3. If bootstrap output is missing on a reattached sandbox
            (e.g. a previous bootstrap was interrupted), run bootstrap
            again — detected by ``files.exists(GATEWAY_SCRIPT)``.
-        4. Restore MCPs from ``$workdir/.mcp`` if present, else seed
-           from ``default_mcps``.
-        5. Mint a fresh gateway bearer token (not persisted).
-        6. Kill any leftover gateway process, drop a fresh
+        4. Mint a fresh gateway bearer token (not persisted).
+        5. Kill any leftover gateway process, drop a fresh
            ``gateway.config.json`` into the sandbox, launch the
            gateway, wait for ``/health``.
-        7. Pull the gateway-side MCP view back as
-           :class:`GatewayMCPClient` instances.
+        6. Agent-scoped MCPs / skills are restored lazily per
+           namespace when views bind to this runtime.
 
         Idempotent — a no-op when already alive.
         """
@@ -285,8 +279,6 @@ class E2BWorkspace(WorkspaceBase):
             )
             await self._run_bootstrap()
 
-        self._mcps = await self._restore_or_seed_mcps()
-
         self._gateway_token = uuid.uuid4().hex
 
         # Stop any stale gateway from a previous resume cycle. Each
@@ -309,55 +301,41 @@ class E2BWorkspace(WorkspaceBase):
         )
         await self._wait_for_gateway()
 
-        self._gateway_clients = {
-            c.name: c for c in await self._gateway.list_mcps()
-        }
-
-        # Persist the MCP set unconditionally so a freshly seeded
-        # ``self._mcps`` (default_mcps path) is rewritten as the
-        # canonical ``.mcp`` for the next restart, and a restored set
-        # is round-tripped harmlessly. ``_seed_skills`` itself is
-        # idempotent — it short-circuits when the sandbox-side
-        # ``skills/`` already has entries.
-        await self._save_mcp_file()
-        await self._seed_skills()
+        self._loaded_agent_namespaces = set()
 
         self.is_alive = True
 
     async def reset(self) -> None:
         """Return the workspace to an empty state.
 
-        Mirrors :meth:`DockerWorkspace.reset`: deregisters every MCP
-        from the gateway, clears the local handles, and wipes
-        ``.mcp``, ``skills/``, ``sessions/``, and ``data/`` inside the
-        sandbox. The gateway process keeps running with no upstream
-        MCPs. ``default_mcps`` / ``skill_paths`` are not re-seeded.
+        Deregisters every agent-scoped MCP from the gateway and wipes
+        ``agents/``, ``sessions/``, ``data/``, and ``projects/``.
         """
         async with self._mcp_lock, self._skill_lock:
-            for gw_client in list(self._gateway_clients.values()):
-                try:
-                    await gw_client.close()
-                except Exception as e:
-                    logger.warning(
-                        "MCP %r close failed during reset: %s",
-                        gw_client.name,
-                        e,
-                    )
-            self._gateway_clients.clear()
-            self._mcps = []
+            if self._gateway is not None:
+                for namespace in list(self._loaded_agent_namespaces):
+                    for gw_client in await self._gateway.list_mcps(
+                        namespace=namespace,
+                    ):
+                        try:
+                            await gw_client.close()
+                        except Exception as e:
+                            logger.warning(
+                                "MCP %r close failed during reset: %s",
+                                gw_client.name,
+                                e,
+                            )
+            self._loaded_agent_namespaces = set()
 
             paths = [
                 SANDBOX_SESSIONS_DIR,
                 SANDBOX_DATA_DIR,
-                SANDBOX_SKILLS_DIR,
+                SANDBOX_AGENTS_DIR,
+                f"{SANDBOX_WORKDIR}/projects",
             ]
             await self._exec(
                 "rm -rf " + " ".join(shlex.quote(p) for p in paths),
             )
-
-            # Rewrite ``.mcp`` to an empty list so a future restart does
-            # not fall back to ``default_mcps``.
-            await self._save_mcp_file()
 
     async def close(self) -> None:
         """Pause the sandbox and release host-side resources.
@@ -376,7 +354,7 @@ class E2BWorkspace(WorkspaceBase):
             except Exception:
                 pass
             self._gateway = None
-        self._gateway_clients.clear()
+        self._loaded_agent_namespaces = set()
 
         if self._sandbox is not None:
             try:
@@ -399,6 +377,117 @@ class E2BWorkspace(WorkspaceBase):
         """
         return self.instructions.format(workdir=SANDBOX_WORKDIR)
 
+    def _default_agent_id(self) -> str:
+        """Fallback namespace for direct workspace usage."""
+        return self.workspace_id
+
+    def _agent_resource_root(self, agent_id: str) -> str:
+        """Return the sandbox-side agent resource root."""
+        return posixpath.join(SANDBOX_AGENTS_DIR, agent_id)
+
+    def _agent_skills_dir(self, agent_id: str) -> str:
+        """Return the sandbox-side agent skills directory."""
+        return posixpath.join(self._agent_resource_root(agent_id), "skills")
+
+    def _agent_mcps_dir(self, agent_id: str) -> str:
+        """Return the sandbox-side agent MCP asset directory."""
+        return posixpath.join(self._agent_resource_root(agent_id), "mcps")
+
+    def _agent_mcp_file(self, agent_id: str) -> str:
+        """Return the sandbox-side ``.mcp`` file for one agent."""
+        return posixpath.join(self._agent_resource_root(agent_id), ".mcp")
+
+    async def _ensure_agent_dirs(self, agent_id: str) -> None:
+        """Ensure the sandbox contains the agent-scoped directories."""
+        await self._exec(
+            "mkdir -p "
+            f"{shlex.quote(self._agent_skills_dir(agent_id))} "
+            f"{shlex.quote(self._agent_mcps_dir(agent_id))}",
+        )
+
+    async def _ensure_agent_namespace_loaded(self, agent_id: str) -> None:
+        """Restore one agent's persisted MCPs into the gateway once."""
+        if agent_id in self._loaded_agent_namespaces:
+            return
+        await self._ensure_agent_dirs(agent_id)
+        specs: list[dict[str, Any]] = []
+        try:
+            raw = await self._read(self._agent_mcp_file(agent_id))
+            specs = json.loads(raw.decode("utf-8"))
+        except FileNotFoundError:
+            specs = []
+        except Exception as e:
+            logger.warning(
+                "E2BWorkspace: failed to read %s: %s",
+                self._agent_mcp_file(agent_id),
+                e,
+            )
+        assert self._gateway is not None
+        for spec in specs:
+            client = self._gateway.make_client(spec, namespace=agent_id)
+            try:
+                await client.connect()
+            except Exception as e:
+                logger.warning(
+                    "E2BWorkspace: failed to restore agent MCP %r: %s",
+                    spec.get("name", "?"),
+                    e,
+                )
+        if not specs:
+            for mcp in self.default_mcps:
+                client = self._gateway.make_client(
+                    mcp.model_dump(mode="json"),
+                    namespace=agent_id,
+                )
+                try:
+                    await client.connect()
+                except Exception as e:
+                    logger.warning(
+                        "E2BWorkspace: failed to seed agent MCP %r: %s",
+                        mcp.name,
+                        e,
+                    )
+            if self.skill_paths:
+                listing = await self._exec(
+                    f"ls -A {shlex.quote(self._agent_skills_dir(agent_id))} 2>/dev/null || true",
+                )
+                if not (listing.ok() and listing.stdout.strip()):
+                    for path in self.skill_paths:
+                        try:
+                            await self._add_agent_skill(agent_id, path)
+                        except Exception as e:
+                            logger.warning(
+                                "E2BWorkspace: skip seed skill %r: %s",
+                                path,
+                                e,
+                            )
+            await self._save_agent_mcp_file(agent_id)
+        self._loaded_agent_namespaces.add(agent_id)
+
+    async def _save_agent_mcp_file(self, agent_id: str) -> None:
+        """Persist one agent's registered MCP specs to its own ``.mcp``."""
+        assert self._gateway is not None
+        payload = json.dumps(
+            [
+                m.model_dump(mode="json")
+                for m in await self._gateway.list_mcps(namespace=agent_id)
+            ],
+            indent=2,
+            ensure_ascii=False,
+        )
+        try:
+            await self._ensure_agent_dirs(agent_id)
+            await self._sandbox.files.write(
+                self._agent_mcp_file(agent_id),
+                payload.encode("utf-8"),
+            )
+        except Exception as e:
+            logger.warning(
+                "E2BWorkspace: failed to save %s: %s",
+                self._agent_mcp_file(agent_id),
+                e,
+            )
+
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
@@ -406,15 +495,23 @@ class E2BWorkspace(WorkspaceBase):
         return await super().list_tools()
 
     async def list_mcps(self) -> list[MCPClient]:
-        """Return one :class:`GatewayMCPClient` per registered MCP.
+        """Return MCPs for the direct-use default agent namespace."""
+        return await self._list_agent_mcps(self._default_agent_id())
 
-        Each entry's ``name`` matches the upstream MCP server name and
-        all of its protocol calls are routed over HTTPS to the
-        in-sandbox gateway.
-        """
-        return list(self._gateway_clients.values())
+    async def _list_agent_mcps(
+        self,
+        agent_id: str,
+    ) -> list[MCPClient]:
+        """Return one gateway-backed MCP client per agent namespace."""
+        await self._ensure_agent_namespace_loaded(agent_id)
+        assert self._gateway is not None
+        return await self._gateway.list_mcps(namespace=agent_id)
 
     async def list_skills(self) -> list[Skill]:
+        """List skills for the direct-use default agent namespace."""
+        return await self._list_agent_skills(self._default_agent_id())
+
+    async def _list_agent_skills(self, agent_id: str) -> list[Skill]:
         """Enumerate skills by scanning ``skills/`` inside the sandbox.
 
         Reads each ``SKILL.md`` via the SDK's ``files.read`` and parses
@@ -423,8 +520,9 @@ class E2BWorkspace(WorkspaceBase):
         """
         import frontmatter as fm
 
+        await self._ensure_agent_namespace_loaded(agent_id)
         result = await self._exec(
-            f"find {SANDBOX_SKILLS_DIR} -name SKILL.md "
+            f"find {shlex.quote(self._agent_skills_dir(agent_id))} -name SKILL.md "
             f"2>/dev/null || true",
         )
         if not result.ok():
@@ -460,6 +558,14 @@ class E2BWorkspace(WorkspaceBase):
     # ── dynamic MCP management ──────────────────────────────────
 
     async def add_mcp(self, mcp_client: MCPClient) -> None:
+        """Add an MCP to the direct-use default agent namespace."""
+        await self._add_agent_mcp(self._default_agent_id(), mcp_client)
+
+    async def _add_agent_mcp(
+        self,
+        agent_id: str,
+        mcp_client: MCPClient,
+    ) -> None:
         """Register a new MCP server on the in-sandbox gateway.
 
         Mirrors :meth:`DockerWorkspace.add_mcp` but persists ``.mcp``
@@ -467,25 +573,35 @@ class E2BWorkspace(WorkspaceBase):
         persistent for E2B.
         """
         async with self._mcp_lock:
-            if mcp_client.name in self._gateway_clients:
+            await self._ensure_agent_namespace_loaded(agent_id)
+            current = await self._list_agent_mcps(agent_id)
+            if any(client.name == mcp_client.name for client in current):
                 raise ValueError(
                     f"MCP {mcp_client.name!r} already exists in workspace.",
                 )
             spec = mcp_client.model_dump(mode="json")
             assert self._gateway is not None
-            gw_client = self._gateway.make_client(spec)
+            gw_client = self._gateway.make_client(spec, namespace=agent_id)
             await gw_client.connect()
-            self._mcps.append(mcp_client)
-            self._gateway_clients[gw_client.name] = gw_client
-            await self._save_mcp_file()
+            await self._save_agent_mcp_file(agent_id)
 
     async def remove_mcp(self, name: str) -> None:
+        """Remove an MCP from the direct-use default agent namespace."""
+        await self._remove_agent_mcp(self._default_agent_id(), name)
+
+    async def _remove_agent_mcp(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Unregister an MCP server by name.
 
         Mirrors :meth:`DockerWorkspace.remove_mcp`.
         """
         async with self._mcp_lock:
-            gw_client = self._gateway_clients.pop(name, None)
+            await self._ensure_agent_namespace_loaded(agent_id)
+            current = await self._list_agent_mcps(agent_id)
+            gw_client = next((client for client in current if client.name == name), None)
             if gw_client is None:
                 logger.warning("MCP %r not found in workspace", name)
                 return
@@ -493,12 +609,19 @@ class E2BWorkspace(WorkspaceBase):
                 await gw_client.close()
             except Exception as e:
                 logger.warning("MCP %r close failed: %s", name, e)
-            self._mcps = [m for m in self._mcps if m.name != name]
-            await self._save_mcp_file()
+            await self._save_agent_mcp_file(agent_id)
 
     # ── dynamic skill management ────────────────────────────────
 
     async def add_skill(self, skill_path: str) -> None:
+        """Add a skill to the direct-use default agent namespace."""
+        await self._add_agent_skill(self._default_agent_id(), skill_path)
+
+    async def _add_agent_skill(
+        self,
+        agent_id: str,
+        skill_path: str,
+    ) -> None:
         """Upload a local skill directory into ``skills/`` inside the sandbox.
 
         The directory must contain a ``SKILL.md`` with ``name`` and
@@ -513,23 +636,24 @@ class E2BWorkspace(WorkspaceBase):
             )
 
         async with self._skill_lock:
-            await self._exec(f"mkdir -p {SANDBOX_SKILLS_DIR}")
+            target_dir = self._agent_skills_dir(agent_id)
+            await self._exec(f"mkdir -p {shlex.quote(target_dir)}")
             dir_name = os.path.basename(os.path.abspath(skill_path))
 
             check = await self._exec(
-                f"test -e {shlex.quote(SANDBOX_SKILLS_DIR + '/' + dir_name)}",
+                f"test -e {shlex.quote(target_dir + '/' + dir_name)}",
             )
             if check.ok():
                 raise ValueError(
                     f"Skill directory {dir_name!r} already exists in "
-                    f"{SANDBOX_SKILLS_DIR}",
+                    f"{target_dir}",
                 )
 
             for root, _dirs, files in os.walk(skill_path):
                 for fname in files:
                     local = os.path.join(root, fname)
                     rel = os.path.relpath(local, skill_path)
-                    remote = f"{SANDBOX_SKILLS_DIR}/{dir_name}/{rel}"
+                    remote = f"{target_dir}/{dir_name}/{rel}"
                     with open(local, "rb") as f:
                         data = f.read()
                     await self._sandbox.files.write(remote, data)
@@ -537,13 +661,21 @@ class E2BWorkspace(WorkspaceBase):
             logger.info(
                 "E2BWorkspace: added skill %r at %s/%s",
                 dir_name,
-                SANDBOX_SKILLS_DIR,
+                target_dir,
                 dir_name,
             )
 
     async def remove_skill(self, name: str) -> None:
+        """Remove a skill from the direct-use default agent namespace."""
+        await self._remove_agent_skill(self._default_agent_id(), name)
+
+    async def _remove_agent_skill(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Delete a skill directory by its agent-facing name."""
-        skills = await self.list_skills()
+        skills = await self._list_agent_skills(agent_id)
         target_dir: str | None = None
         for s in skills:
             if s.name == name:
@@ -567,11 +699,27 @@ class E2BWorkspace(WorkspaceBase):
         source_dir: str,
         content_hash: str,
     ) -> tuple[str, bool]:
+        """Sync an MCP asset for the direct-use default agent namespace."""
+        return await self._sync_agent_mcp_asset(
+            self._default_agent_id(),
+            name,
+            source_dir,
+            content_hash,
+        )
+
+    async def _sync_agent_mcp_asset(
+        self,
+        agent_id: str,
+        name: str,
+        source_dir: str,
+        content_hash: str,
+    ) -> tuple[str, bool]:
         """Upload one MCP asset directory into ``mcps/`` inside the sandbox."""
-        target_dir = f"{SANDBOX_MCPS_DIR}/{name}"
+        target_root = self._agent_mcps_dir(agent_id)
+        target_dir = f"{target_root}/{name}"
         marker_path = f"{target_dir}/.agentscope_asset_hash"
         async with self._mcp_lock:
-            await self._exec(f"mkdir -p {SANDBOX_MCPS_DIR}")
+            await self._exec(f"mkdir -p {shlex.quote(target_root)}")
             try:
                 existing_hash = (
                     await self._sandbox.files.read(marker_path)
@@ -596,9 +744,17 @@ class E2BWorkspace(WorkspaceBase):
         return target_dir, True
 
     async def remove_mcp_asset(self, name: str) -> None:
+        """Remove an MCP asset from the direct-use default agent namespace."""
+        await self._remove_agent_mcp_asset(self._default_agent_id(), name)
+
+    async def _remove_agent_mcp_asset(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Delete one MCP asset directory from ``mcps/``."""
         result = await self._exec(
-            f"rm -rf {shlex.quote(f'{SANDBOX_MCPS_DIR}/{name}')}",
+            f"rm -rf {shlex.quote(f'{self._agent_mcps_dir(agent_id)}/{name}')}",
         )
         if not result.ok():
             raise RuntimeError(
@@ -607,9 +763,18 @@ class E2BWorkspace(WorkspaceBase):
             )
 
     async def list_mcp_asset_names(self) -> list[str]:
+        """List MCP assets for the direct-use default agent namespace."""
+        return await self._list_agent_mcp_asset_names(
+            self._default_agent_id(),
+        )
+
+    async def _list_agent_mcp_asset_names(
+        self,
+        agent_id: str,
+    ) -> list[str]:
         """List MCP asset directory names from ``mcps/``."""
         result = await self._exec(
-            f"ls -1 {shlex.quote(SANDBOX_MCPS_DIR)} 2>/dev/null || true",
+            f"ls -1 {shlex.quote(self._agent_mcps_dir(agent_id))} 2>/dev/null || true",
         )
         if not result.ok():
             return []
@@ -891,57 +1056,18 @@ class E2BWorkspace(WorkspaceBase):
     # ── internals: gateway lifecycle ────────────────────────────
 
     async def _restore_or_seed_mcps(self) -> list[MCPClient]:
-        """Decide the MCP set to ship to the gateway on startup.
-
-        * ``$workdir/.mcp`` missing → return ``default_mcps``.
-        * ``.mcp`` present → :meth:`MCPClient.model_validate` each
-          entry. Read / parse error → log and fall back to
-          ``default_mcps``.
-        """
-        try:
-            raw = await self._read(SANDBOX_MCP_FILE)
-        except FileNotFoundError:
-            return list(self.default_mcps)
-        try:
-            data = json.loads(raw.decode("utf-8"))
-            return [MCPClient.model_validate(m) for m in data]
-        except Exception as e:
-            logger.warning(
-                "E2BWorkspace: failed to parse %s, falling back to "
-                "default_mcps: %s",
-                SANDBOX_MCP_FILE,
-                e,
-            )
-            return list(self.default_mcps)
+        """Legacy helper kept for compatibility; shared runtime starts empty."""
+        return []
 
     async def _save_mcp_file(self) -> None:
-        """Persist ``self._mcps`` to ``$workdir/.mcp`` inside the sandbox.
-
-        Failures are logged but not raised.
-        """
-        payload = json.dumps(
-            [m.model_dump(mode="json") for m in self._mcps],
-            indent=2,
-            ensure_ascii=False,
-        )
-        try:
-            await self._exec(f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}")
-            await self._sandbox.files.write(
-                SANDBOX_MCP_FILE,
-                payload.encode("utf-8"),
-            )
-        except Exception as e:
-            logger.warning(
-                "E2BWorkspace: failed to save %s: %s",
-                SANDBOX_MCP_FILE,
-                e,
-            )
+        """Persist MCPs for the direct-use default namespace."""
+        await self._save_agent_mcp_file(self._default_agent_id())
 
     async def _write_gateway_config(self) -> None:
         """Drop the gateway's ``--config`` JSON into the sandbox."""
         cfg = {
             "token": self._gateway_token,
-            "servers": [m.model_dump(mode="json") for m in self._mcps],
+            "servers": [],
         }
         await self._exec(f"mkdir -p {shlex.quote(GATEWAY_HOME)}")
         await self._sandbox.files.write(
@@ -981,28 +1107,8 @@ class E2BWorkspace(WorkspaceBase):
         )
 
     async def _seed_skills(self) -> None:
-        """Copy ``self.skill_paths`` into ``skills/`` once, on first init.
-
-        Skips seeding when ``skill_paths`` is empty or the sandbox-side
-        ``skills/`` already contains entries — meaning the user (or a
-        prior init) is the source of truth.
-        """
-        if not self.skill_paths:
-            return
-        listing = await self._exec(
-            f"ls -A {shlex.quote(SANDBOX_SKILLS_DIR)} 2>/dev/null || true",
-        )
-        if listing.ok() and listing.stdout.strip():
-            return
-        for path in self.skill_paths:
-            try:
-                await self.add_skill(path)
-            except Exception as e:
-                logger.warning(
-                    "E2BWorkspace: skip skill %r: %s",
-                    path,
-                    e,
-                )
+        """Legacy helper kept for compatibility; seeding is agent-scoped."""
+        return
 
     # ── internals: sandbox I/O ──────────────────────────────────
 

@@ -4,12 +4,13 @@
 import asyncio
 import os
 import time
+import uuid
 
 from ..._logging import logger
 from .._service._workspace_seed import sync_workspace_state
 from ..storage import AgentMCPAsset, AgentSkillAsset
 from ...mcp import MCPClient
-from ...workspace import LocalWorkspace
+from ...workspace import AgentWorkspaceView, LocalWorkspace
 from ._base import WorkspaceManagerBase
 
 
@@ -71,7 +72,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         default_mcps: list[MCPClient] | None = None,
         mcp_assets: list[AgentMCPAsset] | None = None,
         skill_assets: list[AgentSkillAsset] | None = None,
-    ) -> LocalWorkspace:
+    ) -> AgentWorkspaceView:
         """Return an initialized workspace, reconstructing from
         disk on cache miss.
 
@@ -106,13 +107,14 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             )
 
         if hit is not None:
+            view = AgentWorkspaceView(hit, agent_id)
             await sync_workspace_state(
-                hit,
+                view,
                 expected_mcps=default_mcps or [],
                 expected_mcp_assets=mcp_assets or [],
                 expected_skills=skill_assets or [],
             )
-            return hit
+            return view
 
         # Phase 3: build under the lock to prevent two concurrent
         # get_workspace(workspace_id=X) calls from creating two
@@ -122,10 +124,16 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             if cached is not None:
                 ws, _ = cached
                 self._cache[workspace_id] = (ws, time.monotonic())
-                return ws
+                view = AgentWorkspaceView(ws, agent_id)
+                await sync_workspace_state(
+                    view,
+                    expected_mcps=default_mcps or [],
+                    expected_mcp_assets=mcp_assets or [],
+                    expected_skills=skill_assets or [],
+                )
+                return view
 
-            # Workdir is deterministic for local workspaces — no storage needed
-            workdir = os.path.join(self._basedir, agent_id)
+            workdir = os.path.join(self._basedir, workspace_id)
             ws = LocalWorkspace(
                 workspace_id=workspace_id,
                 workdir=workdir,
@@ -133,27 +141,30 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 skill_paths=self._skill_paths,
             )
             await ws.initialize()
+            view = AgentWorkspaceView(ws, agent_id)
             await sync_workspace_state(
-                ws,
+                view,
                 expected_mcps=default_mcps or [],
                 expected_mcp_assets=mcp_assets or [],
                 expected_skills=skill_assets or [],
             )
             self._cache[workspace_id] = (ws, time.monotonic())
-            return ws
+            return view
 
     async def create_workspace(
         self,
         user_id: str,
         agent_id: str,
         session_id: str,
-    ) -> LocalWorkspace:
+    ) -> AgentWorkspaceView:
         """Create a new workspace for the given agent and return it."""
         del user_id, session_id  # accepted for interface parity
 
-        workdir = os.path.join(self._basedir, agent_id)
+        workspace_id = uuid.uuid4().hex
+        workdir = os.path.join(self._basedir, workspace_id)
         os.makedirs(workdir, exist_ok=True)
         ws = LocalWorkspace(
+            workspace_id=workspace_id,
             workdir=workdir,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
@@ -161,7 +172,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         await ws.initialize()
         async with self._lock:
             self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return ws
+        return AgentWorkspaceView(ws, agent_id)
 
     async def close(self, workspace_id: str) -> None:
         """Close and evict a single workspace from the cache."""

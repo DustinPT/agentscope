@@ -61,13 +61,11 @@ from .._base import (
 )
 from .._gateway_client import (
     GatewayClient,
-    GatewayMCPClient,
 )
 from ._docker_backend import DockerBackend
 from ._make_dockerfile import (
     CONTAINER_DATA_DIR,
     CONTAINER_SESSIONS_DIR,
-    CONTAINER_SKILLS_DIR,
     CONTAINER_WORKDIR,
     DEFAULT_BASE_IMAGE,
     DEFAULT_GATEWAY_PORT,
@@ -79,7 +77,7 @@ from ._make_dockerfile import (
     prepare_build_context,
 )
 
-CONTAINER_MCPS_DIR = f"{CONTAINER_WORKDIR}/mcps"
+CONTAINER_AGENTS_DIR = f"{CONTAINER_WORKDIR}/agents"
 
 
 _DEFAULT_INSTRUCTIONS = f"""<workspace>
@@ -226,8 +224,7 @@ class DockerWorkspace(WorkspaceBase):
         self._image_tag: str = ""
         self._gateway: GatewayClient | None = None
         self._gateway_token: str = ""
-        self._mcps: list[MCPClient] = []
-        self._gateway_clients: dict[str, GatewayMCPClient] = {}
+        self._loaded_agent_namespaces: set[str] = set()
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
 
@@ -239,18 +236,14 @@ class DockerWorkspace(WorkspaceBase):
         Steps:
 
         1. Build the workspace image (or reuse a tag-cache hit).
-        2. Restore MCPs from ``<workdir>/.mcp`` if present, else seed
-           from ``default_mcps``.
-        3. Mint a fresh gateway bearer token (not persisted).
-        4. Start the container with the gateway port mapped to a host
+        2. Mint a fresh gateway bearer token (not persisted).
+        3. Start the container with the gateway port mapped to a host
            port and ``workdir`` (if any) bind-mounted.
-        5. Drop ``gateway.config.json`` into the container, launch the
+        4. Drop ``gateway.config.json`` into the container, launch the
            gateway via ``python -m agentscope.workspace._mcp_gateway``,
            and wait for ``/health`` to return 200.
-        6. Pull the gateway-side MCP view back as
-           :class:`GatewayMCPClient` instances.
-        7. Persist ``.mcp`` and seed skills (only when ``workdir`` is
-           set).
+        5. Agent-scoped MCPs / skills are restored lazily per
+           namespace when views bind to this runtime.
 
         Idempotent — calling on an already-alive workspace is a no-op.
 
@@ -268,8 +261,6 @@ class DockerWorkspace(WorkspaceBase):
 
         await self._build_or_reuse_image()
 
-        self._mcps = await self._restore_or_seed_mcps()
-
         self._gateway_token = uuid.uuid4().hex
 
         await self._create_and_start_container()
@@ -286,55 +277,41 @@ class DockerWorkspace(WorkspaceBase):
         )
         await self._wait_for_gateway()
 
-        # Pull back the gateway-side MCP view as GatewayMCPClient instances.
-        # The gateway loaded these from the config we just wrote, so the set
-        # matches self._mcps name-for-name.
-        self._gateway_clients = {
-            c.name: c for c in await self._gateway.list_mcps()
-        }
-
-        if self.host_workdir is not None:
-            await self._save_mcp_file()
-            await self._seed_skills()
+        self._loaded_agent_namespaces = set()
 
         self.is_alive = True
 
     async def reset(self) -> None:
         """Return the workspace to an empty state.
 
-        Deregisters every MCP from the gateway (``DELETE /mcps/{name}``
-        for each), clears the local handles, and wipes ``.mcp``,
-        ``skills/``, ``sessions/``, and ``data/`` inside the container.
-        The gateway process keeps running with no upstream MCPs.
-        ``default_mcps`` / ``skill_paths`` are not re-seeded.
+        Deregisters every agent-scoped MCP from the gateway and wipes
+        ``agents/``, ``sessions/``, ``data/``, and ``projects/``.
         """
         async with self._mcp_lock, self._skill_lock:
-            for gw_client in list(self._gateway_clients.values()):
-                try:
-                    await gw_client.close()
-                except Exception as e:
-                    logger.warning(
-                        "MCP %r close failed during reset: %s",
-                        gw_client.name,
-                        e,
-                    )
-            self._gateway_clients.clear()
-            self._mcps = []
+            if self._gateway is not None:
+                for namespace in list(self._loaded_agent_namespaces):
+                    for gw_client in await self._gateway.list_mcps(
+                        namespace=namespace,
+                    ):
+                        try:
+                            await gw_client.close()
+                        except Exception as e:
+                            logger.warning(
+                                "MCP %r close failed during reset: %s",
+                                gw_client.name,
+                                e,
+                            )
+            self._loaded_agent_namespaces = set()
 
             paths = [
                 CONTAINER_SESSIONS_DIR,
                 CONTAINER_DATA_DIR,
-                CONTAINER_SKILLS_DIR,
+                CONTAINER_AGENTS_DIR,
+                f"{CONTAINER_WORKDIR}/projects",
             ]
             await self._exec(
                 "rm -rf " + " ".join(shlex.quote(p) for p in paths),
             )
-
-            # Rewrite ``.mcp`` to an empty list so a future restart does
-            # not fall back to ``default_mcps`` (which would only happen
-            # if the file were missing).
-            if self.host_workdir is not None:
-                await self._save_mcp_file()
 
     async def close(self) -> None:
         """Stop and remove the container; release the aiodocker client.
@@ -351,7 +328,7 @@ class DockerWorkspace(WorkspaceBase):
             except Exception:
                 pass
             self._gateway = None
-        self._gateway_clients.clear()
+        self._loaded_agent_namespaces = set()
 
         if self._container is not None:
             # Linux native docker preserves container-side ownership on
@@ -402,6 +379,143 @@ class DockerWorkspace(WorkspaceBase):
         """
         return self.instructions.format(workdir=CONTAINER_WORKDIR)
 
+    def _default_agent_id(self) -> str:
+        """Fallback namespace for direct workspace usage."""
+        return self.workspace_id
+
+    def _agent_resource_root(self, agent_id: str) -> str:
+        """Return the container-side agent resource root."""
+        return posixpath.join(CONTAINER_AGENTS_DIR, agent_id)
+
+    def _agent_skills_dir(self, agent_id: str) -> str:
+        """Return the container-side agent skills directory."""
+        return posixpath.join(self._agent_resource_root(agent_id), "skills")
+
+    def _agent_mcps_dir(self, agent_id: str) -> str:
+        """Return the container-side agent MCP asset directory."""
+        return posixpath.join(self._agent_resource_root(agent_id), "mcps")
+
+    def _host_agent_resource_root(self, agent_id: str) -> str | None:
+        """Return the host-side agent resource root when bind-mounted."""
+        if self.host_workdir is None:
+            return None
+        return os.path.join(self.host_workdir, "agents", agent_id)
+
+    def _host_agent_mcp_file(self, agent_id: str) -> str | None:
+        """Return the host-side ``.mcp`` file for one agent."""
+        root = self._host_agent_resource_root(agent_id)
+        if root is None:
+            return None
+        return os.path.join(root, ".mcp")
+
+    def _host_agent_mcps_dir(self, agent_id: str) -> str | None:
+        """Return the host-side MCP asset directory for one agent."""
+        root = self._host_agent_resource_root(agent_id)
+        if root is None:
+            return None
+        return os.path.join(root, "mcps")
+
+    async def _ensure_agent_dirs(self, agent_id: str) -> None:
+        """Ensure the shared runtime has the agent-scoped directories."""
+        await self._exec(
+            "mkdir -p "
+            f"{shlex.quote(self._agent_skills_dir(agent_id))} "
+            f"{shlex.quote(self._agent_mcps_dir(agent_id))}",
+        )
+        root = self._host_agent_resource_root(agent_id)
+        if root is not None:
+            os.makedirs(os.path.join(root, "skills"), exist_ok=True)
+            os.makedirs(os.path.join(root, "mcps"), exist_ok=True)
+
+    async def _ensure_agent_namespace_loaded(self, agent_id: str) -> None:
+        """Restore one agent's persisted MCPs into the gateway once."""
+        if agent_id in self._loaded_agent_namespaces:
+            return
+        await self._ensure_agent_dirs(agent_id)
+        specs: list[dict[str, Any]] = []
+        host_mcp = self._host_agent_mcp_file(agent_id)
+        if host_mcp is not None and os.path.isfile(host_mcp):
+            try:
+                with open(host_mcp, encoding="utf-8") as f:
+                    specs = json.load(f)
+            except Exception as e:
+                logger.warning(
+                    "DockerWorkspace: failed to read %s: %s",
+                    host_mcp,
+                    e,
+                )
+        assert self._gateway is not None
+        for spec in specs:
+            client = self._gateway.make_client(spec, namespace=agent_id)
+            try:
+                await client.connect()
+            except Exception as e:
+                logger.warning(
+                    "DockerWorkspace: failed to restore agent MCP %r: %s",
+                    spec.get("name", "?"),
+                    e,
+                )
+        if not specs:
+            for mcp in self.default_mcps:
+                client = self._gateway.make_client(
+                    mcp.model_dump(mode="json"),
+                    namespace=agent_id,
+                )
+                try:
+                    await client.connect()
+                except Exception as e:
+                    logger.warning(
+                        "DockerWorkspace: failed to seed agent MCP %r: %s",
+                        mcp.name,
+                        e,
+                    )
+            if self.skill_paths:
+                skills_host = self._host_agent_resource_root(agent_id)
+                if skills_host is None:
+                    listing = await self._exec(
+                        f"ls -A {shlex.quote(self._agent_skills_dir(agent_id))} 2>/dev/null || true",
+                    )
+                    has_skills = bool(listing.ok() and listing.stdout.strip())
+                else:
+                    skills_dir = os.path.join(skills_host, "skills")
+                    os.makedirs(skills_dir, exist_ok=True)
+                    has_skills = bool(os.listdir(skills_dir))
+                if not has_skills:
+                    for path in self.skill_paths:
+                        try:
+                            await self._add_agent_skill(agent_id, path)
+                        except Exception as e:
+                            logger.warning(
+                                "DockerWorkspace: skip seed skill %r: %s",
+                                path,
+                                e,
+                            )
+            await self._save_agent_mcp_file(agent_id)
+        self._loaded_agent_namespaces.add(agent_id)
+
+    async def _save_agent_mcp_file(self, agent_id: str) -> None:
+        """Persist one agent's registered MCP specs to its own ``.mcp``."""
+        host_mcp = self._host_agent_mcp_file(agent_id)
+        if host_mcp is None:
+            return
+        assert self._gateway is not None
+        try:
+            os.makedirs(os.path.dirname(host_mcp), exist_ok=True)
+            mcps = await self._gateway.list_mcps(namespace=agent_id)
+            with open(host_mcp, "w", encoding="utf-8") as f:
+                json.dump(
+                    [m.model_dump(mode="json") for m in mcps],
+                    f,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+        except Exception as e:
+            logger.warning(
+                "DockerWorkspace: failed to save %s: %s",
+                host_mcp,
+                e,
+            )
+
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
@@ -409,16 +523,23 @@ class DockerWorkspace(WorkspaceBase):
         return await super().list_tools()
 
     async def list_mcps(self) -> list[MCPClient]:
-        """Return one :class:`GatewayMCPClient` per registered MCP.
+        """Return MCPs for the direct-use default agent namespace."""
+        return await self._list_agent_mcps(self._default_agent_id())
 
-        Each entry's ``name`` matches the upstream MCP server name and
-        all of its protocol calls (connect / close / list_tools /
-        get_tool / tool ``__call__``) are routed over HTTP to the
-        in-container gateway.
-        """
-        return list(self._gateway_clients.values())
+    async def _list_agent_mcps(
+        self,
+        agent_id: str,
+    ) -> list[MCPClient]:
+        """Return one gateway-backed MCP client per agent namespace."""
+        await self._ensure_agent_namespace_loaded(agent_id)
+        assert self._gateway is not None
+        return await self._gateway.list_mcps(namespace=agent_id)
 
     async def list_skills(self) -> list[Skill]:
+        """List skills for the direct-use default agent namespace."""
+        return await self._list_agent_skills(self._default_agent_id())
+
+    async def _list_agent_skills(self, agent_id: str) -> list[Skill]:
         """Enumerate skills by scanning ``skills/`` inside the container.
 
         For each ``SKILL.md`` found, parses the YAML front-matter and
@@ -431,8 +552,9 @@ class DockerWorkspace(WorkspaceBase):
         """
         import frontmatter as fm
 
+        await self._ensure_agent_namespace_loaded(agent_id)
         result = await self._exec(
-            f"find {CONTAINER_SKILLS_DIR} -name SKILL.md "
+            f"find {shlex.quote(self._agent_skills_dir(agent_id))} -name SKILL.md "
             f"2>/dev/null || true",
         )
         if not result.ok():
@@ -468,6 +590,14 @@ class DockerWorkspace(WorkspaceBase):
     # ── dynamic MCP management ──────────────────────────────────
 
     async def add_mcp(self, mcp_client: MCPClient) -> None:
+        """Add an MCP to the direct-use default agent namespace."""
+        await self._add_agent_mcp(self._default_agent_id(), mcp_client)
+
+    async def _add_agent_mcp(
+        self,
+        agent_id: str,
+        mcp_client: MCPClient,
+    ) -> None:
         """Register a new MCP server on the in-container gateway.
 
         Serialises the supplied client, registers it on the gateway
@@ -490,19 +620,27 @@ class DockerWorkspace(WorkspaceBase):
                 container).
         """
         async with self._mcp_lock:
-            if mcp_client.name in self._gateway_clients:
+            await self._ensure_agent_namespace_loaded(agent_id)
+            current = await self._list_agent_mcps(agent_id)
+            if any(client.name == mcp_client.name for client in current):
                 raise ValueError(
                     f"MCP {mcp_client.name!r} already exists in workspace.",
                 )
             spec = mcp_client.model_dump(mode="json")
-            gw_client = self._gateway.make_client(spec)
+            assert self._gateway is not None
+            gw_client = self._gateway.make_client(spec, namespace=agent_id)
             await gw_client.connect()
-            self._mcps.append(mcp_client)
-            self._gateway_clients[gw_client.name] = gw_client
-            if self.host_workdir is not None:
-                await self._save_mcp_file()
+            await self._save_agent_mcp_file(agent_id)
 
     async def remove_mcp(self, name: str) -> None:
+        """Remove an MCP from the direct-use default agent namespace."""
+        await self._remove_agent_mcp(self._default_agent_id(), name)
+
+    async def _remove_agent_mcp(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Unregister an MCP server by name.
 
         Tells the gateway to close the upstream session and drops the
@@ -516,7 +654,9 @@ class DockerWorkspace(WorkspaceBase):
                 local workspace).
         """
         async with self._mcp_lock:
-            gw_client = self._gateway_clients.pop(name, None)
+            await self._ensure_agent_namespace_loaded(agent_id)
+            current = await self._list_agent_mcps(agent_id)
+            gw_client = next((client for client in current if client.name == name), None)
             if gw_client is None:
                 logger.warning("MCP %r not found in workspace", name)
                 return
@@ -524,13 +664,19 @@ class DockerWorkspace(WorkspaceBase):
                 await gw_client.close()
             except Exception as e:
                 logger.warning("MCP %r close failed: %s", name, e)
-            self._mcps = [m for m in self._mcps if m.name != name]
-            if self.host_workdir is not None:
-                await self._save_mcp_file()
+            await self._save_agent_mcp_file(agent_id)
 
     # ── dynamic skill management ────────────────────────────────
 
     async def add_skill(self, skill_path: str) -> None:
+        """Add a skill to the direct-use default agent namespace."""
+        await self._add_agent_skill(self._default_agent_id(), skill_path)
+
+    async def _add_agent_skill(
+        self,
+        agent_id: str,
+        skill_path: str,
+    ) -> None:
         """Copy a local skill directory into ``skills/`` inside the container.
 
         The directory must contain a ``SKILL.md`` with ``name`` and
@@ -556,7 +702,8 @@ class DockerWorkspace(WorkspaceBase):
             )
 
         async with self._skill_lock:
-            await self._exec(f"mkdir -p {CONTAINER_SKILLS_DIR}")
+            target_dir = self._agent_skills_dir(agent_id)
+            await self._exec(f"mkdir -p {shlex.quote(target_dir)}")
             dir_name = os.path.basename(os.path.abspath(skill_path))
 
             # Refuse to overwrite an existing directory of the same name —
@@ -564,29 +711,37 @@ class DockerWorkspace(WorkspaceBase):
             # rather than LocalWorkspace's full hash-dedup index.
             check = await self._exec(
                 f"test -e "
-                f"{shlex.quote(CONTAINER_SKILLS_DIR + '/' + dir_name)}",
+                f"{shlex.quote(target_dir + '/' + dir_name)}",
             )
             if check.ok():
                 raise ValueError(
                     f"Skill directory {dir_name!r} already exists in "
-                    f"{CONTAINER_SKILLS_DIR}",
+                    f"{target_dir}",
                 )
 
             buf = io.BytesIO()
             with tarfile.open(fileobj=buf, mode="w") as tf:
                 tf.add(skill_path, arcname=dir_name)
             await self._container.put_archive(
-                CONTAINER_SKILLS_DIR,
+                target_dir,
                 buf.getvalue(),
             )
             logger.info(
                 "DockerWorkspace: added skill %r at %s/%s",
                 dir_name,
-                CONTAINER_SKILLS_DIR,
+                target_dir,
                 dir_name,
             )
 
     async def remove_skill(self, name: str) -> None:
+        """Remove a skill from the direct-use default agent namespace."""
+        await self._remove_agent_skill(self._default_agent_id(), name)
+
+    async def _remove_agent_skill(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Delete a skill directory by its agent-facing name.
 
         Looks up the skill by the ``name`` field of its
@@ -602,7 +757,7 @@ class DockerWorkspace(WorkspaceBase):
             RuntimeError: If the in-container ``rm -rf`` returns a
                 non-zero exit code.
         """
-        skills = await self.list_skills()
+        skills = await self._list_agent_skills(agent_id)
         target_dir: str | None = None
         for s in skills:
             if s.name == name:
@@ -626,14 +781,30 @@ class DockerWorkspace(WorkspaceBase):
         source_dir: str,
         content_hash: str,
     ) -> tuple[str, bool]:
+        """Sync an MCP asset for the direct-use default agent namespace."""
+        return await self._sync_agent_mcp_asset(
+            self._default_agent_id(),
+            name,
+            source_dir,
+            content_hash,
+        )
+
+    async def _sync_agent_mcp_asset(
+        self,
+        agent_id: str,
+        name: str,
+        source_dir: str,
+        content_hash: str,
+    ) -> tuple[str, bool]:
         """Copy one MCP asset directory into ``mcps/`` inside the container."""
-        target_dir = f"{CONTAINER_MCPS_DIR}/{name}"
+        target_root = self._agent_mcps_dir(agent_id)
+        target_dir = f"{target_root}/{name}"
         marker_name = ".agentscope_asset_hash"
         marker_path = f"{target_dir}/{marker_name}"
         async with self._mcp_lock:
-            await self._exec(f"mkdir -p {CONTAINER_MCPS_DIR}")
-            if self.host_workdir is not None:
-                host_mcps_dir = os.path.join(self.host_workdir, "mcps")
+            await self._exec(f"mkdir -p {shlex.quote(target_root)}")
+            host_mcps_dir = self._host_agent_mcps_dir(agent_id)
+            if host_mcps_dir is not None:
                 host_target_dir = os.path.join(host_mcps_dir, name)
                 host_marker_path = os.path.join(host_target_dir, marker_name)
                 os.makedirs(host_mcps_dir, exist_ok=True)
@@ -666,7 +837,7 @@ class DockerWorkspace(WorkspaceBase):
                         tar_path = posixpath.join(name, rel_path.replace(os.sep, "/"))
                         tf.add(abs_path, arcname=tar_path, recursive=False)
             await self._container.put_archive(
-                CONTAINER_MCPS_DIR,
+                target_root,
                 buf.getvalue(),
             )
             await self._exec(
@@ -675,8 +846,16 @@ class DockerWorkspace(WorkspaceBase):
         return target_dir, True
 
     async def remove_mcp_asset(self, name: str) -> None:
+        """Remove an MCP asset from the direct-use default agent namespace."""
+        await self._remove_agent_mcp_asset(self._default_agent_id(), name)
+
+    async def _remove_agent_mcp_asset(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
         """Delete one MCP asset directory from ``mcps/``."""
-        target_dir = f"{CONTAINER_MCPS_DIR}/{name}"
+        target_dir = f"{self._agent_mcps_dir(agent_id)}/{name}"
         async with self._mcp_lock:
             result = await self._exec(f"rm -rf {shlex.quote(target_dir)}")
             if not result.ok():
@@ -684,17 +863,27 @@ class DockerWorkspace(WorkspaceBase):
                     f"Failed to remove MCP asset {name!r}: "
                     f"{result.stderr.decode(errors='replace')}",
                 )
-            if self.host_workdir is not None:
+            host_mcps_dir = self._host_agent_mcps_dir(agent_id)
+            if host_mcps_dir is not None:
                 shutil.rmtree(
-                    os.path.join(self.host_workdir, "mcps", name),
+                    os.path.join(host_mcps_dir, name),
                     ignore_errors=True,
                 )
 
     async def list_mcp_asset_names(self) -> list[str]:
+        """List MCP assets for the direct-use default agent namespace."""
+        return await self._list_agent_mcp_asset_names(
+            self._default_agent_id(),
+        )
+
+    async def _list_agent_mcp_asset_names(
+        self,
+        agent_id: str,
+    ) -> list[str]:
         """List MCP asset directory names from ``mcps/``."""
         async with self._mcp_lock:
-            if self.host_workdir is not None:
-                host_mcps_dir = os.path.join(self.host_workdir, "mcps")
+            host_mcps_dir = self._host_agent_mcps_dir(agent_id)
+            if host_mcps_dir is not None:
                 if not os.path.isdir(host_mcps_dir):
                     return []
                 return sorted(
@@ -704,7 +893,7 @@ class DockerWorkspace(WorkspaceBase):
                 )
 
             result = await self._exec(
-                f"ls -1 {shlex.quote(CONTAINER_MCPS_DIR)} 2>/dev/null || true",
+                f"ls -1 {shlex.quote(self._agent_mcps_dir(agent_id))} 2>/dev/null || true",
             )
             if not result.ok():
                 return []
@@ -967,73 +1156,22 @@ class DockerWorkspace(WorkspaceBase):
             )
         self._port_mapping[self.gateway_port] = int(bindings[0]["HostPort"])
 
-        # Ensure the in-container persistence dirs exist (also makes a
-        # newly-bind-mounted host workdir agentscope-shaped on first use).
+        # Ensure the in-container shared dirs exist (also makes a newly
+        # bind-mounted host workdir agentscope-shaped on first use).
         await self._exec(
             "mkdir -p "
             f"{shlex.quote(CONTAINER_DATA_DIR)} "
-            f"{shlex.quote(CONTAINER_SKILLS_DIR)} "
+            f"{shlex.quote(CONTAINER_AGENTS_DIR)} "
             f"{shlex.quote(CONTAINER_SESSIONS_DIR)}",
         )
 
     async def _restore_or_seed_mcps(self) -> list[MCPClient]:
-        """Decide the MCP set to ship to the gateway on startup.
-
-        * No ``workdir`` → return ``default_mcps`` (purely ephemeral).
-        * ``workdir`` set, ``<workdir>/.mcp`` missing → return
-          ``default_mcps`` and let the next ``_save_mcp_file`` write
-          it.
-        * ``<workdir>/.mcp`` present → :meth:`MCPClient.model_validate`
-          each entry and return them.  A read / parse error is
-          logged and the call falls back to ``default_mcps`` rather
-          than crashing the whole workspace.
-
-        Returns:
-            The MCPClient instances to register on the gateway.
-        """
-        if self.host_workdir is None:
-            return list(self.default_mcps)
-        host_mcp = os.path.join(self.host_workdir, ".mcp")
-        if not os.path.isfile(host_mcp):
-            return list(self.default_mcps)
-        try:
-            with open(host_mcp, encoding="utf-8") as f:
-                data = json.load(f)
-            return [MCPClient.model_validate(m) for m in data]
-        except Exception as e:
-            logger.warning(
-                "DockerWorkspace: failed to read %s, falling back to "
-                "default_mcps: %s",
-                host_mcp,
-                e,
-            )
-            return list(self.default_mcps)
+        """Legacy helper kept for compatibility; shared runtime starts empty."""
+        return []
 
     async def _save_mcp_file(self) -> None:
-        """Persist ``self._mcps`` to ``<workdir>/.mcp`` (host-side JSON).
-
-        No-op when ``workdir`` is ``None``.  Failures are logged but
-        not raised — losing the persistence file should not
-        propagate as an MCP-add/remove error to the caller.
-        """
-        if self.host_workdir is None:
-            return
-        host_mcp = os.path.join(self.host_workdir, ".mcp")
-        try:
-            os.makedirs(self.host_workdir, exist_ok=True)
-            with open(host_mcp, "w", encoding="utf-8") as f:
-                json.dump(
-                    [m.model_dump() for m in self._mcps],
-                    f,
-                    indent=2,
-                    ensure_ascii=False,
-                )
-        except Exception as e:
-            logger.warning(
-                "DockerWorkspace: failed to save %s: %s",
-                host_mcp,
-                e,
-            )
+        """Persist MCPs for the direct-use default namespace."""
+        await self._save_agent_mcp_file(self._default_agent_id())
 
     async def _write_gateway_config(self) -> None:
         """Drop the gateway's ``--config`` JSON into the container.
@@ -1045,7 +1183,7 @@ class DockerWorkspace(WorkspaceBase):
         """
         cfg = {
             "token": self._gateway_token,
-            "servers": [m.model_dump(mode="json") for m in self._mcps],
+            "servers": [],
         }
         await self._exec(f"mkdir -p {shlex.quote(GATEWAY_HOME)}")
         await self._write(
@@ -1112,36 +1250,8 @@ class DockerWorkspace(WorkspaceBase):
         )
 
     async def _seed_skills(self) -> None:
-        """Copy ``self.skill_paths`` into ``skills/`` once, on first init.
-
-        Skips seeding when (a) ``workdir`` is unset, (b) ``skill_paths``
-        is empty, or (c) the host-side ``skills/`` directory already
-        contains entries — meaning the user (or a prior init) is the
-        source of truth and we should not append duplicates.
-
-        Failures on individual paths are logged and skipped rather
-        than raised, so that one bad skill cannot block startup.
-        """
-        if not self.skill_paths or self.host_workdir is None:
-            return
-        skills_host = os.path.join(self.host_workdir, "skills")
-        # The bind mount lazily materialises ``<workdir>/skills`` on
-        # host the first time the container writes into it, so on a
-        # fresh workdir the host path may not exist yet — create it
-        # so the next check has something to inspect.
-        os.makedirs(skills_host, exist_ok=True)
-        if os.listdir(skills_host):
-            # already seeded (or user pre-populated) — leave as-is.
-            return
-        for path in self.skill_paths:
-            try:
-                await self.add_skill(path)
-            except Exception as e:
-                logger.warning(
-                    "DockerWorkspace: skip skill %r: %s",
-                    path,
-                    e,
-                )
+        """Legacy helper kept for compatibility; seeding is agent-scoped."""
+        return
 
     # ── internals: container I/O ────────────────────────────────
 

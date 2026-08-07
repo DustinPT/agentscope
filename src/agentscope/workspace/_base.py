@@ -23,6 +23,7 @@ Consumers:
 - **Developer** — manages lifecycle via ``initialize`` / ``close``.
 """
 
+import os
 import uuid
 from abc import abstractmethod
 from typing import Self
@@ -70,6 +71,21 @@ class WorkspaceBase:
     def _glob_helper_path(self) -> str | None:
         """Optional backend-side path to the glob helper script."""
         return None
+
+    @property
+    def resource_root(self) -> str:
+        """Agent-visible resource root for MCP / skill assets.
+
+        Default implementation points at ``workdir``. Agent-scoped
+        workspace views override this to expose ``agents/<agent_id>``
+        while still keeping ``workdir`` bound to the shared filesystem
+        root used by builtin file tools.
+        """
+        return self.workdir
+
+    def mcp_asset_runtime_dir(self, name: str) -> str:
+        """Return the runtime directory of one MCP asset."""
+        return os.path.join(self.resource_root, "mcps", name)
 
     def __init__(self, workspace_id: str | None) -> None:
         """Initialize the workspace base instance."""
@@ -280,3 +296,70 @@ class WorkspaceBase:
     @abstractmethod
     async def list_mcp_asset_names(self) -> list[str]:
         """List MCP asset directory names currently present in the workspace."""
+
+    # ── agent-scoped resource hooks for shared runtimes ────────────
+
+    async def _list_agent_mcps(
+        self,
+        agent_id: str,
+    ) -> list[MCPClient]:
+        raise NotImplementedError
+
+    async def _add_agent_mcp(
+        self,
+        agent_id: str,
+        mcp_client: MCPClient,
+    ) -> None:
+        raise NotImplementedError
+
+    async def _remove_agent_mcp(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
+        raise NotImplementedError
+
+    async def _list_agent_skills(
+        self,
+        agent_id: str,
+    ) -> list[Skill]:
+        raise NotImplementedError
+
+    async def _add_agent_skill(
+        self,
+        agent_id: str,
+        skill_path: str,
+    ) -> None:
+        raise NotImplementedError
+
+    async def _remove_agent_skill(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
+        raise NotImplementedError
+
+    async def _sync_agent_mcp_asset(
+        self,
+        agent_id: str,
+        name: str,
+        source_dir: str,
+        content_hash: str,
+    ) -> tuple[str, bool]:
+        raise NotImplementedError
+
+    async def _remove_agent_mcp_asset(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> None:
+        raise NotImplementedError
+
+    async def _list_agent_mcp_asset_names(
+        self,
+        agent_id: str,
+    ) -> list[str]:
+        raise NotImplementedError
+
+    def _agent_resource_root(self, agent_id: str) -> str:
+        raise NotImplementedError

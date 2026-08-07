@@ -2,6 +2,7 @@
 """The workspace module in agentscope."""
 
 
+from ._agent_workspace import AgentWorkspaceView
 from ._base import WorkspaceBase
 from ._local_workspace import LocalWorkspace
 from ._offload_protocol import Offloader
@@ -11,6 +12,7 @@ from ._e2b import E2BBackend, E2BWorkspace
 
 __all__ = [
     "WorkspaceBase",
+    "AgentWorkspaceView",
     "LocalWorkspace",
     "DockerBackend",
     "DockerWorkspace",

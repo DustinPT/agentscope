@@ -52,7 +52,7 @@ class _State:
     """Mutable runtime state shared by FastAPI routes."""
 
     def __init__(self) -> None:
-        self.clients: dict[str, MCPClient] = {}
+        self.clients: dict[str, dict[str, MCPClient]] = {}
         self.token: str = ""
         self.lock = asyncio.Lock()
 
@@ -97,24 +97,34 @@ def _build_app(state: _State) -> FastAPI:
     app = FastAPI(title="agentscope-workspace-mcp-gateway")
     auth = Depends(_make_auth_dep(state))
 
+    def _namespace(request: Request) -> str:
+        return request.query_params.get("namespace", "") or ""
+
+    def _namespace_clients(namespace: str) -> dict[str, MCPClient]:
+        return state.clients.setdefault(namespace, {})
+
     @app.get("/health")
     async def _health() -> PlainTextResponse:
         return PlainTextResponse("ok")
 
     @app.get("/mcps", dependencies=[auth])
-    async def _list_mcps() -> list[dict[str, Any]]:
+    async def _list_mcps(request: Request) -> list[dict[str, Any]]:
         # Dump the full MCPClient field set so the host can rebuild
         # `GatewayMCPClient.model_validate(spec)` losslessly.
-        return [c.model_dump(mode="json") for c in state.clients.values()]
+        namespace = _namespace(request)
+        clients = _namespace_clients(namespace)
+        return [c.model_dump(mode="json") for c in clients.values()]
 
     @app.post("/mcps", dependencies=[auth])
     async def _add_mcp(request: Request) -> dict[str, Any]:
         body = await request.json()
+        namespace = _namespace(request)
         name = body.get("name", "")
         if not name:
             raise HTTPException(400, "name required")
         async with state.lock:
-            if name in state.clients:
+            clients = _namespace_clients(namespace)
+            if name in clients:
                 raise HTTPException(409, f"{name!r} already exists")
             try:
                 client = await _build_client(body)
@@ -125,13 +135,15 @@ def _build_app(state: _State) -> FastAPI:
                     500,
                     f"connect failed: {e}",
                 ) from e
-            state.clients[name] = client
+            clients[name] = client
         return {"ok": True}
 
     @app.delete("/mcps/{name}", dependencies=[auth])
-    async def _remove_mcp(name: str) -> dict[str, Any]:
+    async def _remove_mcp(name: str, request: Request) -> dict[str, Any]:
+        namespace = _namespace(request)
         async with state.lock:
-            client = state.clients.pop(name, None)
+            clients = _namespace_clients(namespace)
+            client = clients.pop(name, None)
             if client is None:
                 raise HTTPException(404, f"{name!r} not found")
             if client.is_stateful and client.is_connected:
@@ -139,8 +151,9 @@ def _build_app(state: _State) -> FastAPI:
         return {"ok": True}
 
     @app.get("/mcps/{name}/tools", dependencies=[auth])
-    async def _list_tools(name: str) -> list[dict[str, Any]]:
-        client = state.clients.get(name)
+    async def _list_tools(name: str, request: Request) -> list[dict[str, Any]]:
+        namespace = _namespace(request)
+        client = _namespace_clients(namespace).get(name)
         if client is None:
             raise HTTPException(404, f"{name!r} not found")
         # Send raw mcp.types.Tool over the wire so the host-side
@@ -155,7 +168,8 @@ def _build_app(state: _State) -> FastAPI:
         tool: str,
         request: Request,
     ) -> dict[str, Any]:
-        client = state.clients.get(name)
+        namespace = _namespace(request)
+        client = _namespace_clients(namespace).get(name)
         if client is None:
             raise HTTPException(404, f"{name!r} not found")
         body = await request.json()
@@ -183,13 +197,14 @@ async def _connect_initial(
     """Connect every server listed in the static config file."""
     for cfg in server_cfgs:
         client = await _build_client(cfg)
-        if client.name in state.clients:
+        clients = state.clients.setdefault("", {})
+        if client.name in clients:
             if client.is_stateful and client.is_connected:
                 await client.close()
             raise ValueError(
                 f"Duplicated server name in config: {client.name!r}",
             )
-        state.clients[client.name] = client
+        clients[client.name] = client
         print(f"[gateway] connected {client.name!r}", flush=True)
 
 
@@ -220,9 +235,10 @@ async def _run(config_path: str, port: int) -> None:
     try:
         await server.serve()
     finally:
-        for client in list(state.clients.values()):
-            if client.is_stateful and client.is_connected:
-                await client.close()
+        for clients in list(state.clients.values()):
+            for client in list(clients.values()):
+                if client.is_stateful and client.is_connected:
+                    await client.close()
 
 
 def main() -> None:
