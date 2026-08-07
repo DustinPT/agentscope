@@ -237,6 +237,7 @@ Usage:
             cache = await _agent_state.tool_context.get_cache(file_path)
             if cache is None or not await _agent_state.tool_context.validate_cached_version(  # noqa: E501
                 file_path,
+                self._backend,
                 cache,
             ):
                 return ToolChunk(
@@ -261,6 +262,7 @@ Usage:
                 file_path=file_path,
                 source_kind="write",
                 content=content,
+                backend=self._backend,
             )
 
         # Count lines in content

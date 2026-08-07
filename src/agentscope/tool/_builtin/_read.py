@@ -267,6 +267,7 @@ Usage:
                     file_path=file_path,
                     source_kind="read",
                     content=file_bytes,
+                    backend=self._backend,
                 )
 
             if media_type == "application/pdf":

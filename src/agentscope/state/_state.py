@@ -2,15 +2,16 @@
 """The agent state class."""
 import hashlib
 import uuid
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, model_validator
-
-import aiofiles
-import aiofiles.os
 
 from ._task import Task
 from ..message import TextBlock, DataBlock, Msg
 from ..permission import PermissionContext
+
+if TYPE_CHECKING:
+    from ..tool._builtin._backend import BackendBase
 
 
 class FileVersionCacheEntry(BaseModel):
@@ -138,12 +139,14 @@ class ToolContext(BaseModel):
     async def validate_cached_version(
         self,
         file_path: str,
+        backend: "BackendBase",
         cache_entry: FileVersionCacheEntry | None = None,
     ) -> bool:
         """Validate whether the current file still matches cached version.
 
         Args:
             file_path: The absolute path of the file.
+            backend: Workspace-aware file backend.
             cache_entry: Optional cached entry to validate.
 
         Returns:
@@ -156,7 +159,19 @@ class ToolContext(BaseModel):
             return False
 
         try:
-            file_stat = await aiofiles.os.stat(file_path)
+            entry = await backend.stat(file_path)
+            if entry is None:
+                raise FileNotFoundError(file_path)
+            current_mtime_ns = (
+                int(entry.mtime * 1_000_000_000)
+                if entry.mtime is not None
+                else 0
+            )
+            current_size_bytes = (
+                entry.size_bytes
+                if entry.size_bytes is not None
+                else cache_entry.size_bytes
+            )
         except Exception:
             self.read_file_cache = [
                 entry
@@ -166,19 +181,19 @@ class ToolContext(BaseModel):
             return False
 
         if (
-            file_stat.st_mtime_ns == cache_entry.mtime_ns
-            and file_stat.st_size == cache_entry.size_bytes
+            current_mtime_ns != 0
+            and current_mtime_ns == cache_entry.mtime_ns
+            and current_size_bytes == cache_entry.size_bytes
         ):
             return True
 
-        async with aiofiles.open(file_path, mode="rb") as file_obj:
-            content = await file_obj.read()
+        content = await backend.read_file(file_path)
 
         content_sha256 = hashlib.sha256(content).hexdigest()
         if content_sha256 == cache_entry.sha256:
-            cache_entry.mtime_ns = file_stat.st_mtime_ns
-            cache_entry.size_bytes = file_stat.st_size
-            cache_entry.bytes = file_stat.st_size / 1024
+            cache_entry.mtime_ns = current_mtime_ns
+            cache_entry.size_bytes = current_size_bytes
+            cache_entry.bytes = current_size_bytes / 1024
             return True
 
         self.read_file_cache = [
@@ -191,6 +206,7 @@ class ToolContext(BaseModel):
     async def cache_file_version(
         self,
         file_path: str,
+        backend: "BackendBase",
         source_kind: str,
         content: str | bytes | None = None,
     ) -> None:
@@ -198,25 +214,43 @@ class ToolContext(BaseModel):
 
         Args:
             file_path: The absolute path of the file.
+            backend: Workspace-aware file backend.
             source_kind: Which tool produced this version proof.
             content: Optional content bytes or text to hash. When omitted,
                 the file is read from disk.
         """
-        try:
-            file_stat = await aiofiles.os.stat(file_path)
-        except Exception:
-            return
-
         if content is None:
-            async with aiofiles.open(file_path, mode="rb") as file_obj:
-                content_bytes = await file_obj.read()
+            try:
+                content_bytes = await backend.read_file(file_path)
+            except Exception:
+                return
         elif isinstance(content, str):
             content_bytes = content.encode("utf-8")
         else:
             content_bytes = content
 
+        try:
+            entry = await backend.stat(file_path)
+            if entry is None:
+                mtime_ns = 0
+                size_bytes = len(content_bytes)
+            else:
+                mtime_ns = (
+                    int(entry.mtime * 1_000_000_000)
+                    if entry.mtime is not None
+                    else 0
+                )
+                size_bytes = (
+                    entry.size_bytes
+                    if entry.size_bytes is not None
+                    else len(content_bytes)
+                )
+        except Exception:
+            mtime_ns = 0
+            size_bytes = len(content_bytes)
+
         # Calculate size in KB
-        new_entry_bytes = file_stat.st_size / 1024
+        new_entry_bytes = size_bytes / 1024
 
         # Remove existing cache for this file if present
         self.read_file_cache = [
@@ -242,8 +276,8 @@ class ToolContext(BaseModel):
         self.read_file_cache.append(
             FileVersionCacheEntry(
                 file_path=file_path,
-                mtime_ns=file_stat.st_mtime_ns,
-                size_bytes=file_stat.st_size,
+                mtime_ns=mtime_ns,
+                size_bytes=size_bytes,
                 sha256=hashlib.sha256(content_bytes).hexdigest(),
                 bytes=new_entry_bytes,
                 source_kind=source_kind,

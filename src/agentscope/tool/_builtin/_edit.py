@@ -288,6 +288,7 @@ Usage:
             cache = await _agent_state.tool_context.get_cache(file_path)
             if cache is None or not await _agent_state.tool_context.validate_cached_version(  # noqa: E501
                 file_path,
+                self._backend,
                 cache,
             ):
                 return ToolChunk(
@@ -374,6 +375,7 @@ Usage:
         if _agent_state is not None:
             await _agent_state.tool_context.cache_file_version(
                 file_path=file_path,
+                backend=self._backend,
                 source_kind="edit",
                 content=updated_content,
             )
