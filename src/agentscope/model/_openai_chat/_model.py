@@ -460,21 +460,40 @@ class OpenAIChatModel(ChatModelBase):
                 delta_tool_call_blocks: List[ToolCallBlock] = []
                 for tool_call in getattr(delta, "tool_calls", None) or []:
                     idx = tool_call.index
-                    args = tool_call.function.arguments or ""
+                    function = getattr(tool_call, "function", None)
+                    args = getattr(function, "arguments", None) or ""
+                    name = getattr(function, "name", None) or ""
+
                     if idx in acc_tool_calls:
-                        acc_tool_calls[idx]["input"] += args
+                        tc = acc_tool_calls[idx]
+                        if tool_call.id:
+                            tc["id"] = tool_call.id
+                        if name:
+                            tc["name"] = name
                     else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "input": args,
+                        tc = {
+                            "id": tool_call.id or f"tool_call_{idx}",
+                            "name": name,
+                            "input": "",
+                            "emitted": False,
                         }
-                    tc = acc_tool_calls[idx]
+                        acc_tool_calls[idx] = tc
+
+                    tc["input"] += args
+
+                    if not tc["name"]:
+                        continue
+
+                    delta_input = args
+                    if not tc["emitted"]:
+                        delta_input = tc["input"]
+                        tc["emitted"] = True
+
                     delta_tool_call_blocks.append(
                         ToolCallBlock(
                             id=tc["id"],
                             name=tc["name"],
-                            input=args,
+                            input=delta_input,
                         ),
                     )
 
@@ -514,6 +533,8 @@ class OpenAIChatModel(ChatModelBase):
         if acc_text.text:
             final_contents.append(acc_text)
         for tc in acc_tool_calls.values():
+            if not tc["name"]:
+                continue
             final_contents.append(
                 ToolCallBlock(id=tc["id"], name=tc["name"], input=tc["input"]),
             )
@@ -611,11 +632,15 @@ class OpenAIChatModel(ChatModelBase):
                     )
 
             for tool_call in choice.message.tool_calls or []:
+                function = getattr(tool_call, "function", None)
+                name = getattr(function, "name", None) or ""
+                if not name:
+                    continue
                 content_blocks.append(
                     ToolCallBlock(
-                        id=tool_call.id,
-                        name=tool_call.function.name,
-                        input=tool_call.function.arguments,
+                        id=tool_call.id or uuid.uuid4().hex,
+                        name=name,
+                        input=getattr(function, "arguments", None) or "",
                     ),
                 )
 
