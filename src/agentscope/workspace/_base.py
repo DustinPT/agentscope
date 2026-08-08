@@ -33,7 +33,7 @@ from ..message import Msg, ToolResultBlock
 from ..skill import Skill
 from ..tool import BackendBase, ToolBase
 
-DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS = """Local directory boundary:
+DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS = """### Local Directory Boundary
 1. Only treat a local path as a user directory when the user has explicitly provided it or explicitly authorized checking it.
 2. The system's default working directory exists only to run the agent or tools and is not the same as a user directory.
 3. Do not proactively scan local files merely because a system default working directory exists, unless the user has explicitly authorized it."""

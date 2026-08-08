@@ -102,6 +102,14 @@ You are running in an E2B sandbox environment. All tool calls execute
 inside that sandbox.
 
 {DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS}
+
+### Python Environment
+- `uv` is recommended for managing and isolating Python environments per \
+project:
+```shell
+uv venv && uv pip install ...
+- Never install packages into a shared or global environment — each project \
+must manage its own dependencies to avoid conflicts.
 </workspace>"""
 
 

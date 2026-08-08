@@ -83,6 +83,14 @@ def _sanitize_dir_name(name: str) -> str:
 
 _DEFAULT_WORKSPACE_INSTRUCTIONS = f"""<workspace>
 {DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS}
+
+### Python Environment
+- `uv` is recommended for managing and isolating Python environments per \
+project:
+```shell
+uv venv && uv pip install ...
+- Never install packages into a shared or global environment — each project \
+must manage its own dependencies to avoid conflicts.
 </workspace>"""
 
 
