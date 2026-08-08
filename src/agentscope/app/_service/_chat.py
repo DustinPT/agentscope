@@ -1197,6 +1197,7 @@ class ChatService:
     async def build_session_export_payload(
         self,
         *,
+        request: Request | None = None,
         user_id: str,
         agent_id: str,
         session_id: str,
@@ -1236,6 +1237,7 @@ class ChatService:
         export_messages = [
             self._hydrate_message_for_public(
                 message,
+                request=request,
                 user_id=user_id,
             ).model_dump(mode="json")
             for message in messages

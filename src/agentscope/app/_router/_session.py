@@ -569,6 +569,7 @@ async def rollback_session(
     summary="Export a session as JSON payload",
 )
 async def export_session(
+    request: Request,
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
     include_system_messages: bool = Query(
@@ -610,6 +611,7 @@ async def export_session(
         )
 
     payload = await chat_service.build_session_export_payload(
+        request=request,
         user_id=user_id,
         agent_id=agent_id,
         session_id=session_id,
