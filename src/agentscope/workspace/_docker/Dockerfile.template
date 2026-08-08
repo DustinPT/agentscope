@@ -17,8 +17,7 @@ RUN apt-get update \
  && curl -LsSf https://astral.sh/uv/install.sh \
         | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
 
-{node_copy_block}ENV UV_PROJECT_ENVIRONMENT={gateway_home}/.venv \
-    UV_LINK_MODE=copy \
+{node_copy_block}ENV UV_LINK_MODE=copy \
     PATH={gateway_home}/.venv/bin:$PATH
 WORKDIR {gateway_home}
 RUN uv venv {gateway_home}/.venv

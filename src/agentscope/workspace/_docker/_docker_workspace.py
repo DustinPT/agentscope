@@ -637,7 +637,10 @@ class DockerWorkspace(WorkspaceBase):
             spec = mcp_client.model_dump(mode="json")
             assert self._gateway is not None
             gw_client = self._gateway.make_client(spec, namespace=agent_id)
-            await gw_client.connect()
+            try:
+                await gw_client.connect()
+            except Exception:
+                raise
             await self._save_agent_mcp_file(agent_id)
 
     async def remove_mcp(self, name: str) -> None:

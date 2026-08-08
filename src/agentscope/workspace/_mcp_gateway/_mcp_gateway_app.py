@@ -175,14 +175,15 @@ def _build_app(state: _State) -> FastAPI:
         body = await request.json()
         arguments = body.get("arguments") or {}
         try:
-            tool_obj = await client.get_tool(tool)
-            chunk = await tool_obj(**arguments)
+            raw_tools = await client.list_raw_tools()
+            if not any(raw.name == tool for raw in raw_tools):
+                raise ValueError(f"Tool '{tool}' not found in MCP server '{name}'")
+            result = await client.call_tool_raw(tool, arguments)
         except ValueError as e:
             raise HTTPException(404, str(e)) from e
         except Exception as e:  # noqa: BLE001
             raise HTTPException(500, str(e)) from e
-        # ToolChunk is a pydantic model — let host reconstruct it.
-        return {"chunk": chunk.model_dump(mode="json")}
+        return {"result": result.model_dump(mode="json")}
 
     return app
 

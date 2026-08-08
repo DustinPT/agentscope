@@ -29,12 +29,19 @@ import mcp.types
 from pydantic import PrivateAttr
 
 from ..mcp import MCPClient
-from ..message import ToolResultState
+from ..message import (
+    Base64Source,
+    DataBlock,
+    TextBlock,
+    ToolResultState,
+    URLSource,
+)
 from ..permission import (
     PermissionBehavior,
     PermissionDecision,
 )
 from ..tool import ToolBase, ToolChunk
+from .._logging import logger
 
 
 # ── tool ───────────────────────────────────────────────────────────
@@ -177,11 +184,81 @@ class GatewayMCPTool(ToolBase):
                 )
             payload = resp.json()
         chunk_dict = payload.get("chunk")
-        if chunk_dict is None:
-            raise RuntimeError(
-                f"gateway returned no chunk for {self.name!r}",
-            )
-        return ToolChunk.model_validate(chunk_dict)
+        if chunk_dict is not None:
+            return ToolChunk.model_validate(chunk_dict)
+
+        result_dict = payload.get("result")
+        if result_dict is not None:
+            return self._result_to_chunk(result_dict)
+
+        raise RuntimeError(
+            f"gateway returned no tool result for {self.name!r}",
+        )
+
+    @classmethod
+    def _result_to_chunk(cls, result_dict: dict[str, Any]) -> ToolChunk:
+        """Convert a raw MCP CallToolResult payload to ToolChunk."""
+        result = mcp.types.CallToolResult.model_validate(result_dict)
+        return ToolChunk(
+            content=cls._convert_mcp_content_to_blocks(result.content),
+            state=ToolResultState.ERROR
+            if result.isError
+            else ToolResultState.RUNNING,
+        )
+
+    @staticmethod
+    def _convert_mcp_content_to_blocks(
+        mcp_content_blocks: list[Any],
+    ) -> list[TextBlock | DataBlock]:
+        """Convert MCP content blocks to AgentScope blocks."""
+        as_content = []
+        for content in mcp_content_blocks:
+            if isinstance(content, mcp.types.TextContent):
+                as_content.append(TextBlock(text=content.text))
+            elif isinstance(
+                content,
+                (mcp.types.ImageContent, mcp.types.AudioContent),
+            ):
+                as_content.append(
+                    DataBlock(
+                        source=Base64Source(
+                            type="base64",
+                            media_type=content.mimeType,
+                            data=content.data,
+                        ),
+                    ),
+                )
+            elif isinstance(content, mcp.types.EmbeddedResource):
+                if isinstance(
+                    content.resource,
+                    mcp.types.TextResourceContents,
+                ):
+                    as_content.append(
+                        TextBlock(
+                            text=content.resource.model_dump_json(indent=2),
+                        ),
+                    )
+                else:
+                    logger.error(
+                        "Unsupported EmbeddedResource content type: %s. "
+                        "Skipping this content.",
+                        type(content.resource),
+                    )
+            elif isinstance(content, mcp.types.ResourceContents):
+                as_content.append(
+                    DataBlock(
+                        source=URLSource(
+                            media_type=content.mimeType,
+                            url=content.uri,
+                        ),
+                    ),
+                )
+            else:
+                logger.warning(
+                    "Unsupported content type: %s. Skipping this content.",
+                    type(content),
+                )
+        return as_content
 
 
 # ── pseudo MCP client ──────────────────────────────────────────────
@@ -275,17 +352,15 @@ class GatewayMCPClient(MCPClient):
     async def connect(self) -> None:
         """Register this MCP on the gateway via ``POST /mcps``.
 
-        Stateless MCPs are a no-op (the gateway invokes them on
-        demand). Stateful MCPs are registered and started inside the
-        gateway container; this method blocks until the gateway has
-        confirmed the upstream connection.
+        Both stateless and stateful MCPs must be registered on the
+        gateway so they appear in ``list_mcps`` and can be resolved by
+        subsequent tool calls. For stateful MCPs the gateway also
+        starts the upstream connection before responding.
 
         Raises:
             RuntimeError: If the client is already connected, or if
                 the gateway returns a 4xx/5xx response.
         """
-        if not self.is_stateful:
-            return
         if self._is_connected:
             raise RuntimeError(
                 f"MCP {self.name!r} is already connected. "
@@ -310,8 +385,9 @@ class GatewayMCPClient(MCPClient):
         """Deregister this MCP from the gateway via
         ``DELETE /mcps/{name}``.
 
-        Stateless MCPs are a no-op. For stateful MCPs the gateway
-        closes the upstream session before responding.
+        Both stateless and stateful MCPs are deregistered from the
+        gateway. For stateful MCPs the gateway closes the upstream
+        session before responding.
 
         Args:
             ignore_errors: When ``True`` (the default), suppress both
@@ -321,8 +397,6 @@ class GatewayMCPClient(MCPClient):
                 :meth:`MCPClient.close` so callers can use the same
                 shutdown idiom regardless of transport.
         """
-        if not self.is_stateful:
-            return
         if not self._is_connected:
             if ignore_errors:
                 return

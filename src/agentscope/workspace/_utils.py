@@ -47,6 +47,8 @@ _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
     "uvicorn",
     "fastapi",
     "httpx",
+    "requests",
+    "json_repair",
 )
 
 #: Basename set excluded when packaging the agentscope source tree

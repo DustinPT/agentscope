@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
 import re
-from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
+from datetime import timedelta
+from contextlib import (
+    AsyncExitStack,
+    _AsyncGeneratorContextManager,
+    asynccontextmanager,
+)
 from typing import Any, TYPE_CHECKING
 
 import httpx
@@ -19,6 +24,18 @@ if TYPE_CHECKING:
 else:
     MCPTool = Any
     ToolBase = Any
+
+
+def _find_http_status_code(exc: BaseException) -> int | None:
+    """Extract an HTTP status code from a nested transport exception."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code
+    if isinstance(exc, BaseExceptionGroup):
+        for sub_exc in exc.exceptions:
+            status_code = _find_http_status_code(sub_exc)
+            if status_code is not None:
+                return status_code
+    return None
 
 
 class MCPClient(BaseModel):
@@ -192,21 +209,51 @@ class MCPClient(BaseModel):
         """Create an HTTP MCP client (SSE or streamable HTTP)."""
         config = self.mcp_config
 
-        # Determine transport from URL
-        if config.url.endswith("/sse") or config.url.endswith("/messages/"):
-            return sse_client(
-                url=config.url,
-                headers=config.headers,
-                timeout=config.timeout,
-            )
-
-        # StreamableHTTP transport
         http_client = None
         if config.headers or config.timeout:
             http_client = httpx.AsyncClient(
                 headers=config.headers,
                 timeout=config.timeout,
             )
+
+        # Determine transport from URL. Some modern MCP deployments still
+        # expose streamable HTTP on a `/sse` path; when classic SSE probing
+        # fails with a transport-mismatch status, fall back automatically.
+        if config.url.endswith("/sse") or config.url.endswith("/messages/"):
+
+            @asynccontextmanager
+            async def _adaptive_client():
+                try:
+                    async with sse_client(
+                        url=config.url,
+                        headers=config.headers,
+                        timeout=config.timeout,
+                    ) as client:
+                        yield client
+                        return
+                except Exception as exc:
+                    status_code = _find_http_status_code(exc)
+                    if not (
+                        config.url.endswith("/sse")
+                        and status_code in {404, 405, 406}
+                    ):
+                        raise
+                    logger.info(
+                        "Falling back to streamable HTTP for MCP '%s' at %s "
+                        "after SSE probe returned HTTP %s",
+                        self.name,
+                        config.url,
+                        status_code,
+                    )
+
+                async with streamable_http_client(
+                    url=config.url,
+                    http_client=http_client,
+                ) as client:
+                    yield client
+
+            return _adaptive_client()
+
         return streamable_http_client(
             url=config.url,
             http_client=http_client,
@@ -360,6 +407,53 @@ class MCPClient(BaseModel):
         """
         raw_tools = await self.list_raw_tools()
         return [await self.get_tool(_.name) for _ in raw_tools]
+
+    async def call_tool_raw(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> mcp.types.CallToolResult:
+        """Call an MCP tool and return the raw MCP result.
+
+        This bypasses the AgentScope tool adapter layer, which is useful
+        in constrained environments such as the in-workspace gateway where
+        importing the full ``agentscope.tool`` package would unnecessarily
+        pull extra optional dependencies into the runtime.
+
+        Args:
+            name: Upstream tool name.
+            arguments: Tool arguments to forward to the MCP server.
+
+        Returns:
+            `mcp.types.CallToolResult`:
+                The raw MCP tool result returned by the server.
+        """
+        timeout = (
+            timedelta(seconds=self.execution_timeout)
+            if self.execution_timeout
+            else None
+        )
+
+        if not self.is_stateful:
+            async with self._get_client_gen() as cli:
+                read_stream, write_stream = cli[0], cli[1]
+                async with ClientSession(
+                    read_stream,
+                    write_stream,
+                ) as session:
+                    await session.initialize()
+                    return await session.call_tool(
+                        name,
+                        arguments=arguments or {},
+                        read_timeout_seconds=timeout,
+                    )
+
+        self._validate_connection()
+        return await self._session.call_tool(
+            name,
+            arguments=arguments or {},
+            read_timeout_seconds=timeout,
+        )
 
     async def get_tool(
         self,
