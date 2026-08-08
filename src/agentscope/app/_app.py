@@ -13,6 +13,7 @@ from ._router import (
     model_router,
     schedule_router,
     session_router,
+    user_router,
     workspace_router,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory, SubAgentTemplate
@@ -175,6 +176,8 @@ def create_app(
         credential_router,
         schedule_router,
         session_router,
+    user_router,
+        workspace_router,
         workspace_router,
         model_router,
     ):

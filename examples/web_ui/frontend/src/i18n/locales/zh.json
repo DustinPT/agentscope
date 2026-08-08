@@ -490,7 +490,77 @@
 		"fallbackLabelWithModel": "兜底模型（{{model}}）",
 		"parametersLabel": "参数"
 	},
-	"setup": {
+        "settings": {
+                "home": {
+                        "title": "设置",
+                        "description": "管理连接设置和全局默认模型配置。",
+                        "open": "进入",
+                        "sections": {
+                                "connection": {
+                                        "title": "连接设置",
+                                        "description": "修改当前前端使用的服务器地址和用户名。"
+                                },
+                                "modelDefaults": {
+                                        "title": "全局默认模型配置",
+                                        "description": "管理固定任务分类的默认模型。"
+                                }
+                        }
+                },
+                "connection": {
+                        "pageTitle": "连接设置",
+                        "pageDescription": "修改当前浏览器使用的服务连接信息。",
+                        "formTitle": "更新连接信息",
+                        "formDescription": "修改 API 请求使用的服务器地址和用户名。",
+                        "submit": "保存连接设置",
+                        "hint": "这些值仅保存在当前浏览器中，并用于后续 API 请求。"
+                },
+                "modelDefaults": {
+                        "title": "全局默认模型配置",
+                        "description": "按用户维度为固定任务分类配置默认模型。这些设置会持久化到服务端，供后续自动化场景复用。",
+                        "selectPlaceholder": "选择默认模型",
+                        "clear": "清空选择",
+                        "messages": {
+                                "saved": "默认模型配置已保存",
+                                "configured": "该分类已配置默认模型。",
+                                "empty": "该分类暂未配置默认模型。"
+                        },
+                        "categories": {
+                                "visualEngineering": {
+                                        "title": "visual-engineering",
+                                        "description": "前端、UI、CSS、设计"
+                                },
+                                "ultrabrain": {
+                                        "title": "ultrabrain",
+                                        "description": "需要最强推理能力"
+                                },
+                                "deep": {
+                                        "title": "deep",
+                                        "description": "深度编码、复杂逻辑"
+                                },
+                                "artistry": {
+                                        "title": "artistry",
+                                        "description": "创意性、探索性方案"
+                                },
+                                "quick": {
+                                        "title": "quick",
+                                        "description": "简单、快速任务"
+                                },
+                                "unspecifiedLow": {
+                                        "title": "unspecified-low",
+                                        "description": "通用标准任务"
+                                },
+                                "unspecifiedHigh": {
+                                        "title": "unspecified-high",
+                                        "description": "通用复杂任务"
+                                },
+                                "writing": {
+                                        "title": "writing",
+                                        "description": "文本、文档、写作"
+                                }
+                        }
+                }
+        },
+        "setup": {
 		"title": "连接到服务器",
 		"description": "请输入服务器地址和用户名以开始使用。",
 		"serverUrl": "服务器地址",

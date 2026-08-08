@@ -14,11 +14,22 @@ import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils.ts';
 
 interface Props {
-	onComplete: () => void;
+        onComplete?: () => void;
 	className?: string;
+        titleKey?: string;
+        descriptionKey?: string;
+        submitKey?: string;
+        hintKey?: string;
 }
 
-export const SetupPage = ({ onComplete, className }: Props) => {
+export const SetupPage = ({
+        onComplete,
+        className,
+        titleKey = 'setup.title',
+        descriptionKey = 'setup.description',
+        submitKey = 'setup.submit',
+        hintKey = 'setup.hint',
+}: Props) => {
 	const { t } = useTranslation();
 	const [url, setUrl] = useState(() => localStorage.getItem('server_url') ?? '');
 	const [username, setUsername] = useState(() => localStorage.getItem('username') ?? '');
@@ -27,7 +38,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 		e.preventDefault();
 		localStorage.setItem('server_url', url);
 		localStorage.setItem('username', username);
-		onComplete();
+                onComplete?.();
 	};
 
 	return (
@@ -35,8 +46,8 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 			<div className={cn('flex flex-col gap-6 w-full max-w-sm', className)}>
 				<Card>
 					<CardHeader>
-						<CardTitle>{t('setup.title')}</CardTitle>
-						<CardDescription>{t('setup.description')}</CardDescription>
+                                                <CardTitle>{t(titleKey)}</CardTitle>
+                                                <CardDescription>{t(descriptionKey)}</CardDescription>
 					</CardHeader>
 					<CardContent>
 						<form onSubmit={handleSubmit}>
@@ -69,14 +80,14 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 								</Field>
 								<Field>
 									<Button type="submit" className="w-full">
-										{t('setup.submit')}
+                                                                                {t(submitKey)}
 									</Button>
 								</Field>
 							</FieldGroup>
 						</form>
 					</CardContent>
 				</Card>
-				<FieldDescription className="px-6 text-center">{t('setup.hint')}</FieldDescription>
+                                <FieldDescription className="px-6 text-center">{t(hintKey)}</FieldDescription>
 			</div>
 		</div>
 	);

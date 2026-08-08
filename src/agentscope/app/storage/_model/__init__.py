@@ -11,7 +11,7 @@ from ._session import (
     SessionSource,
 )
 from ._team import TeamRecord, TeamData
-from ._user import UserRecord
+from ._user import GlobalDefaultModels, UserRecord
 
 __all__ = [
     "AgentData",
@@ -26,6 +26,7 @@ __all__ = [
     "SessionRecord",
     "SessionSource",
     "ChatModelConfig",
+    "GlobalDefaultModels",
     "TeamData",
     "TeamRecord",
     "UserRecord",

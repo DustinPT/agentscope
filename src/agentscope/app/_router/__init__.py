@@ -7,6 +7,7 @@ from ._credential import credential_router
 from ._schedule import schedule_router
 from ._session import session_router
 from ._model import model_router
+from ._user import user_router
 from ._workspace import workspace_router
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "credential_router",
     "schedule_router",
     "session_router",
+    "user_router",
     "workspace_router",
 ]

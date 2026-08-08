@@ -8,6 +8,7 @@ from typing import Any, Self
 from ._model import (
     AgentRecord,
     CredentialRecord,
+    UserRecord,
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
@@ -37,6 +38,39 @@ class StorageBase(ABC):
 
     async def aclose(self) -> None:
         """Release underlying connection resources. Default is a no-op."""
+
+    @abstractmethod
+    async def get_user(self, user_id: str) -> UserRecord | None:
+        """Fetch the persisted settings record for one user.
+
+        Args:
+            user_id (`str`):
+                The user id.
+
+        Returns:
+            `UserRecord | None`:
+                The stored user settings record, or ``None`` if the user has
+                not saved any settings yet.
+        """
+
+    @abstractmethod
+    async def upsert_user(
+        self,
+        user_id: str,
+        user_record: UserRecord,
+    ) -> UserRecord:
+        """Create or update the persisted settings record for one user.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            user_record (`UserRecord`):
+                The settings record to store.
+
+        Returns:
+            `UserRecord`:
+                The stored user settings record.
+        """
 
     @abstractmethod
     async def upsert_credential(

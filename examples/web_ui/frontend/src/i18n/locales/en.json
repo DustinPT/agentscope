@@ -490,7 +490,77 @@
 		"fallbackLabelWithModel": "Fallback model ({{model}})",
 		"parametersLabel": "Parameters"
 	},
-	"setup": {
+        "settings": {
+                "home": {
+                        "title": "Settings",
+                        "description": "Manage connection settings and global default model preferences.",
+                        "open": "Open",
+                        "sections": {
+                                "connection": {
+                                        "title": "Connection Settings",
+                                        "description": "Update the server URL and username used by the frontend."
+                                },
+                                "modelDefaults": {
+                                        "title": "Global Default Models",
+                                        "description": "Manage default models for fixed task categories."
+                                }
+                        }
+                },
+                "connection": {
+                        "pageTitle": "Connection Settings",
+                        "pageDescription": "Update the server connection information used by this browser.",
+                        "formTitle": "Update Connection",
+                        "formDescription": "Change the server URL and username used for API requests.",
+                        "submit": "Save Connection",
+                        "hint": "These values are stored in the current browser and used for subsequent API requests."
+                },
+                "modelDefaults": {
+                        "title": "Global Default Models",
+                        "description": "Configure user-level default models for fixed task categories. These settings are persisted on the server for future automation scenarios.",
+                        "selectPlaceholder": "Select a default model",
+                        "clear": "Clear selection",
+                        "messages": {
+                                "saved": "Default models saved",
+                                "configured": "A default model is configured for this category.",
+                                "empty": "No default model configured for this category yet."
+                        },
+                        "categories": {
+                                "visualEngineering": {
+                                        "title": "visual-engineering",
+                                        "description": "Frontend, UI, CSS, design"
+                                },
+                                "ultrabrain": {
+                                        "title": "ultrabrain",
+                                        "description": "Maximum reasoning needed"
+                                },
+                                "deep": {
+                                        "title": "deep",
+                                        "description": "Deep coding, complex logic"
+                                },
+                                "artistry": {
+                                        "title": "artistry",
+                                        "description": "Creative, novel approaches"
+                                },
+                                "quick": {
+                                        "title": "quick",
+                                        "description": "Simple, fast tasks"
+                                },
+                                "unspecifiedLow": {
+                                        "title": "unspecified-low",
+                                        "description": "General standard work"
+                                },
+                                "unspecifiedHigh": {
+                                        "title": "unspecified-high",
+                                        "description": "General complex work"
+                                },
+                                "writing": {
+                                        "title": "writing",
+                                        "description": "Text, docs, prose"
+                                }
+                        }
+                }
+        },
+        "setup": {
 		"title": "Connect to Service",
 		"description": "Enter your server URL and username to get started.",
 		"serverUrl": "Server URL",

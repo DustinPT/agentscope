@@ -13,6 +13,27 @@ export interface ChatModelConfig {
 	parameters: Record<string, unknown>;
 }
 
+export type GlobalModelCategoryKey =
+        | 'visual_engineering'
+        | 'ultrabrain'
+        | 'deep'
+        | 'artistry'
+        | 'quick'
+        | 'unspecified_low'
+        | 'unspecified_high'
+        | 'writing';
+
+export interface UserModelDefaults {
+        visual_engineering: ChatModelConfig | null;
+        ultrabrain: ChatModelConfig | null;
+        deep: ChatModelConfig | null;
+        artistry: ChatModelConfig | null;
+        quick: ChatModelConfig | null;
+        unspecified_low: ChatModelConfig | null;
+        unspecified_high: ChatModelConfig | null;
+        writing: ChatModelConfig | null;
+}
+
 export interface ContextConfig {
 	trigger_ratio?: number;
 	reserve_ratio?: number;

@@ -16,6 +16,7 @@ from ._model import (
     SessionConfig,
     SessionSource,
     TeamRecord,
+    UserRecord,
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
@@ -41,6 +42,7 @@ class RedisStorage(StorageBase):
         """
 
         # Record keys
+        user: str = "agentscope:user:{user_id}:profile"
         credential: str = (
             "agentscope:user:{user_id}:credential:{credential_id}"
         )
@@ -196,6 +198,33 @@ class RedisStorage(StorageBase):
     def get_client(self) -> Redis:
         """Get the underlying Redis client instance."""
         return self._client
+
+    async def get_user(self, user_id: str) -> UserRecord | None:
+        """Fetch the persisted settings record for one user."""
+        key = self._key(self.key_config.user, user_id=user_id)
+        raw = await self._client.get(key)
+        return UserRecord.model_validate_json(raw) if raw else None
+
+    async def upsert_user(
+        self,
+        user_id: str,
+        user_record: UserRecord,
+    ) -> UserRecord:
+        """Create or update the persisted settings record for one user."""
+        key = self._key(self.key_config.user, user_id=user_id)
+        raw = await self._client.get(key)
+        if raw:
+            record = UserRecord.model_validate_json(raw)
+            record.global_default_models = user_record.global_default_models
+            record.updated_at = datetime.now()
+        else:
+            record = UserRecord(
+                id=user_record.id,
+                user_id=user_id,
+                global_default_models=user_record.global_default_models,
+            )
+        await self._set_with_ttl(key, record.model_dump_json())
+        return record
 
     async def _generate_credential_name(
         self,

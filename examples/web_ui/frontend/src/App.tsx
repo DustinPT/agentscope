@@ -10,6 +10,7 @@ import { useTranslation } from '@/i18n/useI18n';
 import { ChatPage } from '@/pages/chat';
 import { CredentialPage } from '@/pages/credential';
 import { SchedulePage } from '@/pages/schedule';
+import { ModelDefaultsPage, SettingsConnectionPage, SettingsHomePage } from '@/pages/settings';
 import { SetupPage } from '@/pages/setup';
 
 function SetupPageRoute() {
@@ -36,6 +37,9 @@ const router = createBrowserRouter([
 			{ path: '/chat/:agentId/:sessionId/:memberId', element: <ChatPage /> },
 			{ path: '/schedule', element: <SchedulePage /> },
 			{ path: '/credential', element: <CredentialPage /> },
+                        { path: '/settings', element: <SettingsHomePage /> },
+                        { path: '/settings/connection', element: <SettingsConnectionPage /> },
+                        { path: '/settings/model-defaults', element: <ModelDefaultsPage /> },
 		],
 	},
 	{ path: '/setup', element: <SetupPageRoute /> },

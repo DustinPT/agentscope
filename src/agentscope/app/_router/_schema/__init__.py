@@ -48,6 +48,10 @@ from ._session import (
     TeamDetailResponse,
     TeamMemberView,
 )
+from ._user import (
+    UpdateUserModelDefaultsRequest,
+    UserModelDefaultsResponse,
+)
 
 __all__ = [
     # Agent
@@ -98,4 +102,7 @@ __all__ = [
     "SubAgentSessionView",
     "TeamDetailResponse",
     "TeamMemberView",
+    # User
+    "UpdateUserModelDefaultsRequest",
+    "UserModelDefaultsResponse",
 ]
