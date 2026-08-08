@@ -46,7 +46,13 @@ export interface ReActConfig {
 	stop_on_reject?: boolean;
 	enable_tool_offload?: boolean;
 	enabled_builtin_tool_groups?: Array<
-		'read' | 'edit' | 'schedule' | 'terminal' | 'team'
+                | 'read'
+                | 'edit'
+                | 'schedule'
+                | 'terminal'
+                | 'team'
+                | 'agent_management'
+                | 'session_management'
 	>;
 }
 

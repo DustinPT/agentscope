@@ -275,6 +275,14 @@
 				"team": {
 					"label": "团队",
 					"description": "管理智能体团队及通信，包含 TeamCreate、AgentCreate、TeamSay、TeamDelete。"
+                                },
+                                "agent_management": {
+                                        "label": "智能体管理",
+                                        "description": "管理智能体安装包，包含 ImportAgentPackage。"
+                                },
+                                "session_management": {
+                                        "label": "会话管理",
+                                        "description": "驱动测试会话交互，包含 CreateTestSession、SendSessionMessage、WaitNewMessages、ConfirmToolCalls、SubmitExternalResults。"
 				}
 			}
 		},

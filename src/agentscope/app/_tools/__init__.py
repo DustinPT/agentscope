@@ -25,16 +25,28 @@ Selection of the right subset by ``agent.source`` happens inline in
 :func:`get_toolkit`; there is no separate "team tool factory" helper.
 """
 from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
+from ._confirm_tool_calls import ConfirmToolCalls
+from ._create_test_session import CreateTestSession
+from ._import_agent_package import ImportAgentPackage
+from ._send_session_message import SendSessionMessage
 from ._subagent_run import SubAgentRun
+from ._submit_external_results import SubmitExternalResults
 from ._team_create import TeamCreate
 from ._team_delete import TeamDelete
 from ._team_say import TeamSay
+from ._wait_new_messages import WaitNewMessages
 
 __all__ = [
     "AgentCreate",
+    "ConfirmToolCalls",
+    "CreateTestSession",
     "DEFAULT_SUB_AGENT_TEMPLATE",
+    "ImportAgentPackage",
+    "SendSessionMessage",
     "SubAgentRun",
+    "SubmitExternalResults",
     "TeamCreate",
     "TeamDelete",
     "TeamSay",
+    "WaitNewMessages",
 ]

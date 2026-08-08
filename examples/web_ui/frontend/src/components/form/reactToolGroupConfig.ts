@@ -14,6 +14,8 @@ export const ALL_BUILTIN_TOOL_GROUPS: BuiltinToolGroup[] = [
 	'schedule',
 	'terminal',
 	'team',
+        'agent_management',
+        'session_management',
 ];
 
 export function normalizeBuiltinToolGroups(

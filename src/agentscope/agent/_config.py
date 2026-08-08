@@ -147,7 +147,15 @@ class ReActConfig(BaseModel):
     """Whether long-running tool calls can be offloaded to the background."""
 
     enabled_builtin_tool_groups: list[
-        Literal["read", "edit", "schedule", "terminal", "team"]
+        Literal[
+            "read",
+            "edit",
+            "schedule",
+            "terminal",
+            "team",
+            "agent_management",
+            "session_management",
+        ]
     ] = Field(
         title="Enabled Builtin Tool Groups",
         default_factory=lambda: [
@@ -160,7 +168,8 @@ class ReActConfig(BaseModel):
         description=(
             "Builtin tool groups enabled for this agent. Controls file "
             "reading, file editing, schedule management, terminal access, "
-            "and team collaboration tools."
+            "team collaboration tools, agent package management, and "
+            "session management tools."
         ),
     )
     """Builtin tool groups enabled for this agent."""

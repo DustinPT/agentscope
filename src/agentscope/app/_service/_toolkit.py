@@ -6,16 +6,29 @@ workspace builtins, skills, MCPs, planning tools (Task*), schedule
 control (Schedule*), team participation tools, and caller-supplied extras
 — into one :class:`Toolkit`.
 """
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .._manager import (
     BackgroundTaskManager,
     SchedulerManager,
 )
 from ..message_bus import MessageBus
-from .._tools import AgentCreate, SubAgentRun, TeamCreate, TeamDelete, TeamSay
+from .._tools import (
+    AgentCreate,
+    ConfirmToolCalls,
+    CreateTestSession,
+    ImportAgentPackage,
+    SendSessionMessage,
+    SubAgentRun,
+    SubmitExternalResults,
+    TeamCreate,
+    TeamDelete,
+    TeamSay,
+    WaitNewMessages,
+)
 from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
+from .._manager import ChatRunRegistry
 from ...tool import (
     TaskCreate,
     TaskGet,
@@ -25,6 +38,10 @@ from ...tool import (
 )
 from ...workspace import WorkspaceBase
 
+if TYPE_CHECKING:
+    from ._agent_asset_store import AgentAssetStore
+    from ._chat import ChatService
+
 
 async def get_toolkit(
     *,
@@ -33,9 +50,12 @@ async def get_toolkit(
     scheduler_manager: SchedulerManager,
     background_task_manager: BackgroundTaskManager,
     message_bus: MessageBus,
+    chat_service: "ChatService",
+    chat_run_registry: ChatRunRegistry,
     user_id: str,
     agent_record: AgentRecord,
     session_record: SessionRecord,
+    agent_asset_store: "AgentAssetStore | None" = None,
     extra_factory: AgentToolFactory | None = None,
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
 ) -> Toolkit:
@@ -146,6 +166,31 @@ optional):
                 agent_id=agent_record.id,
                 chat_model_config=session_record.config.chat_model_config,
             ),
+        )
+
+    managed_tool_kwargs: dict[str, Any] = {
+        "storage": storage,
+        "message_bus": message_bus,
+        "chat_service": chat_service,
+        "chat_run_registry": chat_run_registry,
+        "workspace": workspace,
+        "user_id": user_id,
+        "session_id": session_record.id,
+        "agent_id": agent_record.id,
+        "workspace_id": session_record.config.workspace_id,
+        "agent_asset_store": agent_asset_store,
+    }
+    if "agent_management" in enabled_builtin_tool_groups:
+        tools.append(ImportAgentPackage(**managed_tool_kwargs))
+    if "session_management" in enabled_builtin_tool_groups:
+        tools.extend(
+            [
+                CreateTestSession(**managed_tool_kwargs),
+                SendSessionMessage(**managed_tool_kwargs),
+                WaitNewMessages(**managed_tool_kwargs),
+                ConfirmToolCalls(**managed_tool_kwargs),
+                SubmitExternalResults(**managed_tool_kwargs),
+            ],
         )
 
     # Team tools — variant based on ``agent_record.source``. A worker

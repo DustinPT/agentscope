@@ -20,7 +20,15 @@ interface Props {
 	onChange: (value: ReActToolGroupConfigValue) => void;
 }
 
-const TOOL_GROUPS: BuiltinToolGroup[] = ['read', 'edit', 'schedule', 'terminal', 'team'];
+const TOOL_GROUPS: BuiltinToolGroup[] = [
+        'read',
+        'edit',
+        'schedule',
+        'terminal',
+        'team',
+        'agent_management',
+        'session_management',
+];
 
 export function ReActToolGroupFields({ value, onChange }: Props) {
 	const { t } = useTranslation();

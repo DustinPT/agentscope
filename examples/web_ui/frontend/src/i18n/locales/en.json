@@ -275,6 +275,14 @@
 				"team": {
 					"label": "Team",
 					"description": "Manage agent teams and communication with TeamCreate, AgentCreate, TeamSay, and TeamDelete."
+                                },
+                                "agent_management": {
+                                        "label": "Agent Management",
+                                        "description": "Manage agent packages with ImportAgentPackage."
+                                },
+                                "session_management": {
+                                        "label": "Session Management",
+                                        "description": "Drive test-session interactions with CreateTestSession, SendSessionMessage, WaitNewMessages, ConfirmToolCalls, and SubmitExternalResults."
 				}
 			}
 		},

@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """Request / response schemas for the agent router."""
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from ....mcp import MCPClient
 from ....agent import ContextConfig, ReActConfig
+from ..._models._agent_package import (
+    AgentPackageImportResponse,
+    AgentPackageImportResult,
+)
 from ...storage import (
     AgentMCPAsset,
     AgentRecord,
@@ -132,29 +135,6 @@ class AgentComposeResponse(BaseModel):
     """Response body for compose create/update endpoints."""
 
     agent: AgentRecord
-
-
-class AgentPackageImportResult(BaseModel):
-    """One create/update result produced by package import."""
-
-    agent_id: str = Field(description="Imported agent ID.")
-    action: Literal["created", "updated"] = Field(
-        description="Whether the agent was created or updated.",
-    )
-    agent: AgentRecord = Field(description="The imported agent record.")
-
-
-class AgentPackageImportResponse(BaseModel):
-    """Response body for agent package import."""
-
-    main_agent_id: str = Field(
-        description="Imported main agent ID resolved from config.json.main_agent_slug.",
-    )
-    results: list[AgentPackageImportResult] = Field(
-        description="Per-agent import results.",
-    )
-    created_count: int = Field(description="Number of created agents.")
-    updated_count: int = Field(description="Number of updated agents.")
 
 
 class AgentSkillListResponse(BaseModel):
