@@ -456,6 +456,15 @@ export interface Skill {
 	content_hash: string;
 }
 
+export interface ProjectDirectoryEntry {
+        name: string;
+        path: string;
+        is_dir: boolean;
+        mime_type?: string | null;
+        size_bytes?: number | null;
+        mtime?: number | null;
+}
+
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 
 export type PermissionMode =

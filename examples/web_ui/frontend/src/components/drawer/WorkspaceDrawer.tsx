@@ -1,7 +1,8 @@
 import { Search } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
-import type { MCPClientStatus, Skill } from '@/api';
+import type { MCPClientStatus, ProjectDirectoryEntry, Skill } from '@/api';
+import { ProjectDirectoryTab } from '@/components/drawer/ProjectDirectoryTab';
 import {
 	Drawer,
 	DrawerContent,
@@ -22,6 +23,9 @@ interface WorkspaceDrawerProps {
 	loading?: boolean;
 	skills: Skill[];
 	skillsLoading?: boolean;
+        listProjectDirectory: (path?: string) => Promise<ProjectDirectoryEntry[]>;
+        buildProjectDirectoryDownloadUrl: (path?: string) => string | null;
+        buildProjectDirectoryPreviewUrl: (path: string) => string | null;
 }
 
 export function WorkspaceDrawer({
@@ -30,6 +34,9 @@ export function WorkspaceDrawer({
 	loading = false,
 	skills,
 	skillsLoading = false,
+        listProjectDirectory,
+        buildProjectDirectoryDownloadUrl,
+        buildProjectDirectoryPreviewUrl,
 }: WorkspaceDrawerProps) {
 	const { t } = useTranslation();
 	const [search, setSearch] = useState('');
@@ -56,6 +63,9 @@ export function WorkspaceDrawer({
 						<TabsList className={'w-full'}>
 							<TabsTrigger value={'mcp'}>MCP</TabsTrigger>
                                                         <TabsTrigger value={'skill'}>{t('workspace-drawer.skillTab')}</TabsTrigger>
+                                                        <TabsTrigger value={'project'}>
+                                                                {t('workspace-drawer.projectTab')}
+                                                        </TabsTrigger>
 						</TabsList>
 						<TabsContent value={'mcp'} asChild>
 							<div className="flex flex-col no-scrollbar overflow-y-auto gap-y-2">
@@ -147,6 +157,17 @@ export function WorkspaceDrawer({
 								)}
 							</div>
 						</TabsContent>
+                                                <TabsContent value={'project'} asChild>
+                                                        <ProjectDirectoryTab
+                                                                listProjectDirectory={listProjectDirectory}
+                                                                buildProjectDirectoryDownloadUrl={
+                                                                        buildProjectDirectoryDownloadUrl
+                                                                }
+                                                                buildProjectDirectoryPreviewUrl={
+                                                                        buildProjectDirectoryPreviewUrl
+                                                                }
+                                                        />
+                                                </TabsContent>
 					</Tabs>
 				</div>
 			</DrawerContent>

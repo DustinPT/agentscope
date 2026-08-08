@@ -154,8 +154,9 @@
 	},
         "workspace-drawer": {
                 "title": "Workspace",
-                "description": "View the MCP servers and skills available in this session workspace.",
+                "description": "View the MCP servers, skills, and project directory available in this session workspace.",
                 "skillTab": "Skill",
+                "projectTab": "Project Directory",
                 "mcp": {
                         "description": "MCP servers currently available in the workspace.",
                         "searchPlaceholder": "Search MCP servers in the workspace",
@@ -166,6 +167,26 @@
                         "description": "Skills currently available in the workspace.",
                         "searchPlaceholder": "Search skills in the workspace",
                         "empty": "No skills found"
+                },
+                "project": {
+                        "description": "Browse and download files and directories from the current session project directory.",
+                        "refresh": "Refresh",
+                        "preview": "Preview",
+                        "copy": "Copy",
+                        "copySuccess": "Preview content copied",
+                        "copyFailed": "Failed to copy content",
+                        "previewTitle": "File Preview",
+                        "previewDescription": "Preview file contents from the current project directory.",
+                        "previewLoadFailed": "Failed to load preview",
+                        "previewUnsupported": "This file type does not support preview yet",
+                        "downloadProject": "Download Project Directory",
+                        "downloadDirectory": "Download Directory",
+                        "downloadFile": "Download File",
+                        "loadFailed": "Failed to load the project directory",
+                        "emptyRoot": "The project directory is empty. Files created by the agent will appear here.",
+                        "emptyDirectory": "This directory is empty",
+                        "directoryMeta": "Updated {{updatedAt}}",
+                        "fileMeta": "{{size}} · Updated {{updatedAt}}"
                 }
         },
 	"dialog-agent-create": {

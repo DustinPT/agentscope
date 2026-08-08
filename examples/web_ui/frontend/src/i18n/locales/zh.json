@@ -154,8 +154,9 @@
 	},
         "workspace-drawer": {
                 "title": "工作区",
-                "description": "查看当前会话工作区中的 MCP 与技能。",
+                "description": "查看当前会话工作区中的 MCP、技能与项目目录。",
                 "skillTab": "技能",
+                "projectTab": "项目目录",
                 "mcp": {
                         "description": "当前工作区中可用的 MCP 服务。",
                         "searchPlaceholder": "搜索工作区中的 MCP",
@@ -166,6 +167,26 @@
                         "description": "当前工作区中可用的技能。",
                         "searchPlaceholder": "搜索工作区中的技能",
                         "empty": "暂无技能"
+                },
+                "project": {
+                        "description": "查看当前会话项目目录中的文件和目录，并支持直接下载。",
+                        "refresh": "刷新",
+                        "preview": "预览",
+                        "copy": "复制",
+                        "copySuccess": "已复制预览内容",
+                        "copyFailed": "复制失败",
+                        "previewTitle": "文件预览",
+                        "previewDescription": "预览当前项目目录中的文件内容。",
+                        "previewLoadFailed": "加载预览失败",
+                        "previewUnsupported": "当前文件类型暂不支持预览",
+                        "downloadProject": "下载整个项目目录",
+                        "downloadDirectory": "打包下载目录",
+                        "downloadFile": "下载文件",
+                        "loadFailed": "加载项目目录失败",
+                        "emptyRoot": "当前项目目录为空，Agent 创建文件后会显示在这里。",
+                        "emptyDirectory": "该目录为空",
+                        "directoryMeta": "更新时间 {{updatedAt}}",
+                        "fileMeta": "{{size}} · 更新时间 {{updatedAt}}"
                 }
         },
 	"dialog-agent-create": {

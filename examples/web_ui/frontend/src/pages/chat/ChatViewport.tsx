@@ -158,6 +158,9 @@ export function ChatViewport({
 		loading: mcpsLoading,
 		skills,
 		skillsLoading,
+                listProjectDirectory,
+                buildProjectDirectoryDownloadUrl,
+                buildProjectDirectoryPreviewUrl,
         } = useWorkspace(agentId, sessionId);
 
 	const view = sessionViewOverride ?? sessions.find((v) => v.session.id === sessionId) ?? null;
@@ -544,6 +547,13 @@ export function ChatViewport({
 						loading={mcpsLoading}
 						skills={skills}
 						skillsLoading={skillsLoading}
+                                                listProjectDirectory={listProjectDirectory}
+                                                buildProjectDirectoryDownloadUrl={
+                                                        buildProjectDirectoryDownloadUrl
+                                                }
+                                                buildProjectDirectoryPreviewUrl={
+                                                        buildProjectDirectoryPreviewUrl
+                                                }
 					>
 						<Button size="icon-sm" variant="ghost">
 							<Toolbox />
