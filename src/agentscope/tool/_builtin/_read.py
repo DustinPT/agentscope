@@ -25,8 +25,8 @@ class Read(ToolBase):
     """The tool name presented to the agent."""
 
     # pylint: disable=line-too-long
-    description: str = """Reads a file from the local filesystem. You can access any file directly by using this tool.
-Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
+    description: str = """Reads text and image files from the local filesystem.
+This tool only supports text files and common image files. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
 Usage:
 - The file_path parameter must be an absolute path, not a relative path
@@ -34,7 +34,8 @@ Usage:
 - You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
 - For text files, the result includes a summary header with completeness, total lines, returned range, and remaining lines
 - Text file contents are returned using cat -n format, with line numbers starting at 1
-- This tool allows you to read common image files (eg PNG, JPG, GIF, WEBP, etc). When reading an image file, the result includes the image as multimodal content."""  # noqa: E501
+- This tool allows you to read common image files (eg PNG, JPG, GIF, WEBP, etc). When reading an image file, the result includes the image as multimodal content
+- PDF files and other binary files are not supported and will return an error."""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
