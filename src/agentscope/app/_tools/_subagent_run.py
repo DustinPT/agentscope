@@ -16,6 +16,7 @@ from ...permission import (
     PermissionContext,
     PermissionDecision,
 )
+from ...state import AgentState
 from ..storage import SessionConfig, SessionSource
 
 if TYPE_CHECKING:
@@ -303,6 +304,11 @@ Important:
         child_session_id: str
         child_session_name: str
         if session_id is None:
+            child_state = AgentState(
+                permission_context=PermissionContext(
+                    mode=caller_session.state.permission_context.mode,
+                ),
+            )
             child_session = await self._storage.upsert_session(
                 user_id=self._user_id,
                 agent_id=agent_id,
@@ -312,6 +318,7 @@ Important:
                     chat_model_config=chat_model_config,
                     fallback_chat_model_config=fallback_chat_model_config,
                 ),
+                state=child_state,
                 source=SessionSource.SUBAGENT,
                 parent_session_id=self._session_id,
                 parent_tool_call_id=None,
