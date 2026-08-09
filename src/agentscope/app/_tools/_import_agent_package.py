@@ -34,6 +34,30 @@ class ImportAgentPackage(_SessionToolBase):
     input_schema: dict[str, Any] = _ImportAgentPackageParams.model_json_schema()
     is_read_only = False
 
+    def _build_compact_result(
+        self,
+        *,
+        package_path: str,
+        main_agent_id: str,
+        created_count: int,
+        updated_count: int,
+        results: list[Any],
+    ) -> dict[str, Any]:
+        """Build a compact import summary for agent consumption."""
+        return {
+            "package_path": package_path,
+            "main_agent_id": main_agent_id,
+            "created_count": created_count,
+            "updated_count": updated_count,
+            "imported_agents": [
+                {
+                    "agent_id": item.agent_id,
+                    "action": item.action,
+                }
+                for item in results
+            ],
+        }
+
     async def call(
         self,
         package_path: str,
@@ -74,9 +98,13 @@ class ImportAgentPackage(_SessionToolBase):
                 storage=self._storage,
                 asset_store=self._agent_asset_store,
             )
-            payload = response.model_dump(mode="json")
-            payload["package_path"] = package_path
-            payload["source_workspace_id"] = self._workspace_id
+            payload = self._build_compact_result(
+                package_path=package_path,
+                main_agent_id=response.main_agent_id,
+                created_count=response.created_count,
+                updated_count=response.updated_count,
+                results=response.results,
+            )
             return self._result(payload)
         except Exception as exc:  # noqa: BLE001
             return self._result(
