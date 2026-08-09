@@ -36,7 +36,15 @@ from ..tool import BackendBase, ToolBase
 DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS = """### Local Directory Boundary
 1. Only treat a local path as a user directory when the user has explicitly provided it or explicitly authorized checking it.
 2. The system's default working directory exists only to run the agent or tools and is not the same as a user directory.
-3. Do not proactively scan local files merely because a system default working directory exists, unless the user has explicitly authorized it."""
+3. Do not proactively scan local files merely because a system default working directory exists, unless the user has explicitly authorized it.
+
+### Project Directory Discipline
+1. If the user needs file operations and has not provided a project directory, call `CreateProjectDirectory` before creating, downloading, extracting, editing, or generating task files.
+2. After `CreateProjectDirectory` returns a directory, treat that directory as the canonical project root for the current task.
+3. Unless the user explicitly provides or approves another path, keep all task files under that project directory, including source files, generated artifacts, intermediate files, temporary work files, scripts, and downloaded assets.
+4. Do not place task files in `/tmp`, the process current working directory, or arbitrary workspace root locations just because they are convenient.
+5. If a tool or command must briefly use an OS temp location, move the resulting files back into the project directory before presenting them as task outputs or continuing later file operations.
+6. When using shell commands for task files, prefer running them in the project directory or with explicit paths rooted in that project directory."""
 
 
 class WorkspaceBase:

@@ -26,7 +26,12 @@ class CreateProjectDirectory(ToolBase):
         "directory and you need to work with files. If the user already "
         "provided a project directory, work in that directory instead and "
         "do not call this tool. After calling it, tell the user which "
-        "directory you are using."
+        "directory you are using and treat it as the canonical project "
+        "root for the task. Unless the user explicitly approves another "
+        "path, keep all task files in that directory, including generated "
+        "files, downloads, extracted files, and temporary work files. Do "
+        "not place task files in /tmp or the current working directory "
+        "just because they are convenient."
     )
     input_schema: dict[str, Any] = {
         "type": "object",
