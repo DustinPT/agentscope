@@ -20,6 +20,8 @@ interface Props {
 	placeholderFor?: (key: string, prop: JSONSchemaProperty) => string | undefined;
 	/** Optional override for the helper text shown under a field. */
 	descriptionFor?: (key: string, prop: JSONSchemaProperty) => string | undefined;
+        /** Optional class override for textarea fields. */
+        textareaClassNameFor?: (key: string, prop: JSONSchemaProperty) => string | undefined;
 	/** Prefix for generated DOM IDs (so multiple SchemaForms on one page don't collide). */
 	idPrefix?: string;
 }
@@ -57,6 +59,7 @@ export function SchemaForm({
 	labelFor,
 	placeholderFor,
 	descriptionFor,
+        textareaClassNameFor,
 	idPrefix = 'schema-form',
 }: Props) {
 	const entries = Object.entries(schema.properties ?? {}).filter(
@@ -77,6 +80,7 @@ export function SchemaForm({
 				const label = labelFor?.(key, prop) ?? prop.title ?? key.replace(/_/g, ' ');
 				const placeholder = placeholderFor?.(key, prop) ?? prop.description;
 				const description = descriptionFor?.(key, prop);
+                                const textareaClassName = textareaClassNameFor?.(key, prop);
 				const current = values[key];
 
 				if (isBoolean) {
@@ -105,6 +109,7 @@ export function SchemaForm({
 							<Textarea
 								id={fieldId}
 								rows={3}
+                                                                className={textareaClassName}
 								value={(current as string | undefined) ?? ''}
 								onChange={(e) => onChange(key, e.target.value)}
 								placeholder={placeholder}

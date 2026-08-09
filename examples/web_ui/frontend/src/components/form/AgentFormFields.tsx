@@ -79,6 +79,11 @@ export function AgentFormFields({
 										defaultValue: prop.description ?? '',
 									}) || undefined
 								}
+                                                                textareaClassNameFor={(k) =>
+                                                                        sectionKey === 'identity' && k === 'system_prompt'
+                                                                                ? 'min-h-32 max-h-60 overflow-y-auto resize-y'
+                                                                                : undefined
+                                                                }
 							/>
 							{renderInSection?.(sectionKey)}
 						</FieldSet>
