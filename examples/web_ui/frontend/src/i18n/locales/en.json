@@ -282,7 +282,7 @@
                                 },
                                 "session_management": {
                                         "label": "Session Management",
-                                        "description": "Drive test-session interactions with CreateTestSession, SendSessionMessage, WaitNewMessages, ConfirmToolCalls, and SubmitExternalResults."
+                                        "description": "Drive test-session interactions with CreateTestSession, SendSessionMessage, WaitNewMessages, ConfirmToolCalls, SubmitExternalResults, and InterruptSession."
 				}
 			}
 		},

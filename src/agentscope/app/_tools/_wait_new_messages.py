@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import Field
 
-from ...message import Msg, ToolCallState, ToolResultState
+from ...message import Msg, ToolResultState
 from ...tool import ParamsBase
 from ._session_tool_base import _SessionToolBase
 
@@ -47,8 +47,11 @@ class WaitNewMessages(_SessionToolBase):
     name = "WaitNewMessages"
     description = (
         "Wait for new messages and content blocks in a managed session. "
-        "Returns only the content the caller has not consumed yet, plus "
-        "the reason why this waiting round stopped."
+        "Returns only the unread delta plus the single allowed next action: "
+        "reply_completed -> SendSessionMessage, "
+        "require_user_confirm -> ConfirmToolCalls for asking tool calls, "
+        "require_external_execution -> SubmitExternalResults for submitted "
+        "tool calls. Never mix multiple progress operations in one round."
     )
     input_schema: dict[str, Any] = _WaitNewMessagesParams.model_json_schema()
     is_read_only = True
@@ -109,50 +112,6 @@ class WaitNewMessages(_SessionToolBase):
             )
         return new_messages
 
-    def _resolve_stop_reason(
-        self,
-        *,
-        session,
-        observed_activity: bool,
-    ) -> tuple[str | None, str | None, list[dict[str, Any]]]:
-        """Infer why the current waiting round stopped."""
-        current_reply = self._get_current_reply(session)
-        if current_reply is None:
-            return (
-                "reply_completed" if observed_activity else None,
-                None,
-                [],
-            )
-
-        tool_calls = current_reply.get_content_blocks("tool_call")
-        asking = [
-            tool_call
-            for tool_call in tool_calls
-            if tool_call.state == ToolCallState.ASKING
-        ]
-        if asking:
-            return (
-                "require_user_confirm",
-                current_reply.id,
-                [self._serialize_block(tool_call) for tool_call in asking],
-            )
-
-        submitted = [
-            tool_call
-            for tool_call in tool_calls
-            if tool_call.state == ToolCallState.SUBMITTED
-        ]
-        if submitted:
-            return (
-                "require_external_execution",
-                current_reply.id,
-                [self._serialize_block(tool_call) for tool_call in submitted],
-            )
-
-        if observed_activity:
-            return ("reply_completed", current_reply.id, [])
-        return (None, None, [])
-
     async def call(
         self,
         agent_id: str,
@@ -202,10 +161,15 @@ class WaitNewMessages(_SessionToolBase):
             is_running = await self._message_bus.session_is_running(session_id)
             if is_running:
                 observed_running = True
-            stop_reason, reply_id, tool_calls = self._resolve_stop_reason(
-                session=session,
-                observed_activity=observed_activity or observed_running,
+            stop_reason, reply_id, tool_calls = self._resolve_session_stop_reason(
+                session,
             )
+            if not (observed_activity or observed_running) and stop_reason == (
+                "reply_completed"
+            ):
+                stop_reason = None
+                reply_id = None
+                tool_calls = []
             if not is_running and stop_reason is not None:
                 latest_message_id = messages[-1].id if messages else last_message_id
                 latest_block_id = (

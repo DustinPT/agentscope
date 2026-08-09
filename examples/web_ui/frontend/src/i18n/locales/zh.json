@@ -282,7 +282,7 @@
                                 },
                                 "session_management": {
                                         "label": "会话管理",
-                                        "description": "驱动测试会话交互，包含 CreateTestSession、SendSessionMessage、WaitNewMessages、ConfirmToolCalls、SubmitExternalResults。"
+                                        "description": "驱动测试会话交互，包含 CreateTestSession、SendSessionMessage、WaitNewMessages、ConfirmToolCalls、SubmitExternalResults、InterruptSession。"
 				}
 			}
 		},

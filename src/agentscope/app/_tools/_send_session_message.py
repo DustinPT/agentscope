@@ -24,7 +24,10 @@ class SendSessionMessage(_SessionToolBase):
 
     name = "SendSessionMessage"
     description = (
-        "Send one user message to a managed session and start a chat run."
+        "Send one user message to a managed session and start a chat run. "
+        "Use this only when WaitNewMessages.stop_reason is reply_completed. "
+        "Do not use it to resume a session that is waiting for "
+        "ConfirmToolCalls or SubmitExternalResults."
     )
     input_schema: dict[str, Any] = _SendSessionMessageParams.model_json_schema()
     is_read_only = False
@@ -42,6 +45,22 @@ class SendSessionMessage(_SessionToolBase):
         if session is None:
             return self._result(
                 {"error": f"Session '{session_id}' not found for agent '{agent_id}'."},
+                state=ToolResultState.ERROR,
+            )
+        stop_reason, reply_id, tool_calls = self._resolve_session_stop_reason(
+            session,
+        )
+        if stop_reason != "reply_completed":
+            return self._result(
+                {
+                    "error": (
+                        "SendSessionMessage is only allowed when the managed "
+                        "session is stopped at reply_completed."
+                    ),
+                    "stop_reason": stop_reason,
+                    "reply_id": reply_id,
+                    "tool_calls": tool_calls,
+                },
                 state=ToolResultState.ERROR,
             )
 

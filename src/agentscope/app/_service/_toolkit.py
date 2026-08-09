@@ -18,6 +18,7 @@ from .._tools import (
     ConfirmToolCalls,
     CreateTestSession,
     ImportAgentPackage,
+    InterruptSession,
     SendSessionMessage,
     SubAgentRun,
     SubmitExternalResults,
@@ -190,6 +191,7 @@ optional):
                 WaitNewMessages(**managed_tool_kwargs),
                 ConfirmToolCalls(**managed_tool_kwargs),
                 SubmitExternalResults(**managed_tool_kwargs),
+                InterruptSession(**managed_tool_kwargs),
             ],
         )
 

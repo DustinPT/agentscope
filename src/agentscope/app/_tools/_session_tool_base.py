@@ -2,6 +2,7 @@
 """Shared helpers for framework-builtin testing tools."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -14,9 +15,17 @@ from starlette.datastructures import UploadFile
 from ...event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
+    SessionInterruptEvent,
     UserConfirmResultEvent,
 )
-from ...message import Msg, TextBlock, ToolCallBlock, ToolResultBlock, ToolResultState
+from ...message import (
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ToolCallState,
+    ToolResultBlock,
+    ToolResultState,
+)
 from ...permission import (
     PermissionBehavior,
     PermissionContext,
@@ -32,6 +41,8 @@ if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import AgentRecord, SessionRecord, StorageBase, UserRecord
     from ...workspace import WorkspaceBase
+
+_CANCEL_POLL_INTERVAL_SECS = 0.1
 
 
 class _SessionToolBase(ToolBase):
@@ -303,4 +314,113 @@ class _SessionToolBase(ToolBase):
         return ExternalExecutionResultEvent(
             reply_id=reply_id,
             execution_results=execution_results,
+        )
+
+    def _resolve_session_stop_reason(
+        self,
+        session: "SessionRecord",
+    ) -> tuple[str, str | None, list[dict[str, Any]]]:
+        """Return the single allowed next-step category for one session."""
+        current_reply = self._get_current_reply(session)
+        if current_reply is None:
+            return ("reply_completed", None, [])
+
+        tool_calls = current_reply.get_content_blocks("tool_call")
+        asking = [
+            tool_call
+            for tool_call in tool_calls
+            if tool_call.state == ToolCallState.ASKING
+        ]
+        if asking:
+            return (
+                "require_user_confirm",
+                current_reply.id,
+                [self._serialize_block(tool_call) for tool_call in asking],
+            )
+
+        submitted = [
+            tool_call
+            for tool_call in tool_calls
+            if tool_call.state == ToolCallState.SUBMITTED
+        ]
+        if submitted:
+            return (
+                "require_external_execution",
+                current_reply.id,
+                [self._serialize_block(tool_call) for tool_call in submitted],
+            )
+
+        return ("reply_completed", current_reply.id, [])
+
+    def _has_interruptible_tool_calls(
+        self,
+        session: "SessionRecord",
+    ) -> bool:
+        """Return whether the session is parked on interruptible tool calls."""
+        current_reply = self._get_current_reply(session)
+        if current_reply is None:
+            return False
+        return any(
+            tool_call.state
+            in (
+                ToolCallState.ASKING,
+                ToolCallState.SUBMITTED,
+                ToolCallState.PENDING,
+                ToolCallState.ALLOWED,
+            )
+            for tool_call in current_reply.get_content_blocks("tool_call")
+        )
+
+    async def _interrupt_managed_session(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        reason: str | None = None,
+        timeout: float = 10.0,
+    ) -> tuple[bool, "SessionRecord | None"]:
+        """Cancel a session run and clean up waiting tool interactions."""
+        was_running = await self._message_bus.session_is_running(session_id)
+        await self._message_bus.session_publish_cancel(session_id)
+
+        released = True
+        if was_running:
+            deadline = asyncio.get_running_loop().time() + timeout
+            while True:
+                if not await self._message_bus.session_is_running(session_id):
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    released = False
+                    break
+                await asyncio.sleep(_CANCEL_POLL_INTERVAL_SECS)
+
+        session = await self._get_owned_session(
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+        if session is None or not self._has_interruptible_tool_calls(session):
+            return released, session
+
+        interrupt_event = SessionInterruptEvent(
+            reply_id=session.state.reply_id,
+            source="session_management_tool",
+            reason=reason or "Session interrupted by InterruptSession tool.",
+            cascade_root_session_id=None,
+        )
+        existing = self._chat_run_registry.get(session.id)
+        if existing is None or existing.done():
+            task = self._chat_run_registry.spawn(
+                self._chat_service.run(
+                    user_id=self._user_id,
+                    session_id=session.id,
+                    agent_id=session.agent_id,
+                    input_msg=interrupt_event,
+                ),
+                session_id=session.id,
+                name=f"tool-interrupt-session:{session.id}",
+            )
+            await task
+        return released, await self._get_owned_session(
+            agent_id=agent_id,
+            session_id=session_id,
         )

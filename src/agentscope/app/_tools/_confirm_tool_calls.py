@@ -29,8 +29,10 @@ class ConfirmToolCalls(_SessionToolBase):
 
     name = "ConfirmToolCalls"
     description = (
-        "Confirm or reject pending tool calls for a managed session and "
-        "resume the session."
+        "Confirm or reject asking tool calls for a managed session and "
+        "resume the session. Use this only when WaitNewMessages.stop_reason "
+        "is require_user_confirm, and only for the asking tool calls "
+        "returned by that wait result."
     )
     input_schema: dict[str, Any] = _ConfirmToolCallsParams.model_json_schema()
     is_read_only = False
@@ -50,6 +52,22 @@ class ConfirmToolCalls(_SessionToolBase):
         if session is None:
             return self._result(
                 {"error": f"Session '{session_id}' not found for agent '{agent_id}'."},
+                state=ToolResultState.ERROR,
+            )
+        stop_reason, current_reply_id, actionable_tool_calls = (
+            self._resolve_session_stop_reason(session)
+        )
+        if stop_reason != "require_user_confirm":
+            return self._result(
+                {
+                    "error": (
+                        "ConfirmToolCalls is only allowed when the managed "
+                        "session is stopped at require_user_confirm."
+                    ),
+                    "stop_reason": stop_reason,
+                    "reply_id": current_reply_id,
+                    "tool_calls": actionable_tool_calls,
+                },
                 state=ToolResultState.ERROR,
             )
 

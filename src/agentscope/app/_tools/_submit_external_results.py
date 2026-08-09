@@ -39,8 +39,11 @@ class SubmitExternalResults(_SessionToolBase):
 
     name = "SubmitExternalResults"
     description = (
-        "Submit external execution results for pending tool calls and "
-        "resume the managed session."
+        "Submit external execution results for submitted tool calls and "
+        "resume the managed session. Use this only when "
+        "WaitNewMessages.stop_reason is require_external_execution, and "
+        "only for the submitted tool calls returned by that wait result. "
+        "Never submit results for asking or pending tool calls."
     )
     input_schema: dict[str, Any] = _SubmitExternalResultsParams.model_json_schema()
     is_read_only = False
@@ -59,6 +62,23 @@ class SubmitExternalResults(_SessionToolBase):
         if session is None:
             return self._result(
                 {"error": f"Session '{session_id}' not found for agent '{agent_id}'."},
+                state=ToolResultState.ERROR,
+            )
+        stop_reason, current_reply_id, actionable_tool_calls = (
+            self._resolve_session_stop_reason(session)
+        )
+        if stop_reason != "require_external_execution":
+            return self._result(
+                {
+                    "error": (
+                        "SubmitExternalResults is only allowed when the "
+                        "managed session is stopped at "
+                        "require_external_execution."
+                    ),
+                    "stop_reason": stop_reason,
+                    "reply_id": current_reply_id,
+                    "tool_calls": actionable_tool_calls,
+                },
                 state=ToolResultState.ERROR,
             )
 
