@@ -34,7 +34,7 @@ class WaitNewMessages(_SessionToolBase):
 
     name = "WaitNewMessages"
     description = (
-        "Wait for new messages and content blocks in a managed session. "
+        "Wait for unread message deltas in a managed session. "
         "Returns only the unread delta plus the single allowed next action: "
         "reply_completed -> SendSessionMessage, "
         "require_user_confirm -> ConfirmToolCalls for asking tool calls, "
@@ -79,7 +79,7 @@ class WaitNewMessages(_SessionToolBase):
             )
         )
 
-    def _collect_delta(
+    async def _collect_delta(
         self,
         messages: list[Msg],
         *,
@@ -127,13 +127,35 @@ class WaitNewMessages(_SessionToolBase):
                 continue
             new_messages.append(
                 {
-                    "message": self._serialize_message(msg),
-                    "new_blocks": [
-                        self._serialize_block(block) for block in new_blocks
-                    ],
+                    "message": await self._serialize_delta_message(
+                        msg,
+                        new_blocks=new_blocks,
+                    ),
                 },
             )
         return new_messages
+
+    async def _serialize_delta_message(
+        self,
+        msg: Msg,
+        *,
+        new_blocks: list[Any],
+    ) -> dict[str, Any]:
+        """Serialize one unread message delta for public tool output."""
+        delta_message = msg.model_copy(
+            update={"content": new_blocks},
+            deep=True,
+        )
+        materialized_messages = await self._chat_service._attachment_store.materialize_messages_for_model(
+            [delta_message],
+            workspace=self._workspace,
+            formatter=None,
+        )
+        payload = self._serialize_message(
+            self._chat_service.sanitize_public_message(materialized_messages[0]),
+        )
+        payload.pop("metadata", None)
+        return payload
 
     async def call(
         self,
@@ -175,7 +197,7 @@ class WaitNewMessages(_SessionToolBase):
                 )
 
             messages = await self._list_all_messages(session_id)
-            new_messages = self._collect_delta(
+            new_messages = await self._collect_delta(
                 messages,
                 last_message_id=last_message_id,
                 last_block_id=last_block_id,

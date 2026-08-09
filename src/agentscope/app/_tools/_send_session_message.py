@@ -86,6 +86,5 @@ class SendSessionMessage(_SessionToolBase):
                 "status": "started",
                 "agent_id": agent_id,
                 "session_id": session_id,
-                "message": message,
             },
         )
