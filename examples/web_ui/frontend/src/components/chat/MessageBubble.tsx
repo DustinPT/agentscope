@@ -291,6 +291,44 @@ function AudioWave({ isPlaying = true, className }: { isPlaying?: boolean; class
 	);
 }
 
+function ThinkingBlock({
+        label,
+        thinking,
+        autoOpen,
+}: {
+        label: string;
+        thinking: string;
+        autoOpen: boolean;
+}) {
+        const [open, setOpen] = useState(autoOpen);
+
+        useEffect(() => {
+                setOpen(autoOpen);
+        }, [autoOpen]);
+
+        return (
+                <Collapsible open={open} onOpenChange={setOpen} className="text-muted-foreground">
+                        <CollapsibleTrigger asChild>
+                                <button
+                                        type="button"
+                                        className="flex w-full items-center gap-1 text-left text-sm cursor-pointer"
+                                >
+                                        <span>{label}</span>
+                                        <ChevronDownIcon
+                                                className={cn(
+                                                        'size-4 transition-transform',
+                                                        open && 'rotate-180',
+                                                )}
+                                        />
+                                </button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                                <p className="mt-1 whitespace-pre-wrap">{thinking}</p>
+                        </CollapsibleContent>
+                </Collapsible>
+        );
+}
+
 /**
  * Inline audio control rendered *inside* the time/usage Badge so the play
  * icon visually merges into the same chip rather than floating as its own
@@ -400,6 +438,9 @@ function renderBlock(
 	block: ExtendedContentBlock,
 	index: number,
 	t: TFunction,
+        options?: {
+                activeThinkingBlockId?: string | null;
+        },
 	onUserConfirm?: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
@@ -473,12 +514,12 @@ function renderBlock(
 
 		case 'thinking':
 			return (
-				<details key={index} className="text-muted-foreground">
-					<summary className="cursor-pointer select-none">
-						{t('messageBubble.thinking')}
-					</summary>
-					<p className="mt-1 whitespace-pre-wrap">{block.thinking}</p>
-				</details>
+                                <ThinkingBlock
+                                        key={block.id || index}
+                                        label={t('messageBubble.thinking')}
+                                        thinking={block.thinking}
+                                        autoOpen={options?.activeThinkingBlockId === block.id}
+                                />
 			);
 
 		case 'data': {
@@ -654,6 +695,9 @@ export function MessageBubble({
 	);
 	const showBody = hasBodyContent;
 	const showFooter = !isUser;
+        const lastContentBlock = message.content.at(-1);
+        const activeThinkingBlockId =
+                isRunning && lastContentBlock?.type === 'thinking' ? lastContentBlock.id : null;
 
 	const startMs = new Date(message.created_at).getTime();
         const terminalAt = message.finished_at ?? runFailedAt;
@@ -683,6 +727,7 @@ export function MessageBubble({
 							block,
 							i,
 							t,
+                                                        { activeThinkingBlockId },
 							(
 								toolCall: ToolCallBlock,
 								confirm: boolean,
