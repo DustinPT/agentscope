@@ -44,6 +44,12 @@
 	},
 	"tool": {
 		"moreLines": "... 还有 {{count}} 行",
+                "generic": {
+                        "input": "输入",
+                        "output": "输出",
+                        "noInput": "无输入",
+                        "noOutput": "无输出"
+                },
 		"bash": {
 			"name": "Bash",
 			"command": "命令",

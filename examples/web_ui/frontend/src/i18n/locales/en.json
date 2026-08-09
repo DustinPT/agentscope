@@ -44,6 +44,12 @@
 	},
 	"tool": {
 		"moreLines": "... {{count}} more lines",
+                "generic": {
+                        "input": "Input",
+                        "output": "Output",
+                        "noInput": "No input",
+                        "noOutput": "No output"
+                },
 		"bash": {
 			"name": "Bash",
 			"command": "Command",
