@@ -93,6 +93,16 @@ class ToolRuntimeContext(BaseModel):
     """The agent-visible workspace root directory."""
 
 
+class WaitNewMessagesCursor(BaseModel):
+    """Incremental cursor tracked for one managed session wait loop."""
+
+    last_message_id: str | None = None
+    """The last fully consumed message id for the target session."""
+
+    last_block_id: str | None = None
+    """The last fully consumed block id inside ``last_message_id``."""
+
+
 class ToolContext(BaseModel):
     """The tool context, e.g. tool cache"""
 
@@ -108,6 +118,11 @@ class ToolContext(BaseModel):
     activated_groups: list[str] = Field(default_factory=list)
     """The names of the activated tool groups, each group contains a set of
     tools."""
+
+    wait_new_messages_cursors: dict[str, WaitNewMessagesCursor] = Field(
+        default_factory=dict,
+    )
+    """Per-target-session incremental cursors for ``WaitNewMessages``."""
 
     runtime_context: ToolRuntimeContext | None = Field(
         default=None,

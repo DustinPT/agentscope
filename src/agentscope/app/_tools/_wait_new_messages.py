@@ -8,6 +8,8 @@ from typing import Any
 from pydantic import Field
 
 from ...message import Msg, ToolResultState
+from ...state import AgentState
+from ...state._state import WaitNewMessagesCursor
 from ...tool import ParamsBase
 from ._session_tool_base import _SessionToolBase
 
@@ -19,20 +21,6 @@ class _WaitNewMessagesParams(ParamsBase):
 
     agent_id: str = Field(description="Target managed agent id.")
     session_id: str = Field(description="Target session id.")
-    last_message_id: str | None = Field(
-        default=None,
-        description=(
-            "Last message id already consumed by the caller. "
-            "Leave empty on the first call."
-        ),
-    )
-    last_block_id: str | None = Field(
-        default=None,
-        description=(
-            "Last block id already consumed inside last_message_id. "
-            "Leave empty on the first call."
-        ),
-    )
     timeout_seconds: float = Field(
         default=30.0,
         gt=0,
@@ -55,6 +43,41 @@ class WaitNewMessages(_SessionToolBase):
     )
     input_schema: dict[str, Any] = _WaitNewMessagesParams.model_json_schema()
     is_read_only = True
+    is_state_injected = True
+
+    @staticmethod
+    def _get_wait_cursor(
+        _agent_state: AgentState | None,
+        target_session_id: str,
+    ) -> WaitNewMessagesCursor:
+        """Load the incremental wait cursor for one target session."""
+        if _agent_state is None:
+            return WaitNewMessagesCursor()
+        return _agent_state.tool_context.wait_new_messages_cursors.get(
+            target_session_id,
+            WaitNewMessagesCursor(),
+        )
+
+    @staticmethod
+    def _store_wait_cursor(
+        _agent_state: AgentState | None,
+        target_session_id: str,
+        messages: list[Msg],
+    ) -> None:
+        """Persist the latest consumed cursor for one target session."""
+        if _agent_state is None or not messages:
+            return
+
+        latest_message = messages[-1]
+        cursor_block_id = (
+            latest_message.content[-1].id if latest_message.content else None
+        )
+        _agent_state.tool_context.wait_new_messages_cursors[target_session_id] = (
+            WaitNewMessagesCursor(
+                last_message_id=latest_message.id,
+                last_block_id=cursor_block_id,
+            )
+        )
 
     def _collect_delta(
         self,
@@ -116,9 +139,8 @@ class WaitNewMessages(_SessionToolBase):
         self,
         agent_id: str,
         session_id: str,
-        last_message_id: str | None = None,
-        last_block_id: str | None = None,
         timeout_seconds: float = 30.0,
+        _agent_state: AgentState | None = None,
     ):
         session = await self._get_owned_session(
             agent_id=agent_id,
@@ -133,6 +155,9 @@ class WaitNewMessages(_SessionToolBase):
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         observed_running = False
         observed_activity = False
+        wait_cursor = self._get_wait_cursor(_agent_state, session_id)
+        last_message_id = wait_cursor.last_message_id
+        last_block_id = wait_cursor.last_block_id
 
         while True:
             session = await self._get_owned_session(
@@ -171,19 +196,12 @@ class WaitNewMessages(_SessionToolBase):
                 reply_id = None
                 tool_calls = []
             if not is_running and stop_reason is not None:
-                latest_message_id = messages[-1].id if messages else last_message_id
-                latest_block_id = (
-                    messages[-1].content[-1].id
-                    if messages and messages[-1].content
-                    else last_block_id
-                )
+                self._store_wait_cursor(_agent_state, session_id, messages)
                 return self._result(
                     {
                         "agent_id": agent_id,
                         "session_id": session_id,
                         "new_messages": new_messages,
-                        "latest_message_id": latest_message_id,
-                        "latest_block_id": latest_block_id,
                         "stop_reason": stop_reason,
                         "reply_id": reply_id,
                         "tool_calls": tool_calls,
@@ -191,19 +209,12 @@ class WaitNewMessages(_SessionToolBase):
                 )
 
             if asyncio.get_running_loop().time() >= deadline:
-                latest_message_id = messages[-1].id if messages else last_message_id
-                latest_block_id = (
-                    messages[-1].content[-1].id
-                    if messages and messages[-1].content
-                    else last_block_id
-                )
+                self._store_wait_cursor(_agent_state, session_id, messages)
                 return self._result(
                     {
                         "agent_id": agent_id,
                         "session_id": session_id,
                         "new_messages": new_messages,
-                        "latest_message_id": latest_message_id,
-                        "latest_block_id": latest_block_id,
                         "stop_reason": "timeout",
                         "reply_id": None,
                         "tool_calls": [],
