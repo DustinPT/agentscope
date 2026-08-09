@@ -272,6 +272,10 @@
 					"label": "Terminal",
 					"description": "Run terminal commands and inspect their results with Bash."
 				},
+                                "network": {
+                                        "label": "Network Search",
+                                        "description": "Access web search and page extraction with WebSearch and WebFetch."
+                                },
 				"team": {
 					"label": "Team",
 					"description": "Manage agent teams and communication with TeamCreate, AgentCreate, TeamSay, and TeamDelete."

@@ -38,6 +38,8 @@ from ..tool import (
     Glob,
     Grep,
     Read,
+    WebFetch,
+    WebSearch,
     Write,
 )
 from ..tool._builtin._backend import LocalBackend
@@ -725,6 +727,8 @@ class LocalWorkspace(WorkspaceBase):
             Glob(**glob_kwargs),
             Grep(backend=backend),
             Read(backend=backend),
+            WebSearch(backend=backend),
+            WebFetch(backend=backend),
             Write(backend=backend),
             CreateProjectDirectory(backend=backend),
         ]

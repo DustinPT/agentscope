@@ -50,6 +50,7 @@ export interface ReActConfig {
                 | 'edit'
                 | 'schedule'
                 | 'terminal'
+                | 'network'
                 | 'team'
                 | 'agent_management'
                 | 'session_management'

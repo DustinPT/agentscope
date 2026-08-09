@@ -272,6 +272,10 @@
 					"label": "终端",
 					"description": "在终端运行命令并获取状态和结果，包含 Bash。"
 				},
+                                "network": {
+                                        "label": "联网搜索",
+                                        "description": "访问联网搜索与网页提取能力，包含 WebSearch、WebFetch。"
+                                },
 				"team": {
 					"label": "团队",
 					"description": "管理智能体团队及通信，包含 TeamCreate、AgentCreate、TeamSay、TeamDelete。"

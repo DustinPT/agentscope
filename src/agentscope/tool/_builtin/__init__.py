@@ -11,6 +11,8 @@ from ._grep import Grep
 from ._project_directory import CreateProjectDirectory
 from ._powershell import PowerShell
 from ._read import Read
+from ._webfetch import WebFetch
+from ._websearch import WebSearch
 from ._write import Write
 
 __all__ = [
@@ -23,6 +25,8 @@ __all__ = [
     "Grep",
     "CreateProjectDirectory",
     "Read",
+    "WebFetch",
+    "WebSearch",
     "Write",
     "BackendBase",
     "DirEntry",

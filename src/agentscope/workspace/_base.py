@@ -148,6 +148,8 @@ class WorkspaceBase:
             Glob,
             Grep,
             Read,
+            WebFetch,
+            WebSearch,
             Write,
         )
 
@@ -161,6 +163,8 @@ class WorkspaceBase:
             Glob(**glob_kwargs),
             Grep(backend=backend),
             Read(backend=backend),
+            WebSearch(backend=backend),
+            WebFetch(backend=backend),
             Write(backend=backend),
             CreateProjectDirectory(backend=backend),
         ]

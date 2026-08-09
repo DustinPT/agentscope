@@ -136,6 +136,7 @@ optional):
         "read": {"Glob", "Grep", "Read"},
         "edit": {"Edit", "Write"},
         "terminal": {"Bash"},
+        "network": {"WebSearch", "WebFetch"},
     }
 
     # The general tools running in the workspace.

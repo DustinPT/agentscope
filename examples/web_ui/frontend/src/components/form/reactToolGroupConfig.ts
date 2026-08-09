@@ -13,6 +13,7 @@ export const ALL_BUILTIN_TOOL_GROUPS: BuiltinToolGroup[] = [
 	'edit',
 	'schedule',
 	'terminal',
+        'network',
 	'team',
         'agent_management',
         'session_management',

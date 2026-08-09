@@ -152,6 +152,7 @@ class ReActConfig(BaseModel):
             "edit",
             "schedule",
             "terminal",
+            "network",
             "team",
             "agent_management",
             "session_management",
@@ -163,13 +164,14 @@ class ReActConfig(BaseModel):
             "edit",
             "schedule",
             "terminal",
+            "network",
             "team",
         ],
         description=(
             "Builtin tool groups enabled for this agent. Controls file "
             "reading, file editing, schedule management, terminal access, "
-            "team collaboration tools, agent package management, and "
-            "session management tools."
+            "network search tools, team collaboration tools, agent "
+            "package management, and session management tools."
         ),
     )
     """Builtin tool groups enabled for this agent."""
