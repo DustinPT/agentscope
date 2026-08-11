@@ -7,6 +7,7 @@ import asyncio
 import io
 import posixpath
 import tarfile
+import time
 from typing import Any
 
 from ...tool import BackendBase, ExecResult
@@ -90,6 +91,9 @@ class DockerBackend(BackendBase):
         with tarfile.open(fileobj=buf, mode="w") as tf:
             info = tarfile.TarInfo(name=name)
             info.size = len(data)
+            # Preserve a sensible file mtime in the container instead of
+            # leaving tar headers at the Unix epoch default.
+            info.mtime = int(time.time())
             tf.addfile(info, io.BytesIO(data))
         await self._container.put_archive(parent, buf.getvalue())
 
