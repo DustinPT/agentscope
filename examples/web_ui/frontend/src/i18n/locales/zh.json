@@ -112,6 +112,7 @@
                 "rollback": "回退",
                 "rollbacking": "回退中…",
 		"running": "运行中...",
+                "interrupted": "已中断",
                 "failed": "运行失败",
 		"contextUsageTooltip": "上下文使用率（当前上下文长度/模型最大上下文）",
                 "errorKinds": {

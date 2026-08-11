@@ -66,6 +66,10 @@ interface ReplyRunErrorMetadata {
         status_code?: number | null;
 }
 
+function getTerminalState(message: Msg): 'interrupted' | null {
+        return message.metadata?.terminal_state === 'interrupted' ? 'interrupted' : null;
+}
+
 function getContextUsageMetadata(message: Msg): ContextUsageMetadata | null {
 	const raw = message.metadata?.context_usage;
 	if (!raw || typeof raw !== 'object') return null;
@@ -660,9 +664,11 @@ export function MessageBubble({
 	const { t } = useTranslation();
 
         const runError = getReplyRunErrorMetadata(message);
+        const terminalState = getTerminalState(message);
         const runFailedAt = getRunFailedAt(message);
         const isFailed = !!runError;
-        const isRunning = !message.finished_at && !isFailed;
+        const isInterrupted = terminalState === 'interrupted';
+        const isRunning = !message.finished_at && !isFailed && !isInterrupted;
 	const hasUsage =
 		!!message.usage &&
 		((message.usage.input_tokens ?? 0) > 0 || (message.usage.output_tokens ?? 0) > 0);
@@ -768,6 +774,8 @@ export function MessageBubble({
                                                 aria-label={
                                                         isRunning
                                                                 ? t('messageBubble.running')
+                                                                : isInterrupted
+                                                                  ? t('messageBubble.interrupted')
                                                                 : isFailed
                                                                   ? t('messageBubble.failed')
                                                                   : undefined
@@ -775,6 +783,11 @@ export function MessageBubble({
 					>
                                                 {isRunning ? (
 							<Loader2 data-icon="inline-start" className="animate-spin" />
+                                                ) : isInterrupted ? (
+                                                        <AlertCircle
+                                                                data-icon="inline-start"
+                                                                className="text-amber-600"
+                                                        />
                                                 ) : isFailed ? (
                                                         <AlertCircle
                                                                 data-icon="inline-start"
@@ -800,6 +813,11 @@ export function MessageBubble({
                                                                         {failureDetail || failureSummary}
                                                                 </TooltipContent>
                                                         </Tooltip>
+                                                )}
+                                                {isInterrupted && (
+                                                        <span className="ml-1 text-amber-700">
+                                                                {t('messageBubble.interrupted')}
+                                                        </span>
                                                 )}
 						{hasUsage && (
 							<>

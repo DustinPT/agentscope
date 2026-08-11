@@ -145,6 +145,27 @@ export function useMessages(
                         ...(metadata as Record<string, JsonLike>),
 		};
 	}, []);
+        const normalizeInterruptedHistory = useCallback((messages: Msg[], isRunning: boolean) => {
+                if (isRunning) return messages;
+
+                let mutated = false;
+                const normalized = messages.map((message) => {
+                        if (message.role !== 'assistant' || message.finished_at) {
+                                return message;
+                        }
+                        mutated = true;
+                        return {
+                                ...message,
+                                finished_at: message.created_at,
+                                metadata: {
+                                        ...message.metadata,
+                                        terminal_state: 'interrupted',
+                                },
+                        };
+                });
+
+                return mutated ? normalized : messages;
+        }, []);
 	const getHistoryReplayBoundary = useCallback((messages: Msg[]): string | null => {
 		for (let i = messages.length - 1; i >= 0; i -= 1) {
 			const entryId = messages[i]?.metadata?.[REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY];
@@ -416,16 +437,19 @@ export function useMessages(
 				if (cancelled) return;
 
 				setLoading(true);
-				const { messages } = await sessionApi.messages(
+                                const { messages, is_running } = await sessionApi.messages(
 					sessionId,
 					agentId,
 				);
 				if (cancelled) return;
-				msgsRef.current =
+                                msgsRef.current = normalizeInterruptedHistory(
 					pendingInitialUserMsg && !hasEquivalentUserMsg(messages, pendingInitialUserMsg)
 						? [pendingInitialUserMsg, ...messages]
-						: messages;
+                                                : messages,
+                                        is_running,
+                                );
 				scheduleUpdate();
+                                setStreaming(is_running);
 				optionsRef.current?.onPendingInitialUserMsgConsumed?.();
 
 				historyReplayBoundary = getHistoryReplayBoundary(messages);
@@ -465,6 +489,7 @@ export function useMessages(
 		audioManager,
 		getHistoryReplayBoundary,
 		hasEquivalentUserMsg,
+                normalizeInterruptedHistory,
 	]);
 
 	/**
@@ -503,17 +528,21 @@ export function useMessages(
 		if (!agentId || !sessionId) return;
 		await sessionApi.cancel(sessionId, agentId);
 		audioManager?.stopAllPlayback();
-		setStreaming(false);
-	}, [agentId, sessionId, audioManager]);
+                const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
+                msgsRef.current = normalizeInterruptedHistory(messages, is_running);
+                currentReplyRef.current = null;
+                scheduleUpdate();
+                setStreaming(is_running);
+        }, [agentId, sessionId, audioManager, normalizeInterruptedHistory, scheduleUpdate]);
 
         const reload = useCallback(async () => {
                 if (!agentId || !sessionId) return;
                 const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
-                msgsRef.current = messages;
+                msgsRef.current = normalizeInterruptedHistory(messages, is_running);
                 currentReplyRef.current = null;
                 scheduleUpdate();
                 setStreaming(is_running);
-        }, [agentId, sessionId, scheduleUpdate]);
+        }, [agentId, sessionId, normalizeInterruptedHistory, scheduleUpdate]);
 
 	/**
 	 * Confirm or deny a tool call (human-in-the-loop). Fires a

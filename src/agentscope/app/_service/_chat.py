@@ -531,11 +531,43 @@ class ChatService:
         )
 
     @staticmethod
-    def _remove_empty_failed_reply_from_context(
+    def _build_reply_interrupted_metadata(
+        interrupted_at: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Build terminal metadata for a user-interrupted reply."""
+        metadata: dict[str, Any] = {
+            "terminal_state": "interrupted",
+            "run_interrupted_at": interrupted_at,
+        }
+        if reason:
+            metadata["interrupt_reason"] = reason
+        return metadata
+
+    def _build_interrupted_reply_end_event(
+        self,
+        session_id: str,
+        reply_id: str,
+        reason: str | None = None,
+    ) -> ReplyEndEvent:
+        """Build a terminal ``ReplyEndEvent`` that marks the reply interrupted."""
+        interrupted_at = datetime.now().isoformat()
+        return ReplyEndEvent(
+            session_id=session_id,
+            reply_id=reply_id,
+            created_at=interrupted_at,
+            metadata=self._build_reply_interrupted_metadata(
+                interrupted_at,
+                reason=reason,
+            ),
+        )
+
+    @staticmethod
+    def _remove_empty_terminal_reply_from_context(
         agent: Agent,
         reply_id: str,
     ) -> None:
-        """Drop an empty failed reply from the session context tail."""
+        """Drop an empty terminal reply from the session context tail."""
         current_reply = get_current_reply_msg(agent)
         if current_reply is None or current_reply.id != reply_id:
             return
@@ -619,7 +651,94 @@ class ChatService:
             ),
         )
 
-        self._remove_empty_failed_reply_from_context(agent, reply_id)
+        self._remove_empty_terminal_reply_from_context(agent, reply_id)
+        await self._storage.update_session_state(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            state=await self._build_state_for_storage(
+                state=agent.state,
+                workspace=workspace,
+                session_id=session_id,
+            ),
+        )
+        return target_reply
+
+    async def _finalize_interrupted_reply(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        agent: Agent,
+        workspace,
+        reply_msg: Msg | None,
+        reply_started: bool,
+        checkpoint_state: _ReplyCheckpointState,
+        reason: str | None = None,
+    ) -> Msg | None:
+        """Best-effort finalize and persist the current reply as interrupted."""
+        reply_id = reply_msg.id if reply_msg is not None else agent.state.reply_id
+        current_reply = get_current_reply_msg(agent)
+        if current_reply is not None and current_reply.id != reply_id:
+            current_reply = None
+
+        target_reply = reply_msg
+        if target_reply is None and current_reply is not None:
+            target_reply = current_reply.model_copy(deep=True)
+
+        if target_reply is None and not reply_started:
+            return None
+
+        if target_reply is None:
+            target_reply = AssistantMsg(
+                id=reply_id,
+                name=agent.name,
+                content=[],
+            )
+
+        if target_reply.finished_at is not None:
+            return target_reply
+
+        interrupted_event = self._build_interrupted_reply_end_event(
+            session_id=session_id,
+            reply_id=reply_id,
+            reason=reason,
+        )
+
+        try:
+            entry_id = await self._message_bus.session_publish_event(
+                session_id,
+                interrupted_event.model_dump(mode="json"),
+            )
+            checkpoint_state.latest_replay_entry_id = entry_id
+        except Exception:
+            logger.warning(
+                "Failed to publish interrupted ReplyEndEvent for session %s reply %s.",
+                session_id,
+                reply_id,
+                exc_info=True,
+            )
+
+        target_reply.append_event(interrupted_event)
+        if current_reply is not None and current_reply is not target_reply:
+            current_reply.append_event(interrupted_event)
+
+        set_reply_checkpoint_replay_entry_id(
+            target_reply,
+            checkpoint_state.latest_replay_entry_id,
+        )
+        await self._storage.upsert_message(
+            user_id,
+            session_id,
+            await self._dehydrate_message_for_storage(
+                target_reply,
+                workspace=workspace,
+                session_id=session_id,
+            ),
+        )
+
+        self._remove_empty_terminal_reply_from_context(agent, reply_id)
         await self._storage.update_session_state(
             user_id=user_id,
             agent_id=agent_id,
@@ -1800,6 +1919,28 @@ class ChatService:
                         session_id,
                         pending_inbox_entries,
                     )
+            except asyncio.CancelledError:
+                try:
+                    reply_msg = await asyncio.shield(
+                        self._finalize_interrupted_reply(
+                            user_id=user_id,
+                            session_id=session_id,
+                            agent_id=agent_id,
+                            agent=agent,
+                            workspace=workspace,
+                            reply_msg=reply_msg,
+                            reply_started=reply_started,
+                            checkpoint_state=checkpoint_state,
+                            reason="Session cancelled before reply completed.",
+                        ),
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to finalize interrupted reply for session %s.",
+                        session_id,
+                        exc_info=True,
+                    )
+                raise
             except Exception as exc:
                 reply_msg = await self._finalize_failed_reply(
                     user_id=user_id,

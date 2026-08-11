@@ -112,6 +112,7 @@
                 "rollback": "Rollback",
                 "rollbacking": "Rolling back…",
 		"running": "Running...",
+                "interrupted": "Interrupted",
                 "failed": "Run failed",
 		"contextUsageTooltip": "Context usage (current context length / model max context)",
                 "errorKinds": {
