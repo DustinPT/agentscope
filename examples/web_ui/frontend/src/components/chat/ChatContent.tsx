@@ -70,8 +70,20 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const prevScrollHeightRef = useRef<number>(0);
 	const wasNearBottomRef = useRef<boolean>(true);
+        const followBottomRef = useRef<boolean>(true);
 	const pendingInitialScrollRef = useRef<boolean>(true);
 	const skipNextScrollCheckRef = useRef<boolean>(false);
+        const ignoreScrollEventsUntilRef = useRef<number>(0);
+
+        const scrollToBottom = React.useCallback((behavior: ScrollBehavior) => {
+                const scrollArea = scrollAreaRef.current;
+                if (!scrollArea) return;
+                ignoreScrollEventsUntilRef.current = Date.now() + (behavior === 'smooth' ? 400 : 100);
+                scrollArea.scrollTo({
+                        top: scrollArea.scrollHeight,
+                        behavior,
+                });
+        }, []);
 
 	const registerMessageRef = React.useCallback(
 		(messageId: string) => (node: HTMLDivElement | null) => {
@@ -89,8 +101,10 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	useEffect(() => {
 		prevScrollHeightRef.current = 0;
 		wasNearBottomRef.current = true;
+                followBottomRef.current = true;
 		pendingInitialScrollRef.current = true;
 		skipNextScrollCheckRef.current = true;
+                ignoreScrollEventsUntilRef.current = 0;
 	}, [sessionKey]);
 
 	// Auto-scroll to bottom only if user is already near the bottom
@@ -122,16 +136,19 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			contentExpanded;
 
 		if (shouldCheck) {
-			// Check if user was near bottom before content changed
-			const isNearBottom = shouldForceInitialScroll || wasNearBottomRef.current;
+                        // Keep following after an explicit "scroll to bottom"
+                        // until the user manually scrolls away.
+                        const isNearBottom =
+                                shouldForceInitialScroll ||
+                                followBottomRef.current ||
+                                wasNearBottomRef.current;
 
 			if (isNearBottom) {
 				const behavior: ScrollBehavior =
 					shouldForceInitialScroll || sending ? 'auto' : 'smooth';
-				scrollArea.scrollTo({
-					top: currentScrollHeight,
-					behavior,
-				});
+                                scrollToBottom(behavior);
+                                wasNearBottomRef.current = true;
+                                followBottomRef.current = true;
 			}
 		}
 
@@ -140,7 +157,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		}
 
 		prevScrollHeightRef.current = currentScrollHeight;
-	}, [msgs, sending, sessionKey]);
+        }, [msgs, sending, sessionKey, scrollToBottom]);
 
 	// Track if user is near bottom whenever they scroll
 	useEffect(() => {
@@ -148,8 +165,13 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		if (!scrollArea) return;
 
 		const handleScroll = () => {
+                        if (Date.now() < ignoreScrollEventsUntilRef.current) {
+                                return;
+                        }
 			const { scrollTop, scrollHeight, clientHeight } = scrollArea;
-			wasNearBottomRef.current = scrollTop + clientHeight >= scrollHeight - 50;
+                        const isNearBottom = scrollTop + clientHeight >= scrollHeight - 50;
+                        wasNearBottomRef.current = isNearBottom;
+                        followBottomRef.current = isNearBottom;
 		};
 
 		scrollArea.addEventListener('scroll', handleScroll);
@@ -162,21 +184,26 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		if (!node) return;
 		node.scrollIntoView({ behavior: 'smooth', block: 'start' });
 		wasNearBottomRef.current = false;
+                followBottomRef.current = false;
+                ignoreScrollEventsUntilRef.current = Date.now() + 400;
 		onScrollTargetHandled?.();
 	}, [scrollTargetMessageId, onScrollTargetHandled, msgs]);
 
 	useEffect(() => {
 		if (!scrollViewportCommand) return;
-		const scrollArea = scrollAreaRef.current;
-		if (!scrollArea) return;
 		if (scrollViewportCommand.type === 'top') {
 			wasNearBottomRef.current = false;
-			scrollArea.scrollTo({ top: 0, behavior: 'smooth' });
+                        followBottomRef.current = false;
+                        const scrollArea = scrollAreaRef.current;
+                        if (!scrollArea) return;
+                        ignoreScrollEventsUntilRef.current = Date.now() + 400;
+                        scrollArea.scrollTo({ top: 0, behavior: 'smooth' });
 			return;
 		}
 		wasNearBottomRef.current = true;
-		scrollArea.scrollTo({ top: scrollArea.scrollHeight, behavior: 'smooth' });
-	}, [scrollViewportCommand]);
+                followBottomRef.current = true;
+                scrollToBottom('auto');
+        }, [scrollViewportCommand, scrollToBottom]);
 
 	return (
 		<div className={cn('flex flex-col h-full w-full items-center p-2 gap-4', className)}>

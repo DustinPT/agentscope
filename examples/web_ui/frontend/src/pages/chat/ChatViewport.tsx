@@ -379,8 +379,19 @@ export function ChatViewport({
 	}, []);
 
 	const handleScrollViewport = useCallback((type: 'top' | 'bottom') => {
-		setScrollViewportCommand({ type, nonce: Date.now() });
+                setScrollViewportCommand((prev) => ({
+                        type,
+                        nonce: (prev?.nonce ?? 0) + 1,
+                }));
 	}, []);
+
+        const handleSend = useCallback(
+                async (content: Msg['content']) => {
+                        handleScrollViewport('bottom');
+                        await send(content);
+                },
+                [handleScrollViewport, send],
+        );
 
         const handleSessionExport = useCallback(
                 async (options: SessionExportOptions) => {
@@ -494,7 +505,7 @@ export function ChatViewport({
 							sending={streaming}
 							stoppable={canStop}
 							disabled={selectedModel === null}
-							onSend={send}
+                                                        onSend={handleSend}
 							onStop={cancelCurrentRun}
                                                         onRollbackMessage={handleRollbackMessage}
                                                         rollbackingMessageId={rollbackingMessageId}
