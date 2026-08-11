@@ -123,6 +123,10 @@
                         "http": "模型请求失败",
                         "unknown": "回复生成失败"
                 },
+                "invalidProjectLink": "无效的项目链接",
+                "projectLinkUnavailable": "当前消息缺少项目目录上下文，暂时无法打开该链接",
+                "projectFileNotFound": "项目文件不存在或无法访问",
+                "projectDirectoryNotFound": "项目目录不存在或无法访问",
 		"hintSource": {
 			"tool_output": "工具输出",
 			"team_message": "团队消息",
@@ -192,6 +196,8 @@
                         "loadFailed": "加载项目目录失败",
                         "emptyRoot": "当前项目目录为空，Agent 创建文件后会显示在这里。",
                         "emptyDirectory": "该目录为空",
+                        "rootDirectory": "项目目录",
+                        "directoryDialogDescription": "浏览当前会话项目目录中的指定目录，并支持继续预览和下载。",
                         "directoryMeta": "更新时间 {{updatedAt}}",
                         "fileMeta": "{{size}} · 更新时间 {{updatedAt}}"
                 }

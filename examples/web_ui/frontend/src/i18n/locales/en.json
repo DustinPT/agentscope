@@ -123,6 +123,10 @@
                         "http": "Model request failed.",
                         "unknown": "Reply generation failed."
                 },
+                "invalidProjectLink": "Invalid project link",
+                "projectLinkUnavailable": "This message does not have project directory context yet",
+                "projectFileNotFound": "Project file not found or inaccessible",
+                "projectDirectoryNotFound": "Project directory not found or inaccessible",
 		"hintSource": {
 			"tool_output": "Tool Output",
 			"team_message": "Team Message",
@@ -192,6 +196,8 @@
                         "loadFailed": "Failed to load the project directory",
                         "emptyRoot": "The project directory is empty. Files created by the agent will appear here.",
                         "emptyDirectory": "This directory is empty",
+                        "rootDirectory": "Project Directory",
+                        "directoryDialogDescription": "Browse the selected directory in the current session project directory and continue previewing or downloading files.",
                         "directoryMeta": "Updated {{updatedAt}}",
                         "fileMeta": "{{size}} · Updated {{updatedAt}}"
                 }

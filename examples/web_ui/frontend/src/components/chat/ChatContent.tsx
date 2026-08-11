@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils';
 
 interface ChatContentProps {
 	msgs: Msg[];
+        agentId?: string | null;
+        sessionId?: string | null;
 	sessionKey?: string | null;
 	sending: boolean;
 	stoppable?: boolean;
@@ -44,6 +46,8 @@ interface ChatContentProps {
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
+        agentId,
+        sessionId,
 	sessionKey,
 	sending,
 	stoppable = false,
@@ -217,6 +221,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 							<MessageBubble
 								key={message.id}
 								message={message}
+                                                                agentId={agentId}
+                                                                sessionId={sessionId}
 								onUserConfirm={onUserConfirm}
                                                                 onRollback={onRollbackMessage}
                                                                 rollbacking={rollbackingMessageId === message.id}

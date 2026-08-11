@@ -86,6 +86,16 @@ def _sanitize_dir_name(name: str) -> str:
 _DEFAULT_WORKSPACE_INSTRUCTIONS = f"""<workspace>
 {DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS}
 
+### Project Links
+- When you want to point the user to a file in the current session project \
+directory, use a Markdown link in the format \
+`[readable label](project-file://relative/path/to/file)`.
+- When you want to point the user to a directory in the current session \
+project directory, use a Markdown link in the format \
+`[readable label](project-dir://relative/path/to/directory)`.
+- Only use these links for paths inside the current session project \
+directory. Do not use absolute local filesystem paths.
+
 ### Python Environment
 - `uv` is recommended for managing and isolating Python environments per \
 project:

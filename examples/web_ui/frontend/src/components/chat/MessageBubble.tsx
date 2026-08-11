@@ -22,13 +22,19 @@ import {
         RotateCcw,
 	Wrench,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { toast } from 'sonner';
 
 import { ConfirmCard } from './ConfirmCard';
 import { renderToolGroup } from './tool-renderers';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
+import type { ProjectDirectoryEntry } from '@/api';
+import { workspaceApi } from '@/api';
+import { ProjectDirectoryDialog } from '@/components/project-directory/ProjectDirectoryDialog';
+import { ProjectFilePreviewDialog } from '@/components/project-directory/ProjectFilePreviewDialog';
+import { parseProjectLinkHref } from '@/components/project-directory/projectLink';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -141,6 +147,14 @@ function getAttachmentDisplayName(block: DataBlock): string {
                 }
         }
         return block.source.media_type;
+}
+
+function getProjectParentPath(path: string): string {
+        const segments = path.split('/').filter(Boolean);
+        if (segments.length <= 1) {
+                return '';
+        }
+        return segments.slice(0, -1).join('/');
 }
 
 /**
@@ -444,6 +458,8 @@ function renderBlock(
 	t: TFunction,
         options?: {
                 activeThinkingBlockId?: string | null;
+                onProjectFileLink?: (path: string) => void | Promise<void>;
+                onProjectDirectoryLink?: (path: string) => void | Promise<void>;
         },
 	onUserConfirm?: (
 		toolCallBlock: ToolCallBlock,
@@ -475,7 +491,89 @@ function renderBlock(
 				<div key={index} className="prose w-full min-w-full">
 					<ReactMarkdown
 						remarkPlugins={[remarkGfm]}
+                                                urlTransform={(url) => {
+                                                        if (parseProjectLinkHref(url)) {
+                                                                return url;
+                                                        }
+                                                        return defaultUrlTransform(url);
+                                                }}
 						components={{
+                                                        a: (anchorProps) => {
+                                                                const {
+                                                                        href,
+                                                                        children,
+                                                                        className,
+                                                                        style,
+                                                                        title,
+                                                                } = anchorProps;
+                                                                const target = parseProjectLinkHref(href);
+                                                                const isProjectLink =
+                                                                        href?.startsWith('project-file://') ||
+                                                                        href?.startsWith('project-dir://');
+                                                                if (!target && isProjectLink) {
+                                                                        return (
+                                                                                <button
+                                                                                        type="button"
+                                                                                        className={cn(
+                                                                                                className,
+                                                                                                'inline-flex cursor-pointer items-center rounded-md bg-muted px-2 py-0.5 no-underline transition-colors hover:bg-muted/80 !text-blue-600 hover:!text-blue-700 dark:!text-blue-400 dark:hover:!text-blue-300',
+                                                                                        )}
+                                                                                        style={style}
+                                                                                        title={title}
+                                                                                        onClick={(event) => {
+                                                                                                event.preventDefault();
+                                                                                                toast.error(
+                                                                                                        t(
+                                                                                                                'messageBubble.invalidProjectLink',
+                                                                                                        ),
+                                                                                                );
+                                                                                        }}
+                                                                                >
+                                                                                        {children}
+                                                                                </button>
+                                                                        );
+                                                                }
+                                                                if (!target) {
+                                                                        return (
+                                                                                <a
+                                                                                        href={href}
+                                                                                        target="_blank"
+                                                                                        rel="noreferrer"
+                                                                                        className={className}
+                                                                                        style={style}
+                                                                                        title={title}
+                                                                                >
+                                                                                        {children}
+                                                                                </a>
+                                                                        );
+                                                                }
+
+                                                                return (
+                                                                        <button
+                                                                                type="button"
+                                                                                className={cn(
+                                                                                        className,
+                                                                                        'inline-flex cursor-pointer items-center rounded-md bg-muted px-2 py-0.5 no-underline transition-colors hover:bg-muted/80 !text-blue-600 hover:!text-blue-700 dark:!text-blue-400 dark:hover:!text-blue-300',
+                                                                                )}
+                                                                                style={style}
+                                                                                title={title}
+                                                                                onClick={(event) => {
+                                                                                        event.preventDefault();
+                                                                                        if (target.kind === 'file') {
+                                                                                                void options?.onProjectFileLink?.(
+                                                                                                        target.path,
+                                                                                                );
+                                                                                                return;
+                                                                                        }
+                                                                                        void options?.onProjectDirectoryLink?.(
+                                                                                                target.path,
+                                                                                        );
+                                                                                }}
+                                                                        >
+                                                                                {children}
+                                                                        </button>
+                                                                );
+                                                        },
 							code: ({ className, children, ...props }) => {
 								const isInline = !String(className ?? '').startsWith('language-');
 								if (isInline) {
@@ -608,7 +706,9 @@ function renderBlock(
 								</Button>
 							</CollapsibleTrigger>
 							<CollapsibleContent className="p-2.5 pt-0 max-w-full overflow-hidden break-all text-muted-foreground">
-								{items.map((inner, i) => renderBlock(inner, i, t))}
+                                                                {items.map((inner, i) =>
+                                                                        renderBlock(inner, i, t, options),
+                                                                )}
 							</CollapsibleContent>
 						</Collapsible>
 					</ItemContent>
@@ -623,6 +723,8 @@ function renderBlock(
 
 interface MessageBubbleProps {
 	message: Msg;
+        agentId?: string | null;
+        sessionId?: string | null;
 	onUserConfirm: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
@@ -654,6 +756,8 @@ interface MessageBubbleProps {
  */
 export function MessageBubble({
 	message,
+        agentId,
+        sessionId,
 	onUserConfirm,
         onRollback,
         rollbacking = false,
@@ -662,6 +766,8 @@ export function MessageBubble({
 }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
+        const [previewEntry, setPreviewEntry] = useState<ProjectDirectoryEntry | null>(null);
+        const [directoryDialogPath, setDirectoryDialogPath] = useState<string | null>(null);
 
         const runError = getReplyRunErrorMetadata(message);
         const terminalState = getTerminalState(message);
@@ -712,6 +818,84 @@ export function MessageBubble({
 	const elapsedText = formatTime(elapsedSeconds);
 	const contextUsageText = contextUsage ? formatContextUsage(contextUsage) : null;
 
+        const listProjectDirectory = useCallback(
+                (path = '') => {
+                        if (!agentId || !sessionId) {
+                                return Promise.reject(new Error('Missing workspace context'));
+                        }
+                        return workspaceApi.projectDirectory.list(agentId, sessionId, path);
+                },
+                [agentId, sessionId],
+        );
+        const buildProjectDirectoryDownloadUrl = useCallback(
+                (path = '') => {
+                        if (!agentId || !sessionId) {
+                                return null;
+                        }
+                        return workspaceApi.projectDirectory.buildDownloadUrl(agentId, sessionId, path);
+                },
+                [agentId, sessionId],
+        );
+        const buildProjectDirectoryPreviewUrl = useCallback(
+                (path: string) => {
+                        if (!agentId || !sessionId) {
+                                return null;
+                        }
+                        return workspaceApi.projectDirectory.buildPreviewUrl(agentId, sessionId, path);
+                },
+                [agentId, sessionId],
+        );
+
+        const handleProjectLinkError = useCallback(
+                (fallbackKey: string, error: unknown) => {
+                        const messageText =
+                                error instanceof Error && error.message ? error.message : t(fallbackKey);
+                        toast.error(messageText);
+                },
+                [t],
+        );
+
+        const handleProjectFileLink = useCallback(
+                async (path: string) => {
+                        if (!agentId || !sessionId) {
+                                toast.error(t('messageBubble.projectLinkUnavailable'));
+                                return;
+                        }
+                        try {
+                                const parentPath = getProjectParentPath(path);
+                                const entries = await workspaceApi.projectDirectory.list(
+                                        agentId,
+                                        sessionId,
+                                        parentPath,
+                                );
+                                const entry = entries.find((item) => item.path === path && !item.is_dir);
+                                if (!entry) {
+                                        throw new Error(t('messageBubble.projectFileNotFound'));
+                                }
+                                setPreviewEntry(entry);
+                        } catch (error) {
+                                handleProjectLinkError('messageBubble.projectFileNotFound', error);
+                        }
+                },
+                [agentId, handleProjectLinkError, sessionId, t],
+        );
+
+        const handleProjectDirectoryLink = useCallback(
+                async (path: string) => {
+                        if (!agentId || !sessionId) {
+                                toast.error(t('messageBubble.projectLinkUnavailable'));
+                                return;
+                        }
+                        try {
+                                await workspaceApi.projectDirectory.list(agentId, sessionId, path);
+                                setDirectoryDialogPath(path);
+                        } catch (error) {
+                                handleProjectLinkError('messageBubble.projectDirectoryNotFound', error);
+                        }
+                },
+                [agentId, handleProjectLinkError, sessionId, t],
+        );
+
 	return (
 		<div
 			ref={containerRef}
@@ -733,7 +917,11 @@ export function MessageBubble({
 							block,
 							i,
 							t,
-                                                        { activeThinkingBlockId },
+                                                        {
+                                                                activeThinkingBlockId,
+                                                                onProjectFileLink: handleProjectFileLink,
+                                                                onProjectDirectoryLink: handleProjectDirectoryLink,
+                                                        },
 							(
 								toolCall: ToolCallBlock,
 								confirm: boolean,
@@ -848,6 +1036,29 @@ export function MessageBubble({
 					</Badge>
 				</div>
 			)}
+                        <ProjectFilePreviewDialog
+                                open={previewEntry !== null}
+                                onOpenChange={(open) => {
+                                        if (!open) {
+                                                setPreviewEntry(null);
+                                        }
+                                }}
+                                entry={previewEntry}
+                                buildProjectDirectoryPreviewUrl={buildProjectDirectoryPreviewUrl}
+                                buildProjectDirectoryDownloadUrl={buildProjectDirectoryDownloadUrl}
+                        />
+                        <ProjectDirectoryDialog
+                                open={directoryDialogPath !== null}
+                                onOpenChange={(open) => {
+                                        if (!open) {
+                                                setDirectoryDialogPath(null);
+                                        }
+                                }}
+                                initialPath={directoryDialogPath ?? ''}
+                                listProjectDirectory={listProjectDirectory}
+                                buildProjectDirectoryDownloadUrl={buildProjectDirectoryDownloadUrl}
+                                buildProjectDirectoryPreviewUrl={buildProjectDirectoryPreviewUrl}
+                        />
 		</div>
 	);
 }

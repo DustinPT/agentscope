@@ -497,6 +497,8 @@ export function ChatViewport({
 						<ChatContent
 							className={'max-w-[var(--chat-content-w)] w-full'}
 							msgs={msgs}
+                                                        agentId={agentId}
+                                                        sessionId={sessionId}
 							sessionKey={sessionId}
 							scrollTargetMessageId={scrollTargetMessageId}
 							activeMessageId={scrollTargetMessageId}
