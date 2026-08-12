@@ -5,6 +5,7 @@ import type { ChatModelConfig } from '@/api';
 import { Button } from '@/components/ui/button';
 import {
 	DropdownMenu,
+        DropdownMenuCheckboxItem,
 	DropdownMenuContent,
 	DropdownMenuGroup,
 	DropdownMenuItem,
@@ -17,6 +18,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import { cn } from '@/lib/utils';
 
 interface Props {
 	value?: ChatModelConfig | null;
@@ -50,6 +52,12 @@ export function LlmSelect({
 	const { groups, loading, refetch } = useAvailableModels();
 	const { t } = useTranslation();
 	const hasOptions = Object.keys(groups).length > 0;
+
+        const isModelSelected = (type: string, credentialId: string, model: string) =>
+                value?.type === type && value?.credential_id === credentialId && value?.model === model;
+
+        const isCredentialSelected = (type: string, credentialId: string) =>
+                value?.type === type && value?.credential_id === credentialId;
 
 	useEffect(() => {
 		if (refetchTrigger !== undefined && refetchTrigger > 0) refetch();
@@ -90,8 +98,13 @@ export function LlmSelect({
 								</DropdownMenuLabel>
 								{isSingle
 									? items[0].models.map((m) => (
-											<DropdownMenuItem
+                                                                                        <DropdownMenuCheckboxItem
 												key={m.name}
+                                                                                                checked={isModelSelected(
+                                                                                                        type,
+                                                                                                        items[0].credential.id,
+                                                                                                        m.name,
+                                                                                                )}
 												onSelect={() =>
 													handleSelect(
 														type,
@@ -101,7 +114,7 @@ export function LlmSelect({
 												}
 											>
 												{m.label}
-											</DropdownMenuItem>
+                                                                                        </DropdownMenuCheckboxItem>
 										))
 									: items.map(({ credential, models }) => {
 											const credName =
@@ -109,13 +122,26 @@ export function LlmSelect({
 												credential.id.slice(0, 8);
 											return (
 												<DropdownMenuSub key={credential.id}>
-													<DropdownMenuSubTrigger>
+                                                                                                        <DropdownMenuSubTrigger
+                                                                                                                className={cn(
+                                                                                                                        isCredentialSelected(
+                                                                                                                                type,
+                                                                                                                                credential.id,
+                                                                                                                        ) &&
+                                                                                                                                'bg-accent text-accent-foreground',
+                                                                                                                )}
+                                                                                                        >
 														{credName}
 													</DropdownMenuSubTrigger>
 													<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
 														{models.map((m) => (
-															<DropdownMenuItem
+                                                                                                                        <DropdownMenuCheckboxItem
 																key={m.name}
+                                                                                                                                checked={isModelSelected(
+                                                                                                                                        type,
+                                                                                                                                        credential.id,
+                                                                                                                                        m.name,
+                                                                                                                                )}
 																onSelect={() =>
 																	handleSelect(
 																		type,
@@ -125,7 +151,7 @@ export function LlmSelect({
 																}
 															>
 																{m.label}
-															</DropdownMenuItem>
+                                                                                                                        </DropdownMenuCheckboxItem>
 														))}
 													</DropdownMenuSubContent>
 												</DropdownMenuSub>
