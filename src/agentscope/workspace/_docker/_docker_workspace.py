@@ -56,13 +56,11 @@ from ...message import (
 )
 from ...skill import Skill
 from ...tool import ToolBase
-from .._base import (
-    WorkspaceBase,
-    DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS,
-)
+from .._base import WorkspaceBase
 from .._gateway_client import (
     GatewayClient,
 )
+from .._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._docker_backend import DockerBackend
 from ._make_dockerfile import (
     CONTAINER_DATA_DIR,
@@ -80,31 +78,6 @@ from ._make_dockerfile import (
 
 CONTAINER_AGENTS_DIR = f"{CONTAINER_WORKDIR}/agents"
 
-
-_DEFAULT_INSTRUCTIONS = f"""<workspace>
-You are running in a Docker container environment. All tool calls execute
-inside that container.
-
-{DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS}
-
-### Project Links
-- When you want to point the user to a file in the current session project \
-directory, use a Markdown link in the format \
-`[readable label](project-file://relative/path/to/file)`.
-- When you want to point the user to a directory in the current session \
-project directory, use a Markdown link in the format \
-`[readable label](project-dir://relative/path/to/directory)`.
-- Only use these links for paths inside the current session project \
-directory. Do not use absolute local filesystem paths.
-
-### Python Environment
-- `uv` is recommended for managing and isolating Python environments per \
-project:
-```shell
-uv venv && uv pip install ...
-- Never install packages into a shared or global environment — each project \
-must manage its own dependencies to avoid conflicts.
-</workspace>"""
 
 
 # ── small helpers ──────────────────────────────────────────────────
@@ -153,7 +126,7 @@ class DockerWorkspace(WorkspaceBase):
         extra_pip: list[str] | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
         **kwargs: Any,
@@ -230,7 +203,10 @@ class DockerWorkspace(WorkspaceBase):
         self.extra_pip: list[str] = list(extra_pip or [])
         self.gateway_port = gateway_port
         self.env: dict[str, str] = dict(env or {})
-        self.instructions = instructions
+        self.instructions = instructions.format(
+            backend="Docker-based",
+            workdir=self.workdir,
+        )
 
         # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])
@@ -396,7 +372,7 @@ class DockerWorkspace(WorkspaceBase):
         container-side ``{workdir}`` (i.e. ``/workspace``), since the
         agent always sees container-internal paths.
         """
-        return self.instructions.format(workdir=CONTAINER_WORKDIR)
+        return self.instructions
 
     def _default_agent_id(self) -> str:
         """Fallback namespace for direct workspace usage."""

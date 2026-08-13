@@ -1,22 +1,22 @@
-import type { ProjectDirectoryEntry } from '@/api';
+import type { WorkspaceFileEntry } from '@/api';
 import { ProjectDirectoryBrowser } from '@/components/project-directory/ProjectDirectoryBrowser';
 
 interface ProjectDirectoryTabProps {
-        listProjectDirectory: (path?: string) => Promise<ProjectDirectoryEntry[]>;
-        buildProjectDirectoryDownloadUrl: (path?: string) => string | null;
-        buildProjectDirectoryPreviewUrl: (path: string) => string | null;
+        listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
+        buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
+        buildWorkspaceFilePreviewUrl: (path: string) => string | null;
 }
 
 export function ProjectDirectoryTab({
-        listProjectDirectory,
-        buildProjectDirectoryDownloadUrl,
-        buildProjectDirectoryPreviewUrl,
+        listWorkspaceFiles,
+        buildWorkspaceFileDownloadUrl,
+        buildWorkspaceFilePreviewUrl,
 }: ProjectDirectoryTabProps) {
         return (
                 <ProjectDirectoryBrowser
-                        listProjectDirectory={listProjectDirectory}
-                        buildProjectDirectoryDownloadUrl={buildProjectDirectoryDownloadUrl}
-                        buildProjectDirectoryPreviewUrl={buildProjectDirectoryPreviewUrl}
+                        listWorkspaceFiles={listWorkspaceFiles}
+                        buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
+                        buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
                 />
         );
 }

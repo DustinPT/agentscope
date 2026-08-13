@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Workspace router — list runtime MCP clients, skills, and project files."""
+"""Workspace router — list runtime MCP clients, skills, and workspace files."""
 
 import asyncio
 import mimetypes
@@ -92,8 +92,8 @@ class MCPClientStatus(MCPClient):
     tools: list[ToolInfo] = Field(default_factory=list)
 
 
-class ProjectDirectoryEntry(BaseModel):
-    """One file or directory inside the current session project directory."""
+class WorkspaceFileEntry(BaseModel):
+    """One file or directory inside the current workspace root."""
 
     name: str
     path: str
@@ -158,20 +158,16 @@ async def _resolve_agent_workspace(
     return agent_record, workspace
 
 
-def _project_root_path(workspace: WorkspaceBase, session_id: str) -> str:
-    """Return the fixed project root for the current session."""
-    return workspace.get_backend().join_path(
-        workspace.workdir,
-        "projects",
-        session_id,
-    )
+def _workspace_root_path(workspace: WorkspaceBase) -> str:
+    """Return the current workspace root path."""
+    return workspace.get_backend().normpath(workspace.workdir)
 
 
-def _normalize_relative_project_path(
+def _normalize_relative_workspace_path(
     workspace: WorkspaceBase,
     raw_path: str,
 ) -> str:
-    """Normalize a project-relative path and reject directory traversal."""
+    """Normalize a workspace-relative path and reject directory traversal."""
     backend = workspace.get_backend()
     candidate = (raw_path or "").strip().replace("\\", "/")
     if candidate in ("", "."):
@@ -179,7 +175,7 @@ def _normalize_relative_project_path(
     if backend.isabs(candidate):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Project path must be relative.",
+            detail="Workspace path must be relative.",
         )
     normalized = backend.normpath(candidate)
     if normalized in ("", "."):
@@ -187,49 +183,48 @@ def _normalize_relative_project_path(
     if normalized == ".." or normalized.startswith("../"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Project path escapes the project directory.",
+            detail="Workspace path escapes the workspace root.",
         )
     return normalized
 
 
-def _resolve_project_target_path(
+def _resolve_workspace_target_path(
     workspace: WorkspaceBase,
-    session_id: str,
     relative_path: str,
 ) -> tuple[str, str]:
-    """Resolve one project-relative path to an absolute backend path."""
+    """Resolve one workspace-relative path to an absolute backend path."""
     backend = workspace.get_backend()
-    project_root = backend.normpath(_project_root_path(workspace, session_id))
-    normalized = _normalize_relative_project_path(workspace, relative_path)
-    resolved = project_root
+    workspace_root = _workspace_root_path(workspace)
+    normalized = _normalize_relative_workspace_path(workspace, relative_path)
+    resolved = workspace_root
     if normalized:
-        resolved = backend.normpath(backend.join_path(project_root, normalized))
-    if resolved != project_root and not resolved.startswith(project_root.rstrip("/") + "/"):
+        resolved = backend.normpath(backend.join_path(workspace_root, normalized))
+    if resolved != workspace_root and not resolved.startswith(workspace_root.rstrip("/") + "/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Project path escapes the project directory.",
+            detail="Workspace path escapes the workspace root.",
         )
-    return project_root, resolved
+    return workspace_root, resolved
 
 
-def _download_filename(
+def _workspace_download_filename(
     relative_path: str,
     *,
     is_dir: bool,
     session_id: str,
 ) -> str:
-    """Build the browser-visible filename for one project download."""
+    """Build the browser-visible filename for one workspace download."""
     if not relative_path:
-        return f"project-{session_id}.zip"
-    name = Path(relative_path).name or f"project-{session_id}"
+        return f"workspace-{session_id}.zip"
+    name = Path(relative_path).name or f"workspace-{session_id}"
     return f"{name}.zip" if is_dir else name
 
 
-def _zip_root_name(relative_path: str, session_id: str) -> str:
+def _workspace_zip_root_name(relative_path: str, session_id: str) -> str:
     """Build the archive root directory name."""
     if not relative_path:
-        return f"project-{session_id}"
-    return Path(relative_path).name or f"project-{session_id}"
+        return f"workspace-{session_id}"
+    return Path(relative_path).name or f"workspace-{session_id}"
 
 
 def _text_like_media_type(path: str) -> str | None:
@@ -286,7 +281,7 @@ async def _entry_to_response(
     parent_relative_path: str,
     parent_path: str,
     entry: DirEntry,
-) -> ProjectDirectoryEntry:
+) -> WorkspaceFileEntry:
     """Convert one backend directory entry to API response shape."""
     entry_path = (
         f"{parent_relative_path}/{entry.name}"
@@ -300,7 +295,7 @@ async def _entry_to_response(
             workspace.get_backend().join_path(parent_path, entry.name),
             entry.name,
         )
-    return ProjectDirectoryEntry(
+    return WorkspaceFileEntry(
         name=entry.name,
         path=entry_path,
         is_dir=entry.is_dir,
@@ -350,7 +345,7 @@ async def _build_local_zip(
 
     def _write_zip() -> str:
         fd, temp_path = tempfile.mkstemp(
-            prefix="agentscope-project-download-",
+            prefix="agentscope-workspace-download-",
             suffix=".zip",
         )
         os.close(fd)
@@ -405,7 +400,7 @@ async def _build_remote_zip(
     allow_missing: bool,
 ) -> str:
     """Create one zip file inside the remote workspace runtime."""
-    temp_path = f"/tmp/agentscope-project-download-{uuid.uuid4().hex}.zip"
+    temp_path = f"/tmp/agentscope-workspace-download-{uuid.uuid4().hex}.zip"
     result = await workspace.get_backend().exec_shell(
         [
             "python3",
@@ -421,7 +416,7 @@ async def _build_remote_zip(
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=stderr or "Failed to create project archive.",
+            detail=stderr or "Failed to create workspace archive.",
         )
     return temp_path
 
@@ -433,7 +428,7 @@ async def _build_project_zip(
     *,
     allow_missing: bool,
 ) -> tuple[str, Callable[[], Awaitable[None]]]:
-    """Create a temporary project zip and return its path plus cleanup hook."""
+    """Create a temporary workspace zip and return its path plus cleanup hook."""
     backend = workspace.get_backend()
     if isinstance(backend, LocalBackend):
         zip_path = await _build_local_zip(
@@ -535,12 +530,12 @@ async def list_skills(
 
 
 # ---------------------------------------------------------------------------
-# Project directory endpoints
+# Workspace file endpoints
 # ---------------------------------------------------------------------------
 
 
-@workspace_router.get("/project-directory")
-async def list_project_directory(
+@workspace_router.get("/files")
+async def list_workspace_files(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     path: str = Query(default=""),
@@ -548,8 +543,8 @@ async def list_project_directory(
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
     asset_store: AgentAssetStore = Depends(get_agent_asset_store),
-) -> list[ProjectDirectoryEntry]:
-    """Return one directory level from the current session project root."""
+) -> list[WorkspaceFileEntry]:
+    """Return one directory level from the current workspace root."""
     _, workspace = await _resolve_agent_workspace(
         user_id,
         agent_id,
@@ -558,25 +553,21 @@ async def list_project_directory(
         workspace_manager,
         asset_store,
     )
-    relative_path = _normalize_relative_project_path(workspace, path)
-    project_root, target_path = _resolve_project_target_path(
-        workspace,
-        session_id,
-        relative_path,
-    )
+    relative_path = _normalize_relative_workspace_path(workspace, path)
+    workspace_root, target_path = _resolve_workspace_target_path(workspace, relative_path)
     backend = workspace.get_backend()
 
-    if not await backend.is_dir(project_root):
+    if not await backend.is_dir(workspace_root):
         if relative_path:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project directory not found.",
+                detail="Workspace directory not found.",
             )
         return []
     if relative_path and not await backend.is_dir(target_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project directory not found.",
+            detail="Workspace directory not found.",
         )
 
     try:
@@ -585,7 +576,7 @@ async def list_project_directory(
         if relative_path:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project directory not found.",
+                detail="Workspace directory not found.",
             ) from None
         return []
 
@@ -596,8 +587,8 @@ async def list_project_directory(
     ]
 
 
-@workspace_router.get("/project-directory/download")
-async def download_project_directory(
+@workspace_router.get("/files/download")
+async def download_workspace_file(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     path: str = Query(default=""),
@@ -606,7 +597,7 @@ async def download_project_directory(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
     asset_store: AgentAssetStore = Depends(get_agent_asset_store),
 ) -> StreamingResponse:
-    """Download one project file or one zipped project directory."""
+    """Download one workspace file or one zipped workspace directory."""
     _, workspace = await _resolve_agent_workspace(
         user_id,
         agent_id,
@@ -615,27 +606,23 @@ async def download_project_directory(
         workspace_manager,
         asset_store,
     )
-    relative_path = _normalize_relative_project_path(workspace, path)
-    project_root, target_path = _resolve_project_target_path(
-        workspace,
-        session_id,
-        relative_path,
-    )
+    relative_path = _normalize_relative_workspace_path(workspace, path)
+    workspace_root, target_path = _resolve_workspace_target_path(workspace, relative_path)
     backend = workspace.get_backend()
-    project_root_exists = await backend.is_dir(project_root)
+    workspace_root_exists = await backend.is_dir(workspace_root)
 
     if relative_path:
         target_stat = await backend.stat(target_path)
         if target_stat is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project file or directory not found.",
+                detail="Workspace file or directory not found.",
             )
     else:
-        target_stat = await backend.stat(project_root)
+        target_stat = await backend.stat(workspace_root)
 
     is_dir = target_stat.is_dir if target_stat is not None else True
-    filename = _download_filename(
+    filename = _workspace_download_filename(
         relative_path,
         is_dir=is_dir,
         session_id=session_id,
@@ -654,9 +641,9 @@ async def download_project_directory(
 
     zip_path, cleanup = await _build_project_zip(
         workspace,
-        project_root if not relative_path else target_path,
-        _zip_root_name(relative_path, session_id),
-        allow_missing=not relative_path and not project_root_exists,
+        workspace_root if not relative_path else target_path,
+        _workspace_zip_root_name(relative_path, session_id),
+        allow_missing=not relative_path and not workspace_root_exists,
     )
     return StreamingResponse(
         _stream_backend_file(workspace, zip_path, cleanup=cleanup),
@@ -665,8 +652,8 @@ async def download_project_directory(
     )
 
 
-@workspace_router.get("/project-directory/preview")
-async def preview_project_file(
+@workspace_router.get("/files/preview")
+async def preview_workspace_file(
     agent_id: str = Query(...),
     session_id: str = Query(...),
     path: str = Query(...),
@@ -675,7 +662,7 @@ async def preview_project_file(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
     asset_store: AgentAssetStore = Depends(get_agent_asset_store),
 ) -> StreamingResponse:
-    """Preview one text or image file from the project directory."""
+    """Preview one text or image file from the workspace root."""
     _, workspace = await _resolve_agent_workspace(
         user_id,
         agent_id,
@@ -684,23 +671,19 @@ async def preview_project_file(
         workspace_manager,
         asset_store,
     )
-    relative_path = _normalize_relative_project_path(workspace, path)
+    relative_path = _normalize_relative_workspace_path(workspace, path)
     if not relative_path:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Preview path must point to a file.",
         )
 
-    _, target_path = _resolve_project_target_path(
-        workspace,
-        session_id,
-        relative_path,
-    )
+    _, target_path = _resolve_workspace_target_path(workspace, relative_path)
     target_stat = await workspace.get_backend().stat(target_path)
     if target_stat is None or target_stat.is_dir:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Preview file not found.",
+            detail="Workspace file not found.",
         )
 
     media_type = await _preview_media_type(

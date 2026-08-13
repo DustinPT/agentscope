@@ -1,5 +1,5 @@
 import { client, getBaseUrl, getUserId } from './client';
-import type { MCPClientStatus, ProjectDirectoryEntry, Skill } from './types';
+import type { MCPClientStatus, Skill, WorkspaceFileEntry } from './types';
 
 export const workspaceApi = {
 	mcp: {
@@ -15,16 +15,16 @@ export const workspaceApi = {
 			client.get<Skill[]>('/workspace/skill', { agent_id: agentId, session_id: sessionId }),
 	},
 
-        projectDirectory: {
+        files: {
                 list: (agentId: string, sessionId: string, path = '') =>
-                        client.get<ProjectDirectoryEntry[]>('/workspace/project-directory', {
+                        client.get<WorkspaceFileEntry[]>('/workspace/files', {
                                 agent_id: agentId,
                                 session_id: sessionId,
                                 path,
                         }),
                 buildDownloadUrl: (agentId: string, sessionId: string, path = '') => {
                         const baseUrl = getBaseUrl() || window.location.origin;
-                        const url = new URL('/workspace/project-directory/download', baseUrl);
+                        const url = new URL('/workspace/files/download', baseUrl);
                         url.searchParams.set('agent_id', agentId);
                         url.searchParams.set('session_id', sessionId);
                         url.searchParams.set('user_id', getUserId());
@@ -35,7 +35,7 @@ export const workspaceApi = {
                 },
                 buildPreviewUrl: (agentId: string, sessionId: string, path: string) => {
                         const baseUrl = getBaseUrl() || window.location.origin;
-                        const url = new URL('/workspace/project-directory/preview', baseUrl);
+                        const url = new URL('/workspace/files/preview', baseUrl);
                         url.searchParams.set('agent_id', agentId);
                         url.searchParams.set('session_id', sessionId);
                         url.searchParams.set('user_id', getUserId());

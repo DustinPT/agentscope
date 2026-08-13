@@ -484,7 +484,7 @@ export interface Skill {
 	content_hash: string;
 }
 
-export interface ProjectDirectoryEntry {
+export interface WorkspaceFileEntry {
         name: string;
         path: string;
         is_dir: boolean;

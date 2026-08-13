@@ -1,5 +1,5 @@
 import { ProjectDirectoryBrowser } from './ProjectDirectoryBrowser';
-import type { ProjectDirectoryEntry } from '@/api';
+import type { WorkspaceFileEntry } from '@/api';
 import {
         Dialog,
         DialogContent,
@@ -13,21 +13,21 @@ interface ProjectDirectoryDialogProps {
         open: boolean;
         onOpenChange: (open: boolean) => void;
         initialPath: string;
-        listProjectDirectory: (path?: string) => Promise<ProjectDirectoryEntry[]>;
-        buildProjectDirectoryDownloadUrl: (path?: string) => string | null;
-        buildProjectDirectoryPreviewUrl: (path: string) => string | null;
+        listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
+        buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
+        buildWorkspaceFilePreviewUrl: (path: string) => string | null;
 }
 
 export function ProjectDirectoryDialog({
         open,
         onOpenChange,
         initialPath,
-        listProjectDirectory,
-        buildProjectDirectoryDownloadUrl,
-        buildProjectDirectoryPreviewUrl,
+        listWorkspaceFiles,
+        buildWorkspaceFileDownloadUrl,
+        buildWorkspaceFilePreviewUrl,
 }: ProjectDirectoryDialogProps) {
         const { t } = useTranslation();
-        const title = initialPath || t('workspace-drawer.project.rootDirectory');
+        const title = initialPath || t('workspace-drawer.file.rootDirectory');
 
         return (
                 <Dialog open={open} onOpenChange={onOpenChange}>
@@ -35,17 +35,17 @@ export function ProjectDirectoryDialog({
                                 <DialogHeader>
                                         <DialogTitle>{title}</DialogTitle>
                                         <DialogDescription>
-                                                {t('workspace-drawer.project.directoryDialogDescription')}
+                                                {t('workspace-drawer.file.directoryDialogDescription')}
                                         </DialogDescription>
                                 </DialogHeader>
                                 <div className="max-h-[70vh] overflow-auto pr-1">
                                         <ProjectDirectoryBrowser
                                                 initialPath={initialPath}
-                                                listProjectDirectory={listProjectDirectory}
-                                                buildProjectDirectoryDownloadUrl={
-                                                        buildProjectDirectoryDownloadUrl
+                                                listWorkspaceFiles={listWorkspaceFiles}
+                                                buildWorkspaceFileDownloadUrl={
+                                                        buildWorkspaceFileDownloadUrl
                                                 }
-                                                buildProjectDirectoryPreviewUrl={buildProjectDirectoryPreviewUrl}
+                                                buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
                                                 showDescription={false}
                                         />
                                 </div>

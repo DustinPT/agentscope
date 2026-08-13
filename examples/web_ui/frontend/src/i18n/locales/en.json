@@ -123,10 +123,10 @@
                         "http": "Model request failed.",
                         "unknown": "Reply generation failed."
                 },
-                "invalidProjectLink": "Invalid project link",
-                "projectLinkUnavailable": "This message does not have project directory context yet",
-                "projectFileNotFound": "Project file not found or inaccessible",
-                "projectDirectoryNotFound": "Project directory not found or inaccessible",
+                "invalidWorkspaceLink": "Invalid workspace link",
+                "workspaceLinkUnavailable": "This message does not have workspace context yet",
+                "workspaceFileNotFound": "Workspace file not found or inaccessible",
+                "workspaceDirectoryNotFound": "Workspace directory not found or inaccessible",
 		"hintSource": {
 			"tool_output": "Tool Output",
 			"team_message": "Team Message",
@@ -165,9 +165,9 @@
 	},
         "workspace-drawer": {
                 "title": "Workspace",
-                "description": "View the MCP servers, skills, and project directory available in this session workspace.",
+                "description": "View the MCP servers, skills, and files available in this session workspace.",
                 "skillTab": "Skill",
-                "projectTab": "Project Directory",
+                "fileTab": "Files",
                 "mcp": {
                         "description": "MCP servers currently available in the workspace.",
                         "searchPlaceholder": "Search MCP servers in the workspace",
@@ -179,25 +179,25 @@
                         "searchPlaceholder": "Search skills in the workspace",
                         "empty": "No skills found"
                 },
-                "project": {
-                        "description": "Browse and download files and directories from the current session project directory.",
+                "file": {
+                        "description": "Browse and download files and directories from the current workspace root.",
                         "refresh": "Refresh",
                         "preview": "Preview",
                         "copy": "Copy",
                         "copySuccess": "Preview content copied",
                         "copyFailed": "Failed to copy content",
                         "previewTitle": "File Preview",
-                        "previewDescription": "Preview file contents from the current project directory.",
+                        "previewDescription": "Preview file contents from the current workspace.",
                         "previewLoadFailed": "Failed to load preview",
                         "previewUnsupported": "This file type does not support preview yet",
-                        "downloadProject": "Download Project Directory",
+                        "downloadWorkspace": "Download Workspace",
                         "downloadDirectory": "Download Directory",
                         "downloadFile": "Download File",
-                        "loadFailed": "Failed to load the project directory",
-                        "emptyRoot": "The project directory is empty. Files created by the agent will appear here.",
+                        "loadFailed": "Failed to load workspace files",
+                        "emptyRoot": "The workspace is empty. Files created by the agent will appear here.",
                         "emptyDirectory": "This directory is empty",
-                        "rootDirectory": "Project Directory",
-                        "directoryDialogDescription": "Browse the selected directory in the current session project directory and continue previewing or downloading files.",
+                        "rootDirectory": "Workspace Root",
+                        "directoryDialogDescription": "Browse the selected directory in the current workspace and continue previewing or downloading files.",
                         "directoryMeta": "Updated {{updatedAt}}",
                         "fileMeta": "{{size}} · Updated {{updatedAt}}"
                 }

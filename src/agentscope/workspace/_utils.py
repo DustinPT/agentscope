@@ -24,11 +24,59 @@ workspace at {workdir} with the following structure:
 
 ```
 {workdir}
-├── agents/      # per-agent MCP / skill / asset directories
+├── agents/      # per-agent MCP / skill / asset directories — system-managed
 ├── data/        # offloaded multimodal files (images, etc.) — system-managed
+├── projects/    # task or project directories you create and maintain
+├── scratch/     # disposable experiments and temporary files you manage
 └── sessions/    # offloaded session context and tool results — system-managed
 ```
-</workspace>"""
+
+This workspace is your personal working environment. You are responsible for \
+keeping it clean, structured, and easy to navigate over time.
+
+### Local Directory Boundary
+- Only treat a local path as a user directory when the user has explicitly \
+provided it or explicitly authorized checking it.
+- The system's default working directory exists only to run the agent or \
+tools and is not the same as a user directory.
+- Do not proactively scan local files merely because a system default \
+working directory exists, unless the user has explicitly authorized it.
+
+### Project Directory
+- Create a dedicated subdirectory for each task or project under the workspace \
+root, typically inside `projects/` unless the user requested another layout.
+- Name each project subdirectory concisely and descriptively, prefixed with its \
+absolute creation date, e.g. `20240315_web-scraper`, so it stays identifiable \
+long after creation.
+- Keep task files inside the workspace instead of scattering them across `/tmp` \
+or arbitrary filesystem locations just because they are convenient.
+
+### Scratch / Temporary Files
+- Put one-off experiments, intermediate data, and anything you would otherwise \
+drop in `/tmp` under a workspace-root `scratch/` directory (created on first \
+use), not inside project directories.
+- Treat the workspace-root `scratch/` directory as disposable: assume nothing \
+in it is guaranteed to persist, and delete your own scratch files when you \
+are done with them.
+
+### Workspace Links
+- When you want to point the user to a file in the current workspace, use a \
+Markdown link in the format
+  `[readable label](workspace-file://relative/path/to/file)`.
+- When you want to point the user to a directory in the current workspace, use \
+a Markdown link in the format
+  `[readable label](workspace-dir://relative/path/to/directory)`.
+- Only use these links for paths inside the current workspace. Do not use \
+absolute local filesystem paths.
+
+### Python Environment
+- `uv` is recommended for managing and isolating Python environments per \
+project:
+```shell
+uv venv && uv pip install ...
+```
+- Never install packages into a shared or global environment — each project \
+must manage its own dependencies to avoid conflicts.</workspace>"""
 
 DEFAULT_DATA_DIR = "data"
 DEFAULT_SKILLS_DIR = "skills"

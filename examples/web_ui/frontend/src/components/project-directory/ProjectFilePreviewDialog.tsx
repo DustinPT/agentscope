@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 
-import type { ProjectDirectoryEntry } from '@/api';
+import type { WorkspaceFileEntry } from '@/api';
 import { Button } from '@/components/ui/button';
 import {
         Dialog,
@@ -20,17 +20,17 @@ import { triggerBrowserDownload } from '@/utils/download';
 interface ProjectFilePreviewDialogProps {
         open: boolean;
         onOpenChange: (open: boolean) => void;
-        entry: ProjectDirectoryEntry | null;
-        buildProjectDirectoryPreviewUrl: (path: string) => string | null;
-        buildProjectDirectoryDownloadUrl: (path?: string) => string | null;
+        entry: WorkspaceFileEntry | null;
+        buildWorkspaceFilePreviewUrl: (path: string) => string | null;
+        buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
 }
 
 export function ProjectFilePreviewDialog({
         open,
         onOpenChange,
         entry,
-        buildProjectDirectoryPreviewUrl,
-        buildProjectDirectoryDownloadUrl,
+        buildWorkspaceFilePreviewUrl,
+        buildWorkspaceFileDownloadUrl,
 }: ProjectFilePreviewDialogProps) {
         const { t } = useTranslation();
         const [previewText, setPreviewText] = useState('');
@@ -38,12 +38,12 @@ export function ProjectFilePreviewDialog({
         const [previewError, setPreviewError] = useState<string | null>(null);
 
         const previewUrl = useMemo(
-                () => (entry ? buildProjectDirectoryPreviewUrl(entry.path) : null),
-                [buildProjectDirectoryPreviewUrl, entry],
+                () => (entry ? buildWorkspaceFilePreviewUrl(entry.path) : null),
+                [buildWorkspaceFilePreviewUrl, entry],
         );
         const downloadUrl = useMemo(
-                () => (entry ? buildProjectDirectoryDownloadUrl(entry.path) : null),
-                [buildProjectDirectoryDownloadUrl, entry],
+                () => (entry ? buildWorkspaceFileDownloadUrl(entry.path) : null),
+                [buildWorkspaceFileDownloadUrl, entry],
         );
 
         const isImagePreview = !!entry?.mime_type?.startsWith('image/');
@@ -122,9 +122,9 @@ export function ProjectFilePreviewDialog({
 
                 const copied = await copyToClipboard(copyablePreviewText);
                 if (copied) {
-                        toast.success(t('workspace-drawer.project.copySuccess'));
+                        toast.success(t('workspace-drawer.file.copySuccess'));
                 } else {
-                        toast.error(t('workspace-drawer.project.copyFailed'));
+                        toast.error(t('workspace-drawer.file.copyFailed'));
                 }
         }, [copyablePreviewText, isTextPreview, previewError, previewLoading, t]);
 
@@ -152,10 +152,10 @@ export function ProjectFilePreviewDialog({
                                         <div className="flex items-start justify-between gap-3">
                                                 <div className="min-w-0">
                                                         <DialogTitle>
-                                                                {entry?.name ?? t('workspace-drawer.project.previewTitle')}
+                                                                {entry?.name ?? t('workspace-drawer.file.previewTitle')}
                                                         </DialogTitle>
                                                         <DialogDescription>
-                                                                {entry?.path ?? t('workspace-drawer.project.previewDescription')}
+                                                                {entry?.path ?? t('workspace-drawer.file.previewDescription')}
                                                         </DialogDescription>
                                                 </div>
                                                 <div className="flex items-center gap-2">
@@ -171,7 +171,7 @@ export function ProjectFilePreviewDialog({
                                                                         }
                                                                 >
                                                                         <Copy className="size-4" />
-                                                                        {t('workspace-drawer.project.copy')}
+                                                                        {t('workspace-drawer.file.copy')}
                                                                 </Button>
                                                         ) : null}
                                                         <Button
@@ -181,7 +181,7 @@ export function ProjectFilePreviewDialog({
                                                                 disabled={!downloadUrl}
                                                         >
                                                                 <Download className="size-4" />
-                                                                {t('workspace-drawer.project.downloadFile')}
+                                                                {t('workspace-drawer.file.downloadFile')}
                                                         </Button>
                                                 </div>
                                         </div>
@@ -202,7 +202,7 @@ export function ProjectFilePreviewDialog({
                                                         </div>
                                                 ) : previewError ? (
                                                         <div className="py-8 text-center text-sm text-destructive">
-                                                                {t('workspace-drawer.project.previewLoadFailed')}
+                                                                {t('workspace-drawer.file.previewLoadFailed')}
                                                         </div>
                                                 ) : isMarkdownPreview ? (
                                                         <div className="max-h-[70vh] overflow-auto rounded-md border bg-muted/20 p-4">
@@ -219,7 +219,7 @@ export function ProjectFilePreviewDialog({
                                                 )
                                         ) : (
                                                 <div className="py-8 text-center text-sm text-muted-foreground">
-                                                        {t('workspace-drawer.project.previewUnsupported')}
+                                                        {t('workspace-drawer.file.previewUnsupported')}
                                                 </div>
                                         )
                                 ) : null}

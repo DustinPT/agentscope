@@ -30,7 +30,7 @@ import { toast } from 'sonner';
 import { ConfirmCard } from './ConfirmCard';
 import { renderToolGroup } from './tool-renderers';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
-import type { ProjectDirectoryEntry } from '@/api';
+import type { WorkspaceFileEntry } from '@/api';
 import { workspaceApi } from '@/api';
 import { ProjectDirectoryDialog } from '@/components/project-directory/ProjectDirectoryDialog';
 import { ProjectFilePreviewDialog } from '@/components/project-directory/ProjectFilePreviewDialog';
@@ -507,10 +507,10 @@ function renderBlock(
                                                                         title,
                                                                 } = anchorProps;
                                                                 const target = parseProjectLinkHref(href);
-                                                                const isProjectLink =
-                                                                        href?.startsWith('project-file://') ||
-                                                                        href?.startsWith('project-dir://');
-                                                                if (!target && isProjectLink) {
+                                                                const isWorkspaceLink =
+                                                                        href?.startsWith('workspace-file://') ||
+                                                                        href?.startsWith('workspace-dir://');
+                                                                if (!target && isWorkspaceLink) {
                                                                         return (
                                                                                 <button
                                                                                         type="button"
@@ -524,7 +524,7 @@ function renderBlock(
                                                                                                 event.preventDefault();
                                                                                                 toast.error(
                                                                                                         t(
-                                                                                                                'messageBubble.invalidProjectLink',
+                                                                                                                'messageBubble.invalidWorkspaceLink',
                                                                                                         ),
                                                                                                 );
                                                                                         }}
@@ -766,7 +766,7 @@ export function MessageBubble({
 }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
-        const [previewEntry, setPreviewEntry] = useState<ProjectDirectoryEntry | null>(null);
+        const [previewEntry, setPreviewEntry] = useState<WorkspaceFileEntry | null>(null);
         const [directoryDialogPath, setDirectoryDialogPath] = useState<string | null>(null);
 
         const runError = getReplyRunErrorMetadata(message);
@@ -818,30 +818,30 @@ export function MessageBubble({
 	const elapsedText = formatTime(elapsedSeconds);
 	const contextUsageText = contextUsage ? formatContextUsage(contextUsage) : null;
 
-        const listProjectDirectory = useCallback(
+        const listWorkspaceFiles = useCallback(
                 (path = '') => {
                         if (!agentId || !sessionId) {
                                 return Promise.reject(new Error('Missing workspace context'));
                         }
-                        return workspaceApi.projectDirectory.list(agentId, sessionId, path);
+                        return workspaceApi.files.list(agentId, sessionId, path);
                 },
                 [agentId, sessionId],
         );
-        const buildProjectDirectoryDownloadUrl = useCallback(
+        const buildWorkspaceFileDownloadUrl = useCallback(
                 (path = '') => {
                         if (!agentId || !sessionId) {
                                 return null;
                         }
-                        return workspaceApi.projectDirectory.buildDownloadUrl(agentId, sessionId, path);
+                        return workspaceApi.files.buildDownloadUrl(agentId, sessionId, path);
                 },
                 [agentId, sessionId],
         );
-        const buildProjectDirectoryPreviewUrl = useCallback(
+        const buildWorkspaceFilePreviewUrl = useCallback(
                 (path: string) => {
                         if (!agentId || !sessionId) {
                                 return null;
                         }
-                        return workspaceApi.projectDirectory.buildPreviewUrl(agentId, sessionId, path);
+                        return workspaceApi.files.buildPreviewUrl(agentId, sessionId, path);
                 },
                 [agentId, sessionId],
         );
@@ -855,42 +855,42 @@ export function MessageBubble({
                 [t],
         );
 
-        const handleProjectFileLink = useCallback(
+        const handleWorkspaceFileLink = useCallback(
                 async (path: string) => {
                         if (!agentId || !sessionId) {
-                                toast.error(t('messageBubble.projectLinkUnavailable'));
+                                toast.error(t('messageBubble.workspaceLinkUnavailable'));
                                 return;
                         }
                         try {
                                 const parentPath = getProjectParentPath(path);
-                                const entries = await workspaceApi.projectDirectory.list(
+                                const entries = await workspaceApi.files.list(
                                         agentId,
                                         sessionId,
                                         parentPath,
                                 );
                                 const entry = entries.find((item) => item.path === path && !item.is_dir);
                                 if (!entry) {
-                                        throw new Error(t('messageBubble.projectFileNotFound'));
+                                        throw new Error(t('messageBubble.workspaceFileNotFound'));
                                 }
                                 setPreviewEntry(entry);
                         } catch (error) {
-                                handleProjectLinkError('messageBubble.projectFileNotFound', error);
+                                handleProjectLinkError('messageBubble.workspaceFileNotFound', error);
                         }
                 },
                 [agentId, handleProjectLinkError, sessionId, t],
         );
 
-        const handleProjectDirectoryLink = useCallback(
+        const handleWorkspaceDirectoryLink = useCallback(
                 async (path: string) => {
                         if (!agentId || !sessionId) {
-                                toast.error(t('messageBubble.projectLinkUnavailable'));
+                                toast.error(t('messageBubble.workspaceLinkUnavailable'));
                                 return;
                         }
                         try {
-                                await workspaceApi.projectDirectory.list(agentId, sessionId, path);
+                                await workspaceApi.files.list(agentId, sessionId, path);
                                 setDirectoryDialogPath(path);
                         } catch (error) {
-                                handleProjectLinkError('messageBubble.projectDirectoryNotFound', error);
+                                handleProjectLinkError('messageBubble.workspaceDirectoryNotFound', error);
                         }
                 },
                 [agentId, handleProjectLinkError, sessionId, t],
@@ -919,8 +919,8 @@ export function MessageBubble({
 							t,
                                                         {
                                                                 activeThinkingBlockId,
-                                                                onProjectFileLink: handleProjectFileLink,
-                                                                onProjectDirectoryLink: handleProjectDirectoryLink,
+                                                                onProjectFileLink: handleWorkspaceFileLink,
+                                                                onProjectDirectoryLink: handleWorkspaceDirectoryLink,
                                                         },
 							(
 								toolCall: ToolCallBlock,
@@ -1044,8 +1044,8 @@ export function MessageBubble({
                                         }
                                 }}
                                 entry={previewEntry}
-                                buildProjectDirectoryPreviewUrl={buildProjectDirectoryPreviewUrl}
-                                buildProjectDirectoryDownloadUrl={buildProjectDirectoryDownloadUrl}
+                                buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
+                                buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
                         />
                         <ProjectDirectoryDialog
                                 open={directoryDialogPath !== null}
@@ -1055,9 +1055,9 @@ export function MessageBubble({
                                         }
                                 }}
                                 initialPath={directoryDialogPath ?? ''}
-                                listProjectDirectory={listProjectDirectory}
-                                buildProjectDirectoryDownloadUrl={buildProjectDirectoryDownloadUrl}
-                                buildProjectDirectoryPreviewUrl={buildProjectDirectoryPreviewUrl}
+                                listWorkspaceFiles={listWorkspaceFiles}
+                                buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
+                                buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
                         />
 		</div>
 	);

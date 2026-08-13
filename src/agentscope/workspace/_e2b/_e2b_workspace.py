@@ -60,12 +60,16 @@ from ...message import (
 )
 from ...skill import Skill
 from ...tool import ToolBase
-from .._base import (
-    WorkspaceBase,
-    DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS,
-)
+from .._base import WorkspaceBase
 from .._gateway_client import (
     GatewayClient,
+)
+from .._utils import (
+    DEFAULT_WORKSPACE_INSTRUCTIONS,
+    _agentscope_version,
+    _is_released_install,
+    _read_glob_helper_bytes,
+    _read_gateway_script_bytes,
 )
 from ._bootstrap import (
     DEFAULT_GATEWAY_PORT,
@@ -88,39 +92,8 @@ from ._bootstrap import (
     render_install_agentscope_cmd_dev,
     render_install_agentscope_cmd_released,
 )
-from .._utils import (
-    _agentscope_version,
-    _is_released_install,
-    _read_glob_helper_bytes,
-    _read_gateway_script_bytes,
-)
 from ._e2b_backend import E2BBackend
 
-
-_DEFAULT_INSTRUCTIONS = f"""<workspace>
-You are running in an E2B sandbox environment. All tool calls execute
-inside that sandbox.
-
-{DEFAULT_LOCAL_DIRECTORY_BOUNDARY_INSTRUCTIONS}
-
-### Project Links
-- When you want to point the user to a file in the current session project \
-directory, use a Markdown link in the format \
-`[readable label](project-file://relative/path/to/file)`.
-- When you want to point the user to a directory in the current session \
-project directory, use a Markdown link in the format \
-`[readable label](project-dir://relative/path/to/directory)`.
-- Only use these links for paths inside the current session project \
-directory. Do not use absolute local filesystem paths.
-
-### Python Environment
-- `uv` is recommended for managing and isolating Python environments per \
-project:
-```shell
-uv venv && uv pip install ...
-- Never install packages into a shared or global environment — each project \
-must manage its own dependencies to avoid conflicts.
-</workspace>"""
 
 
 # ── small helpers ──────────────────────────────────────────────────
@@ -169,7 +142,7 @@ class E2BWorkspace(WorkspaceBase):
         env: dict[str, str] | None = None,
         sandbox_metadata: dict[str, str] | None = None,
         extra_pip: list[str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
     ) -> None:
@@ -230,7 +203,10 @@ class E2BWorkspace(WorkspaceBase):
         self.env: dict[str, str] = dict(env or {})
         self.sandbox_metadata: dict[str, str] = dict(sandbox_metadata or {})
         self.extra_pip: list[str] = list(extra_pip or [])
-        self.instructions = instructions
+        self.instructions = instructions.format(
+            backend="E2B-based",
+            workdir=self.workdir,
+        )
 
         # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])
@@ -393,7 +369,7 @@ class E2BWorkspace(WorkspaceBase):
         the sandbox-side path (``/home/user/workspace``). The agent
         always sees sandbox-internal paths.
         """
-        return self.instructions.format(workdir=SANDBOX_WORKDIR)
+        return self.instructions
 
     def _default_agent_id(self) -> str:
         """Fallback namespace for direct workspace usage."""

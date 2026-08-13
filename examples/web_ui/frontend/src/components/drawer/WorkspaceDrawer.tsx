@@ -1,7 +1,7 @@
 import { Search } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
-import type { MCPClientStatus, ProjectDirectoryEntry, Skill } from '@/api';
+import type { MCPClientStatus, Skill, WorkspaceFileEntry } from '@/api';
 import { ProjectDirectoryTab } from '@/components/drawer/ProjectDirectoryTab';
 import {
 	Drawer,
@@ -23,9 +23,9 @@ interface WorkspaceDrawerProps {
 	loading?: boolean;
 	skills: Skill[];
 	skillsLoading?: boolean;
-        listProjectDirectory: (path?: string) => Promise<ProjectDirectoryEntry[]>;
-        buildProjectDirectoryDownloadUrl: (path?: string) => string | null;
-        buildProjectDirectoryPreviewUrl: (path: string) => string | null;
+        listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
+        buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
+        buildWorkspaceFilePreviewUrl: (path: string) => string | null;
 }
 
 export function WorkspaceDrawer({
@@ -34,9 +34,9 @@ export function WorkspaceDrawer({
 	loading = false,
 	skills,
 	skillsLoading = false,
-        listProjectDirectory,
-        buildProjectDirectoryDownloadUrl,
-        buildProjectDirectoryPreviewUrl,
+        listWorkspaceFiles,
+        buildWorkspaceFileDownloadUrl,
+        buildWorkspaceFilePreviewUrl,
 }: WorkspaceDrawerProps) {
 	const { t } = useTranslation();
 	const [search, setSearch] = useState('');
@@ -63,8 +63,8 @@ export function WorkspaceDrawer({
 						<TabsList className={'w-full'}>
 							<TabsTrigger value={'mcp'}>MCP</TabsTrigger>
                                                         <TabsTrigger value={'skill'}>{t('workspace-drawer.skillTab')}</TabsTrigger>
-                                                        <TabsTrigger value={'project'}>
-                                                                {t('workspace-drawer.projectTab')}
+                                                        <TabsTrigger value={'file'}>
+                                                                {t('workspace-drawer.fileTab')}
                                                         </TabsTrigger>
 						</TabsList>
 						<TabsContent value={'mcp'} asChild>
@@ -157,15 +157,11 @@ export function WorkspaceDrawer({
 								)}
 							</div>
 						</TabsContent>
-                                                <TabsContent value={'project'} asChild>
+                                                <TabsContent value={'file'} asChild>
                                                         <ProjectDirectoryTab
-                                                                listProjectDirectory={listProjectDirectory}
-                                                                buildProjectDirectoryDownloadUrl={
-                                                                        buildProjectDirectoryDownloadUrl
-                                                                }
-                                                                buildProjectDirectoryPreviewUrl={
-                                                                        buildProjectDirectoryPreviewUrl
-                                                                }
+                                                                listWorkspaceFiles={listWorkspaceFiles}
+                                                                buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
+                                                                buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
                                                         />
                                                 </TabsContent>
 					</Tabs>

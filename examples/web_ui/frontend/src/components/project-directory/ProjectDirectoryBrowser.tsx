@@ -10,7 +10,7 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ProjectFilePreviewDialog } from './ProjectFilePreviewDialog';
-import type { ProjectDirectoryEntry } from '@/api';
+import type { WorkspaceFileEntry } from '@/api';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
@@ -18,9 +18,9 @@ import { triggerBrowserDownload } from '@/utils/download';
 
 interface ProjectDirectoryBrowserProps {
         initialPath?: string;
-        listProjectDirectory: (path?: string) => Promise<ProjectDirectoryEntry[]>;
-        buildProjectDirectoryDownloadUrl: (path?: string) => string | null;
-        buildProjectDirectoryPreviewUrl: (path: string) => string | null;
+        listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
+        buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
+        buildWorkspaceFilePreviewUrl: (path: string) => string | null;
         showDescription?: boolean;
 }
 
@@ -51,27 +51,27 @@ function formatMtime(value?: number | null): string {
 
 export function ProjectDirectoryBrowser({
         initialPath = '',
-        listProjectDirectory,
-        buildProjectDirectoryDownloadUrl,
-        buildProjectDirectoryPreviewUrl,
+        listWorkspaceFiles,
+        buildWorkspaceFileDownloadUrl,
+        buildWorkspaceFilePreviewUrl,
         showDescription = true,
 }: ProjectDirectoryBrowserProps) {
         const { t } = useTranslation();
-        const [rootEntries, setRootEntries] = useState<ProjectDirectoryEntry[]>([]);
+        const [rootEntries, setRootEntries] = useState<WorkspaceFileEntry[]>([]);
         const [rootLoading, setRootLoading] = useState(false);
         const [rootError, setRootError] = useState<string | null>(null);
         const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
         const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
-        const [childrenByPath, setChildrenByPath] = useState<Record<string, ProjectDirectoryEntry[]>>({});
+        const [childrenByPath, setChildrenByPath] = useState<Record<string, WorkspaceFileEntry[]>>({});
         const [errorsByPath, setErrorsByPath] = useState<Record<string, string | null>>({});
-        const [previewEntry, setPreviewEntry] = useState<ProjectDirectoryEntry | null>(null);
+        const [previewEntry, setPreviewEntry] = useState<WorkspaceFileEntry | null>(null);
 
         const rootDownloadUrl = useMemo(
-                () => buildProjectDirectoryDownloadUrl(initialPath),
-                [buildProjectDirectoryDownloadUrl, initialPath],
+                () => buildWorkspaceFileDownloadUrl(initialPath),
+                [buildWorkspaceFileDownloadUrl, initialPath],
         );
 
-        const isPreviewable = useCallback((entry: ProjectDirectoryEntry): boolean => {
+        const isPreviewable = useCallback((entry: WorkspaceFileEntry): boolean => {
                 if (entry.is_dir || !entry.mime_type) {
                         return false;
                 }
@@ -85,25 +85,25 @@ export function ProjectDirectoryBrowser({
 
         const handleDownload = useCallback(
                 (path = initialPath) => {
-                        const url = buildProjectDirectoryDownloadUrl(path);
+                        const url = buildWorkspaceFileDownloadUrl(path);
                         if (!url) return;
                         triggerBrowserDownload(url);
                 },
-                [buildProjectDirectoryDownloadUrl, initialPath],
+                [buildWorkspaceFileDownloadUrl, initialPath],
         );
 
         const loadRoot = useCallback(async () => {
                 setRootLoading(true);
                 setRootError(null);
                 try {
-                        setRootEntries(await listProjectDirectory(initialPath));
+                        setRootEntries(await listWorkspaceFiles(initialPath));
                 } catch (error) {
                         setRootError((error as Error).message);
                         setRootEntries([]);
                 } finally {
                         setRootLoading(false);
                 }
-        }, [initialPath, listProjectDirectory]);
+        }, [initialPath, listWorkspaceFiles]);
 
         useEffect(() => {
                 setExpandedPaths({});
@@ -122,7 +122,7 @@ export function ProjectDirectoryBrowser({
         }, [loadRoot]);
 
         const handleToggleDirectory = useCallback(
-                async (entry: ProjectDirectoryEntry) => {
+                async (entry: WorkspaceFileEntry) => {
                         if (expandedPaths[entry.path]) {
                                 setExpandedPaths((prev) => ({ ...prev, [entry.path]: false }));
                                 return;
@@ -136,7 +136,7 @@ export function ProjectDirectoryBrowser({
                         setLoadingPaths((prev) => ({ ...prev, [entry.path]: true }));
                         setErrorsByPath((prev) => ({ ...prev, [entry.path]: null }));
                         try {
-                                const children = await listProjectDirectory(entry.path);
+                                const children = await listWorkspaceFiles(entry.path);
                                 setChildrenByPath((prev) => ({ ...prev, [entry.path]: children }));
                         } catch (error) {
                                 setErrorsByPath((prev) => ({
@@ -147,11 +147,11 @@ export function ProjectDirectoryBrowser({
                                 setLoadingPaths((prev) => ({ ...prev, [entry.path]: false }));
                         }
                 },
-                [childrenByPath, expandedPaths, listProjectDirectory, loadingPaths],
+                [childrenByPath, expandedPaths, listWorkspaceFiles, loadingPaths],
         );
 
         const renderEntries = useCallback(
-                (entries: ProjectDirectoryEntry[], depth: number): ReactNode =>
+                (entries: WorkspaceFileEntry[], depth: number): ReactNode =>
                         entries.map((entry) => {
                                 const expanded = !!expandedPaths[entry.path];
                                 const childEntries = childrenByPath[entry.path] ?? [];
@@ -196,10 +196,10 @@ export function ProjectDirectoryBrowser({
                                                                 <div className="truncate font-medium">{entry.name}</div>
                                                                 <div className="text-xs text-muted-foreground">
                                                                         {entry.is_dir
-                                                                                ? t('workspace-drawer.project.directoryMeta', {
+                                                                                ? t('workspace-drawer.file.directoryMeta', {
                                                                                           updatedAt: formatMtime(entry.mtime),
                                                                                   })
-                                                                                : t('workspace-drawer.project.fileMeta', {
+                                                                                : t('workspace-drawer.file.fileMeta', {
                                                                                           size: formatBytes(entry.size_bytes),
                                                                                           updatedAt: formatMtime(entry.mtime),
                                                                                   })}
@@ -208,7 +208,7 @@ export function ProjectDirectoryBrowser({
                                                         <Button
                                                                 size="icon-xs"
                                                                 variant="ghost"
-                                                                tooltip={t('workspace-drawer.project.preview')}
+                                                                tooltip={t('workspace-drawer.file.preview')}
                                                                 onClick={() => setPreviewEntry(entry)}
                                                                 disabled={!isPreviewable(entry)}
                                                                 className={cn(!isPreviewable(entry) && 'invisible')}
@@ -220,8 +220,8 @@ export function ProjectDirectoryBrowser({
                                                                 variant="ghost"
                                                                 tooltip={
                                                                         entry.is_dir
-                                                                                ? t('workspace-drawer.project.downloadDirectory')
-                                                                                : t('workspace-drawer.project.downloadFile')
+                                                                                ? t('workspace-drawer.file.downloadDirectory')
+                                                                                : t('workspace-drawer.file.downloadFile')
                                                                 }
                                                                 onClick={() => handleDownload(entry.path)}
                                                         >
@@ -246,7 +246,7 @@ export function ProjectDirectoryBrowser({
                                                                                         paddingLeft: `${(depth + 1) * 16 + 8}px`,
                                                                                 }}
                                                                         >
-                                                                                {t('workspace-drawer.project.loadFailed')}
+                                                                                {t('workspace-drawer.file.loadFailed')}
                                                                         </div>
                                                                 ) : childEntries.length === 0 ? (
                                                                         <div
@@ -255,7 +255,7 @@ export function ProjectDirectoryBrowser({
                                                                                         paddingLeft: `${(depth + 1) * 16 + 8}px`,
                                                                                 }}
                                                                         >
-                                                                                {t('workspace-drawer.project.emptyDirectory')}
+                                                                                {t('workspace-drawer.file.emptyDirectory')}
                                                                         </div>
                                                                 ) : (
                                                                         renderEntries(childEntries, depth + 1)
@@ -281,7 +281,7 @@ export function ProjectDirectoryBrowser({
                 <div className="flex flex-col no-scrollbar overflow-y-auto gap-y-3">
                         {showDescription ? (
                                 <span className="text-muted-foreground text-sm">
-                                        {t('workspace-drawer.project.description')}
+                                        {t('workspace-drawer.file.description')}
                                 </span>
                         ) : null}
                         <div className="flex items-center gap-2">
@@ -292,7 +292,7 @@ export function ProjectDirectoryBrowser({
                                         disabled={rootLoading}
                                 >
                                         <RefreshCw className="size-4" />
-                                        {t('workspace-drawer.project.refresh')}
+                                        {t('workspace-drawer.file.refresh')}
                                 </Button>
                                 <Button
                                         size="sm"
@@ -302,21 +302,21 @@ export function ProjectDirectoryBrowser({
                                 >
                                         <Download className="size-4" />
                                         {initialPath
-                                                ? t('workspace-drawer.project.downloadDirectory')
-                                                : t('workspace-drawer.project.downloadProject')}
+                                                ? t('workspace-drawer.file.downloadDirectory')
+                                                : t('workspace-drawer.file.downloadWorkspace')}
                                 </Button>
                         </div>
                         {rootLoading ? (
                                 <p className="py-4 text-center text-sm text-muted-foreground">{t('common.loading')}</p>
                         ) : rootError ? (
                                 <p className="py-4 text-center text-sm text-destructive">
-                                        {t('workspace-drawer.project.loadFailed')}
+                                        {t('workspace-drawer.file.loadFailed')}
                                 </p>
                         ) : rootEntries.length === 0 ? (
                                 <p className="py-4 text-center text-sm text-muted-foreground">
                                         {initialPath
-                                                ? t('workspace-drawer.project.emptyDirectory')
-                                                : t('workspace-drawer.project.emptyRoot')}
+                                                ? t('workspace-drawer.file.emptyDirectory')
+                                                : t('workspace-drawer.file.emptyRoot')}
                                 </p>
                         ) : (
                                 <div className="space-y-1">{renderEntries(rootEntries, 0)}</div>
@@ -329,8 +329,8 @@ export function ProjectDirectoryBrowser({
                                         }
                                 }}
                                 entry={previewEntry}
-                                buildProjectDirectoryPreviewUrl={buildProjectDirectoryPreviewUrl}
-                                buildProjectDirectoryDownloadUrl={buildProjectDirectoryDownloadUrl}
+                                buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
+                                buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
                         />
                 </div>
         );
