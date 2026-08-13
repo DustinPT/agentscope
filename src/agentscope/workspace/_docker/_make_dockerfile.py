@@ -27,12 +27,13 @@ Public functions:
   agentscope source tree. Returns ``(ctx_dir, tag, copy_files)``.
 """
 
-import hashlib
 import importlib.resources as _res
+import hashlib
 import shutil
 import tempfile
 from pathlib import Path
 
+from ..._utils._fs import _hash_directory as _hash_directory_tree
 from .._utils import (
     _GATEWAY_BASE_REQUIREMENTS,
     _agentscope_source_root,
@@ -89,21 +90,6 @@ def _source_ignore(_dir: str, names: list[str]) -> list[str]:
     """``shutil.copytree`` ignore filter — defers
     to :func:`_is_source_ignored`."""
     return [n for n in names if _is_source_ignored(n)]
-
-
-def _hash_directory(root: Path) -> bytes:
-    """Hash a directory tree's contents in a stable order."""
-    h = hashlib.sha256()
-    for p in sorted(root.rglob("*")):
-        if not p.is_file():
-            continue
-        rel = p.relative_to(root).as_posix().encode("utf-8")
-        h.update(b"\x00")
-        h.update(rel)
-        h.update(b"\x00")
-        h.update(p.read_bytes())
-    return h.digest()
-
 
 # ── public API ─────────────────────────────────────────────────────
 
@@ -257,7 +243,10 @@ def prepare_build_context(
         # Synthetic entry: the directory tree is too large to inline, so we
         # hash it once and stash the digest under a stable key. Image-tag
         # determinism depends only on this digest, not on the temp path.
-        copy_files["agentscope_src/"] = _hash_directory(source_root)
+        copy_files["agentscope_src/"] = _hash_directory_tree(
+            source_root,
+            digest_bytes=True,
+        )
 
     tag = compute_image_tag(dockerfile_text, copy_files)
 

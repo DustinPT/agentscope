@@ -178,8 +178,6 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             env=self._env,
             sandbox_metadata=self._metadata_for(user_id, agent_id),
             extra_pip=self._extra_pip,
-            default_mcps=self._default_mcps,
-            skill_paths=self._skill_paths,
         )
         await ws.initialize()
         return ws
@@ -240,6 +238,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                     expected_mcps=default_mcps or [],
                     expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
+                    manager_default_mcps=self._default_mcps,
+                    manager_skill_paths=self._skill_paths,
                 )
                 return view
 
@@ -257,6 +257,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                     expected_mcps=default_mcps or [],
                     expected_mcp_assets=mcp_assets or [],
                     expected_skills=skill_assets or [],
+                    manager_default_mcps=self._default_mcps,
+                    manager_skill_paths=self._skill_paths,
                 )
                 return view
 
@@ -271,6 +273,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 expected_mcps=default_mcps or [],
                 expected_mcp_assets=mcp_assets or [],
                 expected_skills=skill_assets or [],
+                manager_default_mcps=self._default_mcps,
+                manager_skill_paths=self._skill_paths,
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return view
@@ -308,9 +312,18 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             user_id=user_id,
             agent_id=agent_id,
         )
+        view = AgentWorkspaceView(ws, agent_id)
+        await sync_workspace_state(
+            view,
+            expected_mcps=[],
+            expected_mcp_assets=[],
+            expected_skills=[],
+            manager_default_mcps=self._default_mcps,
+            manager_skill_paths=self._skill_paths,
+        )
         async with self._lock:
             self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return AgentWorkspaceView(ws, agent_id)
+        return view
 
     async def close(self, workspace_id: str) -> None:
         """Close (= pause the sandbox) and evict a single workspace.

@@ -17,7 +17,7 @@ class Skill:
     markdown: str
     """The markdown content of the agent skill."""
     content_hash: str
-    """Content hash computed from the skill's SKILL.md file."""
+    """Content hash computed from the full skill directory contents."""
 
 
 class SkillLoaderBase(ABC):

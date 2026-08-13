@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import posixpath
 import tarfile
 import time
@@ -99,3 +100,17 @@ class DockerBackend(BackendBase):
 
     async def ensure_dir(self, path: str) -> None:
         await self.exec_shell(["mkdir", "-p", path])
+
+    async def upload_directory(self, local_dir: str, dest_dir: str) -> None:
+        """Upload one local directory with a single ``put_archive`` call."""
+        if not os.path.isdir(local_dir):
+            raise FileNotFoundError(f"local directory not found: {local_dir}")
+
+        parent = posixpath.dirname(dest_dir) or "/"
+        await self.exec_shell(["mkdir", "-p", parent])
+
+        buf = io.BytesIO()
+        arcname = posixpath.basename(dest_dir.rstrip("/"))
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            tf.add(local_dir, arcname=arcname)
+        await self._container.put_archive(parent, buf.getvalue())

@@ -2,7 +2,6 @@
 """Managed skill and MCP asset storage for agent-level workspace configuration."""
 
 import asyncio
-import hashlib
 import io
 import json
 import os
@@ -16,6 +15,7 @@ from pathlib import Path
 import frontmatter
 from fastapi import HTTPException, UploadFile, status
 
+from ..._utils._fs import _hash_directory
 from ...mcp import MCPClient
 from ..storage import AgentMCPAsset, AgentSkillAsset
 
@@ -203,28 +203,6 @@ class AgentAssetStore:
                 detail="Agent package ZIP must contain exactly one config.json file.",
             )
         return candidates[0]
-
-    @staticmethod
-    def _hash_directory(dir_path: str) -> str:
-        digest = hashlib.sha256()
-        for root, dirs, files in os.walk(dir_path):
-            dirs.sort()
-            files.sort()
-            for file_name in files:
-                abs_path = os.path.join(root, file_name)
-                rel_path = os.path.relpath(abs_path, dir_path).replace(
-                    os.sep,
-                    "/",
-                )
-                digest.update(rel_path.encode("utf-8"))
-                digest.update(b"\0")
-                with open(abs_path, "rb") as f:
-                    while True:
-                        chunk = f.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        digest.update(chunk)
-        return digest.hexdigest()
 
     def _copy_dir_to_staging(self, source_dir: str, prefix: str) -> str:
         os.makedirs(self._staging_dir, exist_ok=True)
@@ -423,9 +401,11 @@ class AgentAssetStore:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="SKILL.md must include both 'name' and 'description'.",
             )
-        return str(name), str(description), hashlib.sha256(
-            raw.encode("utf-8"),
-        ).hexdigest()
+        return (
+            str(name),
+            str(description),
+            _hash_directory(skill_dir),
+        )
 
     @staticmethod
     def _read_mcp_metadata(mcp_dir: str) -> tuple[str, MCPClient]:
@@ -751,7 +731,7 @@ class AgentAssetStore:
                 name=name,
                 archive_name=archive_name or f"{os.path.basename(source_dir)}.zip",
                 temp_dir=staged_dir,
-                content_hash=self._hash_directory(mcp_root),
+                content_hash=_hash_directory(mcp_root),
                 client=client,
             )
 

@@ -17,7 +17,7 @@ Architecture
 
 Persistence model mirrors :class:`agentscope.workspace.LocalWorkspace`:
 on each :meth:`initialize`, MCPs are restored from ``<workdir>/.mcp``
-if it exists (otherwise ``default_mcps`` are used and persisted).
+if it exists.
 Every :meth:`add_mcp` / :meth:`remove_mcp` rewrites the file.
 
 The gateway bearer token is freshly generated on each ``initialize``
@@ -54,12 +54,12 @@ from ...message import (
     ToolResultBlock,
     URLSource,
 )
-from ...skill import Skill
 from ...tool import ToolBase
 from .._base import WorkspaceBase
 from .._gateway_client import (
     GatewayClient,
 )
+from .._skill_index import SkillIndexMixin
 from .._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._docker_backend import DockerBackend
 from ._make_dockerfile import (
@@ -109,11 +109,8 @@ class _ExecResult:
 # ── the workspace ──────────────────────────────────────────────────
 
 
-class DockerWorkspace(WorkspaceBase):
+class DockerWorkspace(SkillIndexMixin, WorkspaceBase):
     """Workspace backed by a Docker container.
-
-    ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
-    not retained as instance state past :meth:`initialize`.
     """
 
     def __init__(
@@ -127,8 +124,6 @@ class DockerWorkspace(WorkspaceBase):
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
-        default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Construct a :class:`DockerWorkspace`.
@@ -173,16 +168,6 @@ class DockerWorkspace(WorkspaceBase):
                 System-prompt fragment template returned by
                 :meth:`get_instructions`. Supports the ``{workdir}``
                 placeholder, replaced with the container-side path.
-            default_mcps (`list[MCPClient] | None`, optional):
-                Initial MCPs registered on first :meth:`initialize`.
-                On subsequent restarts with a persistent ``workdir``
-                these are ignored in favour of the persisted
-                ``<workdir>/.mcp`` file.
-            skill_paths (`list[str] | None`, optional):
-                Local skill directories seeded into
-                ``<workdir>/skills`` on first :meth:`initialize`
-                (only when ``workdir`` is set; subsequent starts
-                treat the host directory as the source of truth).
         """
         super().__init__(workspace_id=workspace_id)
 
@@ -207,10 +192,6 @@ class DockerWorkspace(WorkspaceBase):
             backend="Docker-based",
             workdir=self.workdir,
         )
-
-        # ── seed-only ───────────────────────────────────────────
-        self.default_mcps: list[MCPClient] = list(default_mcps or [])
-        self.skill_paths: list[str] = list(skill_paths or [])
 
         # ── runtime state ───────────────────────────────────────
         self._client: Any = None  # aiodocker.Docker
@@ -451,40 +432,6 @@ class DockerWorkspace(WorkspaceBase):
                     e,
                 )
         if not specs:
-            for mcp in self.default_mcps:
-                client = self._gateway.make_client(
-                    mcp.model_dump(mode="json"),
-                    namespace=agent_id,
-                )
-                try:
-                    await client.connect()
-                except Exception as e:
-                    logger.warning(
-                        "DockerWorkspace: failed to seed agent MCP %r: %s",
-                        mcp.name,
-                        e,
-                    )
-            if self.skill_paths:
-                skills_host = self._host_agent_resource_root(agent_id)
-                if skills_host is None:
-                    listing = await self._exec(
-                        f"ls -A {shlex.quote(self._agent_skills_dir(agent_id))} 2>/dev/null || true",
-                    )
-                    has_skills = bool(listing.ok() and listing.stdout.strip())
-                else:
-                    skills_dir = os.path.join(skills_host, "skills")
-                    os.makedirs(skills_dir, exist_ok=True)
-                    has_skills = bool(os.listdir(skills_dir))
-                if not has_skills:
-                    for path in self.skill_paths:
-                        try:
-                            await self._add_agent_skill(agent_id, path)
-                        except Exception as e:
-                            logger.warning(
-                                "DockerWorkspace: skip seed skill %r: %s",
-                                path,
-                                e,
-                            )
             await self._save_agent_mcp_file(agent_id)
         self._loaded_agent_namespaces.add(agent_id)
 
@@ -529,58 +476,6 @@ class DockerWorkspace(WorkspaceBase):
         await self._ensure_agent_namespace_loaded(agent_id)
         assert self._gateway is not None
         return await self._gateway.list_mcps(namespace=agent_id)
-
-    async def list_skills(self) -> list[Skill]:
-        """List skills for the direct-use default agent namespace."""
-        return await self._list_agent_skills(self._default_agent_id())
-
-    async def _list_agent_skills(self, agent_id: str) -> list[Skill]:
-        """Enumerate skills by scanning ``skills/`` inside the container.
-
-        For each ``SKILL.md`` found, parses the YAML front-matter and
-        yields a :class:`Skill`.  Files missing a ``name`` or
-        ``description`` field are skipped.
-
-        Returns:
-            Skills available to the agent.  Empty when the directory
-            is missing or contains no parseable ``SKILL.md`` files.
-        """
-        import frontmatter as fm
-
-        await self._ensure_agent_namespace_loaded(agent_id)
-        result = await self._exec(
-            f"find {shlex.quote(self._agent_skills_dir(agent_id))} -name SKILL.md "
-            f"2>/dev/null || true",
-        )
-        if not result.ok():
-            return []
-        listing = result.stdout.decode(errors="replace").strip()
-        if not listing:
-            return []
-
-        skills: list[Skill] = []
-        for md_path in (line.strip() for line in listing.split("\n")):
-            if not md_path:
-                continue
-            try:
-                raw = await self._read(md_path)
-                doc = fm.loads(raw.decode("utf-8"))
-                name = doc.get("name")
-                desc = doc.get("description")
-                if not name or not desc:
-                    continue
-                skills.append(
-                    Skill(
-                        name=str(name),
-                        description=str(desc),
-                        dir=posixpath.dirname(md_path),
-                        markdown=doc.content or "",
-                        content_hash=hashlib.sha256(raw).hexdigest(),
-                    ),
-                )
-            except Exception as e:
-                logger.warning("Failed to load skill %s: %s", md_path, e)
-        return skills
 
     # ── dynamic MCP management ──────────────────────────────────
 
@@ -665,113 +560,6 @@ class DockerWorkspace(WorkspaceBase):
             await self._save_agent_mcp_file(agent_id)
 
     # ── dynamic skill management ────────────────────────────────
-
-    async def add_skill(self, skill_path: str) -> None:
-        """Add a skill to the direct-use default agent namespace."""
-        await self._add_agent_skill(self._default_agent_id(), skill_path)
-
-    async def _add_agent_skill(
-        self,
-        agent_id: str,
-        skill_path: str,
-    ) -> None:
-        """Copy a local skill directory into ``skills/`` inside the container.
-
-        The directory must contain a ``SKILL.md`` with ``name`` and
-        ``description`` fields in its YAML front matter (validated
-        host-side before any container I/O).  The directory is
-        tarred and uploaded via ``put_archive``; a directory of the
-        same basename already present in the container is rejected
-        rather than overwritten.
-
-        Args:
-            skill_path: Absolute or relative path to a skill
-                directory on the host filesystem.
-
-        Raises:
-            ValueError: If ``SKILL.md`` is missing, or a directory
-                with the same basename already exists in the
-                container's ``skills/``.
-        """
-        skill_md = os.path.join(skill_path, "SKILL.md")
-        if not os.path.isfile(skill_md):
-            raise ValueError(
-                f"Invalid skill at {skill_path!r}: SKILL.md not found",
-            )
-
-        async with self._skill_lock:
-            target_dir = self._agent_skills_dir(agent_id)
-            await self._exec(f"mkdir -p {shlex.quote(target_dir)}")
-            dir_name = os.path.basename(os.path.abspath(skill_path))
-
-            # Refuse to overwrite an existing directory of the same name —
-            # mirrors the conflict-rejection behaviour of ``mkdir`` here
-            # rather than LocalWorkspace's full hash-dedup index.
-            check = await self._exec(
-                f"test -e "
-                f"{shlex.quote(target_dir + '/' + dir_name)}",
-            )
-            if check.ok():
-                raise ValueError(
-                    f"Skill directory {dir_name!r} already exists in "
-                    f"{target_dir}",
-                )
-
-            buf = io.BytesIO()
-            with tarfile.open(fileobj=buf, mode="w") as tf:
-                tf.add(skill_path, arcname=dir_name)
-            await self._container.put_archive(
-                target_dir,
-                buf.getvalue(),
-            )
-            logger.info(
-                "DockerWorkspace: added skill %r at %s/%s",
-                dir_name,
-                target_dir,
-                dir_name,
-            )
-
-    async def remove_skill(self, name: str) -> None:
-        """Remove a skill from the direct-use default agent namespace."""
-        await self._remove_agent_skill(self._default_agent_id(), name)
-
-    async def _remove_agent_skill(
-        self,
-        agent_id: str,
-        name: str,
-    ) -> None:
-        """Delete a skill directory by its agent-facing name.
-
-        Looks up the skill by the ``name`` field of its
-        ``SKILL.md``, then ``rm -rf`` its directory inside the
-        container.
-
-        Args:
-            name: The agent-facing skill name (the ``name`` value in
-                the SKILL.md front matter, *not* the directory name).
-
-        Raises:
-            KeyError: If no skill with that ``name`` is found.
-            RuntimeError: If the in-container ``rm -rf`` returns a
-                non-zero exit code.
-        """
-        skills = await self._list_agent_skills(agent_id)
-        target_dir: str | None = None
-        for s in skills:
-            if s.name == name:
-                target_dir = s.dir
-                break
-        if target_dir is None:
-            available = [s.name for s in skills]
-            raise KeyError(
-                f"Skill {name!r} not found. Available: {available}",
-            )
-        result = await self._exec(f"rm -rf {shlex.quote(target_dir)}")
-        if not result.ok():
-            raise RuntimeError(
-                f"Failed to remove skill {name!r}: "
-                f"{result.stderr.decode(errors='replace')}",
-            )
 
     async def sync_mcp_asset(
         self,

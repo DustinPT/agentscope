@@ -58,12 +58,12 @@ from ...message import (
     ToolResultBlock,
     URLSource,
 )
-from ...skill import Skill
 from ...tool import ToolBase
 from .._base import WorkspaceBase
 from .._gateway_client import (
     GatewayClient,
 )
+from .._skill_index import SkillIndexMixin
 from .._utils import (
     DEFAULT_WORKSPACE_INSTRUCTIONS,
     _agentscope_version,
@@ -123,11 +123,8 @@ class _ExecResult:
 # ── the workspace ──────────────────────────────────────────────────
 
 
-class E2BWorkspace(WorkspaceBase):
+class E2BWorkspace(SkillIndexMixin, WorkspaceBase):
     """Workspace backed by an E2B cloud sandbox.
-
-    ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
-    not retained as instance state past :meth:`initialize`.
     """
 
     def __init__(
@@ -143,8 +140,6 @@ class E2BWorkspace(WorkspaceBase):
         sandbox_metadata: dict[str, str] | None = None,
         extra_pip: list[str] | None = None,
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
-        default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
     ) -> None:
         """Construct an :class:`E2BWorkspace`.
 
@@ -184,12 +179,6 @@ class E2BWorkspace(WorkspaceBase):
             instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
                 System-prompt fragment template returned by
                 :meth:`get_instructions`.
-            default_mcps (`list[MCPClient] | None`, optional):
-                Initial MCPs registered on first :meth:`initialize`.
-                Subsequent restarts read ``$workdir/.mcp`` instead.
-            skill_paths (`list[str] | None`, optional):
-                Local skill directories seeded into
-                ``$workdir/skills`` on first :meth:`initialize`.
         """
         super().__init__(workspace_id=workspace_id)
 
@@ -207,10 +196,6 @@ class E2BWorkspace(WorkspaceBase):
             backend="E2B-based",
             workdir=self.workdir,
         )
-
-        # ── seed-only ───────────────────────────────────────────
-        self.default_mcps: list[MCPClient] = list(default_mcps or [])
-        self.skill_paths: list[str] = list(skill_paths or [])
 
         # ── runtime state ───────────────────────────────────────
         self._sandbox: Any = None  # e2b.AsyncSandbox
@@ -428,33 +413,6 @@ class E2BWorkspace(WorkspaceBase):
                     e,
                 )
         if not specs:
-            for mcp in self.default_mcps:
-                client = self._gateway.make_client(
-                    mcp.model_dump(mode="json"),
-                    namespace=agent_id,
-                )
-                try:
-                    await client.connect()
-                except Exception as e:
-                    logger.warning(
-                        "E2BWorkspace: failed to seed agent MCP %r: %s",
-                        mcp.name,
-                        e,
-                    )
-            if self.skill_paths:
-                listing = await self._exec(
-                    f"ls -A {shlex.quote(self._agent_skills_dir(agent_id))} 2>/dev/null || true",
-                )
-                if not (listing.ok() and listing.stdout.strip()):
-                    for path in self.skill_paths:
-                        try:
-                            await self._add_agent_skill(agent_id, path)
-                        except Exception as e:
-                            logger.warning(
-                                "E2BWorkspace: skip seed skill %r: %s",
-                                path,
-                                e,
-                            )
             await self._save_agent_mcp_file(agent_id)
         self._loaded_agent_namespaces.add(agent_id)
 
@@ -500,54 +458,6 @@ class E2BWorkspace(WorkspaceBase):
         await self._ensure_agent_namespace_loaded(agent_id)
         assert self._gateway is not None
         return await self._gateway.list_mcps(namespace=agent_id)
-
-    async def list_skills(self) -> list[Skill]:
-        """List skills for the direct-use default agent namespace."""
-        return await self._list_agent_skills(self._default_agent_id())
-
-    async def _list_agent_skills(self, agent_id: str) -> list[Skill]:
-        """Enumerate skills by scanning ``skills/`` inside the sandbox.
-
-        Reads each ``SKILL.md`` via the SDK's ``files.read`` and parses
-        the YAML front-matter. Files missing ``name`` or ``description``
-        are skipped.
-        """
-        import frontmatter as fm
-
-        await self._ensure_agent_namespace_loaded(agent_id)
-        result = await self._exec(
-            f"find {shlex.quote(self._agent_skills_dir(agent_id))} -name SKILL.md "
-            f"2>/dev/null || true",
-        )
-        if not result.ok():
-            return []
-        listing = result.stdout.decode(errors="replace").strip()
-        if not listing:
-            return []
-
-        skills: list[Skill] = []
-        for md_path in (line.strip() for line in listing.split("\n")):
-            if not md_path:
-                continue
-            try:
-                raw = await self._read(md_path)
-                doc = fm.loads(raw.decode("utf-8"))
-                name = doc.get("name")
-                desc = doc.get("description")
-                if not name or not desc:
-                    continue
-                skills.append(
-                    Skill(
-                        name=str(name),
-                        description=str(desc),
-                        dir=posixpath.dirname(md_path),
-                        markdown=doc.content or "",
-                        content_hash=hashlib.sha256(raw).hexdigest(),
-                    ),
-                )
-            except Exception as e:
-                logger.warning("Failed to load skill %s: %s", md_path, e)
-        return skills
 
     # ── dynamic MCP management ──────────────────────────────────
 
@@ -606,86 +516,6 @@ class E2BWorkspace(WorkspaceBase):
             await self._save_agent_mcp_file(agent_id)
 
     # ── dynamic skill management ────────────────────────────────
-
-    async def add_skill(self, skill_path: str) -> None:
-        """Add a skill to the direct-use default agent namespace."""
-        await self._add_agent_skill(self._default_agent_id(), skill_path)
-
-    async def _add_agent_skill(
-        self,
-        agent_id: str,
-        skill_path: str,
-    ) -> None:
-        """Upload a local skill directory into ``skills/`` inside the sandbox.
-
-        The directory must contain a ``SKILL.md`` with ``name`` and
-        ``description`` in its YAML front matter. A directory of the
-        same basename already in the sandbox is rejected rather than
-        overwritten.
-        """
-        skill_md = os.path.join(skill_path, "SKILL.md")
-        if not os.path.isfile(skill_md):
-            raise ValueError(
-                f"Invalid skill at {skill_path!r}: SKILL.md not found",
-            )
-
-        async with self._skill_lock:
-            target_dir = self._agent_skills_dir(agent_id)
-            await self._exec(f"mkdir -p {shlex.quote(target_dir)}")
-            dir_name = os.path.basename(os.path.abspath(skill_path))
-
-            check = await self._exec(
-                f"test -e {shlex.quote(target_dir + '/' + dir_name)}",
-            )
-            if check.ok():
-                raise ValueError(
-                    f"Skill directory {dir_name!r} already exists in "
-                    f"{target_dir}",
-                )
-
-            for root, _dirs, files in os.walk(skill_path):
-                for fname in files:
-                    local = os.path.join(root, fname)
-                    rel = os.path.relpath(local, skill_path)
-                    remote = f"{target_dir}/{dir_name}/{rel}"
-                    with open(local, "rb") as f:
-                        data = f.read()
-                    await self._sandbox.files.write(remote, data)
-
-            logger.info(
-                "E2BWorkspace: added skill %r at %s/%s",
-                dir_name,
-                target_dir,
-                dir_name,
-            )
-
-    async def remove_skill(self, name: str) -> None:
-        """Remove a skill from the direct-use default agent namespace."""
-        await self._remove_agent_skill(self._default_agent_id(), name)
-
-    async def _remove_agent_skill(
-        self,
-        agent_id: str,
-        name: str,
-    ) -> None:
-        """Delete a skill directory by its agent-facing name."""
-        skills = await self._list_agent_skills(agent_id)
-        target_dir: str | None = None
-        for s in skills:
-            if s.name == name:
-                target_dir = s.dir
-                break
-        if target_dir is None:
-            available = [s.name for s in skills]
-            raise KeyError(
-                f"Skill {name!r} not found. Available: {available}",
-            )
-        result = await self._exec(f"rm -rf {shlex.quote(target_dir)}")
-        if not result.ok():
-            raise RuntimeError(
-                f"Failed to remove skill {name!r}: "
-                f"{result.stderr.decode(errors='replace')}",
-            )
 
     async def sync_mcp_asset(
         self,

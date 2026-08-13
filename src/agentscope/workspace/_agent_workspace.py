@@ -36,16 +36,6 @@ class AgentWorkspaceView(WorkspaceBase):
         return self._runtime._agent_resource_root(self.agent_id)
 
     @property
-    def default_mcps(self):
-        """Expose manager-level default MCPs from the shared runtime."""
-        return getattr(self._runtime, "default_mcps", [])
-
-    @property
-    def skill_paths(self):
-        """Expose manager-level default skill paths from the shared runtime."""
-        return getattr(self._runtime, "skill_paths", [])
-
-    @property
     def _glob_helper_path(self) -> str | None:
         """Delegate glob helper path to the shared runtime."""
         return self._runtime._glob_helper_path
@@ -77,6 +67,20 @@ class AgentWorkspaceView(WorkspaceBase):
     async def list_skills(self) -> list[Skill]:
         """List skills visible to this agent."""
         return await self._runtime._list_agent_skills(self.agent_id)
+
+    async def has_valid_skill_index(self) -> bool:
+        """Return whether this agent namespace has a usable .skills."""
+        checker = getattr(self._runtime, "_agent_has_valid_skill_index", None)
+        if checker is None:
+            return True
+        return await checker(self.agent_id)
+
+    async def reset_skills_state(self) -> None:
+        """Clear this agent namespace's skills and recreate .skills."""
+        resetter = getattr(self._runtime, "_reset_agent_skills_state", None)
+        if resetter is None:
+            return
+        await resetter(self.agent_id)
 
     async def offload_context(
         self,

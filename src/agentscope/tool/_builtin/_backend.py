@@ -47,7 +47,7 @@ def _normalize_newlines(text: str) -> str:
 
 
 class BackendBase(ABC):
-    """Filesystem and subprocess interface consumed by builtin tools."""
+    """Filesystem and subprocess interface for tools and workspace sync."""
 
     _path_module: ModuleType = posixpath
 
@@ -92,6 +92,33 @@ class BackendBase(ABC):
     @abstractmethod
     async def ensure_dir(self, path: str) -> None:
         """Create ``path`` as a directory if it does not already exist."""
+
+    async def upload_directory(self, local_dir: str, dest_dir: str) -> None:
+        """Copy one host-local directory into the backend filesystem."""
+        if not os.path.isdir(local_dir):
+            raise FileNotFoundError(f"local directory not found: {local_dir}")
+
+        await self.ensure_dir(dest_dir)
+        for root, dirs, files in os.walk(local_dir):
+            dirs.sort()
+            files.sort()
+            rel_root = os.path.relpath(root, local_dir)
+            current_dest = dest_dir
+            if rel_root != ".":
+                current_dest = self.join_path(
+                    dest_dir,
+                    *rel_root.split(os.sep),
+                )
+                await self.ensure_dir(current_dest)
+
+            for dir_name in dirs:
+                await self.ensure_dir(self.join_path(current_dest, dir_name))
+
+            for file_name in files:
+                local_path = os.path.join(root, file_name)
+                remote_path = self.join_path(current_dest, file_name)
+                async with aiofiles.open(local_path, mode="rb") as file_obj:
+                    await self.write_file(remote_path, await file_obj.read())
 
     async def write_stream(
         self,
@@ -319,6 +346,23 @@ class LocalBackend(BackendBase):
 
     async def ensure_dir(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
+
+    async def upload_directory(self, local_dir: str, dest_dir: str) -> None:
+        """Copy one local directory with ``copytree``."""
+        if not os.path.isdir(local_dir):
+            raise FileNotFoundError(f"local directory not found: {local_dir}")
+        parent = os.path.dirname(dest_dir)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+        import shutil
+
+        await asyncio.to_thread(
+            shutil.copytree,
+            local_dir,
+            dest_dir,
+            dirs_exist_ok=False,
+        )
 
     async def write_stream(
         self,

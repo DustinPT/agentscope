@@ -21,7 +21,7 @@ class AgentSkillAsset(BaseModel):
         description="Skill directory stored relative to the managed asset root.",
     )
     content_hash: str = Field(
-        description="Content hash computed from the skill's SKILL.md file.",
+        description="Content hash computed from the full skill directory.",
     )
 
 

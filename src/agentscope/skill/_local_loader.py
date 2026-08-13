@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The local skill loader class."""
 import asyncio
-import hashlib
 import os
 
 import aiofiles
@@ -11,6 +10,7 @@ import frontmatter
 from ._base import SkillLoaderBase
 from .._logging import logger
 from ..skill import Skill
+from .._utils._fs import _hash_directory
 
 
 class LocalSkillLoader(SkillLoaderBase):
@@ -52,12 +52,9 @@ class LocalSkillLoader(SkillLoaderBase):
                 encoding="utf-8",
             ) as f:
                 content_str = await f.read()
-                content_hash = hashlib.sha256(
-                    content_str.encode("utf-8"),
-                ).hexdigest()
+            content_hash = await asyncio.to_thread(_hash_directory, skill_root)
 
-            # Check cache: if cached skill exists and content_hash matches,
-            # return cached
+            # Reuse the cached Skill only when the whole package is unchanged.
             if skill_root in self._cache:
                 cached_skill = self._cache[skill_root]
                 if cached_skill.content_hash == content_hash:

@@ -104,9 +104,8 @@ class WorkspaceBase:
 
         Closes and removes all registered MCPs, deletes all skills,
         and wipes per-session state (offloaded context / tool results
-        and any data files). Constructor-time ``default_mcps`` and
-        ``skill_paths`` are **not** re-seeded — reset returns the
-        workspace to an empty state, not its initial state.
+        and any data files). Reset returns the workspace to an empty
+        state; manager-level defaults are not re-seeded here.
 
         The default implementation is a no-op. Subclasses with user
         state must override this.
