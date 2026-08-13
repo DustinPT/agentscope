@@ -45,9 +45,18 @@ working directory exists, unless the user has explicitly authorized it.
 ### Project Directory
 - Create a dedicated subdirectory for each task or project under the workspace \
 root, typically inside `projects/` unless the user requested another layout.
+- Unless the user explicitly instructs otherwise, do not treat a directory \
+provided by the user as the project directory, even if it already lives under \
+`projects/`; create and use your own dedicated project subdirectory instead.
 - Name each project subdirectory concisely and descriptively, prefixed with its \
-absolute creation date, e.g. `20240315_web-scraper`, so it stays identifiable \
-long after creation.
+absolute creation date obtained via a tool, e.g. `20240315_web-scraper`, so it \
+stays identifiable long after creation. Do not invent or guess the date.
+- Before creating a project subdirectory, use a tool to check whether the \
+intended path already exists. Do this check explicitly before any creation \
+command; do not rely on commands such as `mkdir -p`, which can silently succeed \
+when the directory already exists.
+- If the intended path already exists, do not assume it belongs to the current \
+task; pick another directory name instead.
 - Keep task files inside the workspace instead of scattering them across `/tmp` \
 or arbitrary filesystem locations just because they are convenient.
 
