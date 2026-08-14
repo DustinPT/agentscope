@@ -10,6 +10,7 @@ from ._model import (
     CredentialRecord,
     UserRecord,
     ScheduleRecord,
+    SubAgentTaskRecord,
     SessionRecord,
     SessionConfig,
     SessionSource,
@@ -213,7 +214,6 @@ class StorageBase(ABC):
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
         parent_session_id: str | None = None,
-        parent_tool_call_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -235,9 +235,6 @@ class StorageBase(ABC):
                 the schedule for execution history queries.
             parent_session_id (`str | None`, optional): Parent session id
                 when this session is spawned as a child session.
-            parent_tool_call_id (`str | None`, optional): Tool call id that
-                created this child session. Used to associate UI cards with
-                child sessions.
 
         Returns:
             `SessionRecord`: The created or updated record.
@@ -320,6 +317,60 @@ class StorageBase(ABC):
             `list[SessionRecord]`: Direct child sessions ordered by creation
             time descending.
         """
+
+    @abstractmethod
+    async def upsert_subagent_task(
+        self,
+        user_id: str,
+        record: SubAgentTaskRecord,
+    ) -> str:
+        """Create or update one delegated sub-agent task record."""
+
+    @abstractmethod
+    async def get_subagent_task(
+        self,
+        user_id: str,
+        task_id: str,
+    ) -> SubAgentTaskRecord | None:
+        """Fetch one delegated sub-agent task record by id."""
+
+    @abstractmethod
+    async def get_active_subagent_task_by_child_session(
+        self,
+        user_id: str,
+        child_session_id: str,
+    ) -> SubAgentTaskRecord | None:
+        """Fetch the active delegated task bound to one child session."""
+
+    @abstractmethod
+    async def mark_active_subagent_task(
+        self,
+        user_id: str,
+        child_session_id: str,
+        task_id: str,
+    ) -> None:
+        """Mark one delegated task as the active task for a child session."""
+
+    @abstractmethod
+    async def unmark_active_subagent_task(
+        self,
+        user_id: str,
+        child_session_id: str,
+        task_id: str,
+    ) -> None:
+        """Remove one delegated task from the active task indexes."""
+
+    @abstractmethod
+    async def list_active_subagent_tasks(self) -> list[tuple[str, str]]:
+        """List ``(user_id, task_id)`` pairs with active child invocations."""
+
+    @abstractmethod
+    async def delete_subagent_task(
+        self,
+        user_id: str,
+        task_id: str,
+    ) -> bool:
+        """Delete one delegated sub-agent task record."""
 
     @abstractmethod
     async def delete_session(

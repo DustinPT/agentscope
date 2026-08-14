@@ -82,8 +82,5 @@ class SessionRecord(_RecordBase):
     parent_session_id: str | None = None
     """The parent session that spawned this child session, if any."""
 
-    parent_tool_call_id: str | None = None
-    """The tool call id that created this child session, if any."""
-
     state: AgentState = Field(default_factory=AgentState)
     """Mutable runtime state, updated after each chat turn."""

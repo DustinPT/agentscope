@@ -42,6 +42,8 @@ class RedisMessageBus(MessageBus):
     """
 
     _PUBSUB_HEALTH_CHECK_INTERVAL_SECS = 15.0
+    _WAKEUP_PENDING_COUNT_KEY = "agentscope:wakeup_pending:{sid}"
+    """Per-session queued wake-up counter key."""
 
     def __init__(
         self,
@@ -309,6 +311,61 @@ class RedisMessageBus(MessageBus):
     async def queue_length(self, key: str) -> int:
         """Return the current entry count of a drain queue."""
         return await self._client.xlen(key)
+
+    async def enqueue_wakeup(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Enqueue a wake-up request and track its pending state."""
+        await self.queue_push(
+            self._WAKEUP_QUEUE_KEY,
+            {
+                "user_id": user_id,
+                "session_id": session_id,
+                "agent_id": agent_id,
+            },
+        )
+        await self._increment_pending_wakeup(session_id)
+        await self.publish(self._WAKEUP_SIGNAL_KEY, {})
+
+    async def dequeue_wakeups(
+        self,
+        max_count: int = 64,
+    ) -> list[dict]:
+        """Drain wake-up entries and update the per-session pending index."""
+        entries = await self.queue_drain(
+            self._WAKEUP_QUEUE_KEY,
+            max_count=max_count,
+        )
+        payloads: list[dict] = []
+        for _entry_id, payload in entries:
+            session_id = payload.get("session_id")
+            if isinstance(session_id, str) and session_id:
+                await self._decrement_pending_wakeup(session_id)
+            payloads.append(payload)
+        return payloads
+
+    async def has_pending_wakeup(self, session_id: str) -> bool:
+        """Return whether the session still has an enqueued wake-up."""
+        value = await self._client.get(
+            self._WAKEUP_PENDING_COUNT_KEY.format(sid=session_id),
+        )
+        return int(value or 0) > 0
+
+    async def _increment_pending_wakeup(self, session_id: str) -> None:
+        """Increase the queued wake-up counter for one session."""
+        await self._client.incr(
+            self._WAKEUP_PENDING_COUNT_KEY.format(sid=session_id),
+        )
+
+    async def _decrement_pending_wakeup(self, session_id: str) -> None:
+        """Decrease the queued wake-up counter for one session."""
+        key = self._WAKEUP_PENDING_COUNT_KEY.format(sid=session_id)
+        remaining = await self._client.decr(key)
+        if remaining <= 0:
+            await self._client.delete(key)
 
     # ------------------------------------------------------------------
     # Mode C — replay log

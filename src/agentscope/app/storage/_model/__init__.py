@@ -11,6 +11,7 @@ from ._session import (
     SessionSource,
 )
 from ._team import TeamRecord, TeamData
+from ._subagent_task import SubAgentTaskRecord
 from ._user import GlobalDefaultModels, UserRecord
 
 __all__ = [
@@ -29,5 +30,6 @@ __all__ = [
     "GlobalDefaultModels",
     "TeamData",
     "TeamRecord",
+    "SubAgentTaskRecord",
     "UserRecord",
 ]

@@ -12,6 +12,7 @@ from ._model import (
     AgentRecord,
     CredentialRecord,
     ScheduleRecord,
+    SubAgentTaskRecord,
     SessionRecord,
     SessionConfig,
     SessionSource,
@@ -48,6 +49,9 @@ class RedisStorage(StorageBase):
         )
         agent: str = "agentscope:user:{user_id}:agent:{agent_id}"
         session: str = "agentscope:user:{user_id}:session:{session_id}"
+        subagent_task: str = (
+            "agentscope:user:{user_id}:subagent_task:{task_id}"
+        )
 
         # Index keys (Redis Sets — store all IDs for a given scope)
         credential_index: str = "agentscope:user:{user_id}:credentials"
@@ -57,6 +61,11 @@ class RedisStorage(StorageBase):
         )
         session_children: str = (
             "agentscope:user:{user_id}:session_children:{parent_session_id}"
+        )
+        active_subagent_tasks: str = "agentscope:active_subagent_tasks"
+        active_subagent_task_by_child_session: str = (
+            "agentscope:user:{user_id}:session:{child_session_id}:"
+            "active_subagent_task"
         )
 
         # Lookup key: maps (user_id, agent_id) → session_id
@@ -133,6 +142,21 @@ class RedisStorage(StorageBase):
     def _key(self, template: str, **kwargs: str) -> str:
         """Format a key template with the given keyword arguments."""
         return template.format(**kwargs)
+
+    @staticmethod
+    def _encode_active_subagent_task_member(user_id: str, task_id: str) -> str:
+        """Encode one active delegated task member for the global index."""
+        return f"{user_id}:{task_id}"
+
+    @staticmethod
+    def _decode_active_subagent_task_member(
+        member: str,
+    ) -> tuple[str, str] | None:
+        """Decode one active delegated task member from the global index."""
+        user_id, separator, task_id = member.partition(":")
+        if not separator or not user_id or not task_id:
+            return None
+        return user_id, task_id
 
     async def _set_with_ttl(self, key: str, value: str) -> None:
         """SET a key and optionally apply the sliding TTL."""
@@ -556,7 +580,6 @@ class RedisStorage(StorageBase):
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
         parent_session_id: str | None = None,
-        parent_tool_call_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -578,8 +601,6 @@ class RedisStorage(StorageBase):
                     record.state = state
                 if parent_session_id is not None:
                     record.parent_session_id = parent_session_id
-                if parent_tool_call_id is not None:
-                    record.parent_tool_call_id = parent_tool_call_id
                 record.updated_at = datetime.now()
                 await self._set_with_ttl(key, record.model_dump_json())
                 if old_parent_session_id != record.parent_session_id:
@@ -610,7 +631,6 @@ class RedisStorage(StorageBase):
             source=source,
             source_schedule_id=source_schedule_id,
             parent_session_id=parent_session_id,
-            parent_tool_call_id=parent_tool_call_id,
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -734,6 +754,139 @@ class RedisStorage(StorageBase):
         records.sort(key=lambda r: r.created_at, reverse=True)
         return records
 
+    async def upsert_subagent_task(
+        self,
+        user_id: str,
+        record: SubAgentTaskRecord,
+    ) -> str:
+        """Create or update one delegated sub-agent task record."""
+        key = self._key(
+            self.key_config.subagent_task,
+            user_id=user_id,
+            task_id=record.id,
+        )
+        await self._set_with_ttl(key, record.model_dump_json())
+        return record.id
+
+    async def get_subagent_task(
+        self,
+        user_id: str,
+        task_id: str,
+    ) -> SubAgentTaskRecord | None:
+        """Fetch one delegated sub-agent task record by id."""
+        key = self._key(
+            self.key_config.subagent_task,
+            user_id=user_id,
+            task_id=task_id,
+        )
+        raw = await self._client.get(key)
+        if not raw:
+            return None
+        return SubAgentTaskRecord.model_validate_json(raw)
+
+    async def get_active_subagent_task_by_child_session(
+        self,
+        user_id: str,
+        child_session_id: str,
+    ) -> SubAgentTaskRecord | None:
+        """Fetch the active delegated task bound to one child session."""
+        key = self._key(
+            self.key_config.active_subagent_task_by_child_session,
+            user_id=user_id,
+            child_session_id=child_session_id,
+        )
+        task_id = await self._client.get(key)
+        if not task_id:
+            return None
+        record = await self.get_subagent_task(user_id, task_id)
+        if record is None:
+            await self._client.delete(key)
+            await self._client.srem(
+                self.key_config.active_subagent_tasks,
+                self._encode_active_subagent_task_member(user_id, task_id),
+            )
+        return record
+
+    async def mark_active_subagent_task(
+        self,
+        user_id: str,
+        child_session_id: str,
+        task_id: str,
+    ) -> None:
+        """Mark one delegated task as the active task for a child session."""
+        child_key = self._key(
+            self.key_config.active_subagent_task_by_child_session,
+            user_id=user_id,
+            child_session_id=child_session_id,
+        )
+        await self._client.set(child_key, task_id)
+        await self._refresh_key_ttl(child_key)
+        await self._client.sadd(
+            self.key_config.active_subagent_tasks,
+            self._encode_active_subagent_task_member(user_id, task_id),
+        )
+
+    async def unmark_active_subagent_task(
+        self,
+        user_id: str,
+        child_session_id: str,
+        task_id: str,
+    ) -> None:
+        """Remove one delegated task from the active task indexes."""
+        child_key = self._key(
+            self.key_config.active_subagent_task_by_child_session,
+            user_id=user_id,
+            child_session_id=child_session_id,
+        )
+        current_task_id = await self._client.get(child_key)
+        if current_task_id == task_id:
+            await self._client.delete(child_key)
+        await self._client.srem(
+            self.key_config.active_subagent_tasks,
+            self._encode_active_subagent_task_member(user_id, task_id),
+        )
+
+    async def list_active_subagent_tasks(self) -> list[tuple[str, str]]:
+        """Return all active delegated task pairs across users."""
+        members = await self._client.smembers(
+            self.key_config.active_subagent_tasks,
+        )
+        results: list[tuple[str, str]] = []
+        for member in members:
+            parsed = self._decode_active_subagent_task_member(member)
+            if parsed is not None:
+                user_id, task_id = parsed
+                if await self.get_subagent_task(user_id, task_id) is None:
+                    await self._client.srem(
+                        self.key_config.active_subagent_tasks,
+                        member,
+                    )
+                    continue
+                results.append(parsed)
+        return results
+
+    async def delete_subagent_task(
+        self,
+        user_id: str,
+        task_id: str,
+    ) -> bool:
+        """Delete one delegated sub-agent task record."""
+        record = await self.get_subagent_task(user_id, task_id)
+        if record is None:
+            return False
+        await self.unmark_active_subagent_task(
+            user_id=user_id,
+            child_session_id=record.child_session_id,
+            task_id=task_id,
+        )
+        key = self._key(
+            self.key_config.subagent_task,
+            user_id=user_id,
+            task_id=task_id,
+        )
+        deleted = await self._client.delete(key)
+        return deleted > 0
+
     async def get_session(
         self,
         user_id: str,
@@ -819,9 +972,15 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             session_id=session_id,
         )
+        active_task = await self.get_active_subagent_task_by_child_session(
+            user_id=user_id,
+            child_session_id=session_id,
+        )
         await self._client.delete(key)
         await self._client.srem(index_key, session_id)
         await self._client.delete(msg_key)
+        if active_task is not None:
+            await self.delete_subagent_task(user_id, active_task.id)
         if record.parent_session_id is not None:
             children_key = self._key(
                 self.key_config.session_children,

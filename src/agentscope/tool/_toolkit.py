@@ -306,35 +306,44 @@ class Toolkit:
             ):
                 kwargs["_agent_state"] = state
 
-            if inspect.iscoroutinefunction(tool_func.__call__):
-                res = await tool_func(**kwargs)
-            else:
-                # When `tool_func.original_func` is Async generator function or
-                # Sync function
-                res = tool_func(**kwargs)
+            runtime_context = state.tool_context.runtime_context
+            previous_tool_call_id = None
+            if runtime_context is not None:
+                previous_tool_call_id = runtime_context.current_tool_call_id
+                runtime_context.current_tool_call_id = tool_call.id
 
-            if isinstance(res, ToolChunk):
-                yield res
-                tool_response.append_chunk(res)
+            try:
+                if inspect.iscoroutinefunction(tool_func.__call__):
+                    res = await tool_func(**kwargs)
+                else:
+                    # When `tool_func.original_func` is Async generator
+                    # function or Sync function
+                    res = tool_func(**kwargs)
+                if isinstance(res, ToolChunk):
+                    yield res
+                    tool_response.append_chunk(res)
 
-            # If return an async generator
-            elif isinstance(res, AsyncGenerator):
-                async for chunk in res:
-                    yield chunk
-                    tool_response.append_chunk(chunk)
+                # If return an async generator
+                elif isinstance(res, AsyncGenerator):
+                    async for chunk in res:
+                        yield chunk
+                        tool_response.append_chunk(chunk)
 
-            # If return a sync generator
-            elif isinstance(res, Generator):
-                for chunk in res:
-                    yield chunk
-                    tool_response.append_chunk(chunk)
+                # If return a sync generator
+                elif isinstance(res, Generator):
+                    for chunk in res:
+                        yield chunk
+                        tool_response.append_chunk(chunk)
 
-            else:
-                raise DeveloperOrientedException(
-                    "The tool function must return a ToolChunk object, or an "
-                    "AsyncGenerator/Generator of ToolChunk objects, "
-                    f"but got {type(res)}.",
-                )
+                else:
+                    raise DeveloperOrientedException(
+                        "The tool function must return a ToolChunk object, or "
+                        "an AsyncGenerator/Generator of ToolChunk objects, "
+                        f"but got {type(res)}.",
+                    )
+            finally:
+                if runtime_context is not None:
+                    runtime_context.current_tool_call_id = previous_tool_call_id
 
         except mcp.shared.exceptions.McpError as e:
             chunk = ToolChunk(

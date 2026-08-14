@@ -17,6 +17,7 @@ from ._model import (
     SessionRecord,
     SessionSource,
     ChatModelConfig,
+    SubAgentTaskRecord,
     TeamData,
     TeamRecord,
     UserRecord,
@@ -42,4 +43,5 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "SubAgentTaskRecord",
 ]

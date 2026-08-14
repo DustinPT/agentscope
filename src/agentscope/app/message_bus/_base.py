@@ -740,6 +740,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         )
         return [payload for _entry_id, payload in entries]
 
+    @abstractmethod
+    async def has_pending_wakeup(self, session_id: str) -> bool:
+        """Return whether the session still has an enqueued wake-up."""
+
     async def subscribe_wakeup_signal(
         self,
         *,

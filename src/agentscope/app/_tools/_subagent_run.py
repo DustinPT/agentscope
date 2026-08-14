@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +18,7 @@ from ...permission import (
     PermissionDecision,
 )
 from ...state import AgentState
-from ..storage import SessionConfig, SessionSource
+from ..storage import SessionConfig, SessionSource, SubAgentTaskRecord
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -30,6 +31,16 @@ _SUBAGENT_START_ACK_HINT = (
     "notification before using or summarizing the delegated work. Do not "
     "resume the child session before it returns a result."
 )
+_TERMINAL_PARENT_INVOCATION_STATUSES = {
+    "final_delivered",
+    "protocol_failed",
+    "error_delivered",
+}
+
+
+def is_terminal_subagent_task_status(status: str | None) -> bool:
+    """Return whether one delegated task status is terminal."""
+    return status in _TERMINAL_PARENT_INVOCATION_STATUSES
 
 
 class _SubAgentRunParams(ParamsBase):
@@ -120,7 +131,7 @@ Important:
     input_schema: dict[str, Any] = _SubAgentRunParams.model_json_schema()
     is_concurrency_safe: bool = True
     is_read_only: bool = True
-    is_state_injected: bool = False
+    is_state_injected: bool = True
     is_external_tool: bool = False
     is_mcp: bool = False
     mcp_name: str | None = None
@@ -186,7 +197,11 @@ Important:
             message="SubAgentRun is allowed when attached to the agent.",
         )
 
-    def _build_subagent_task_hint(self, prompt: str, caller_agent_name: str) -> str:
+    def _build_subagent_task_hint(
+        self,
+        prompt: str,
+        caller_agent_name: str,
+    ) -> str:
         """Build the child-session task hint payload."""
         prompt_text = prompt.rstrip()
         return (
@@ -203,8 +218,32 @@ Important:
         prompt: str,
         session_name: str | None = None,
         session_id: str | None = None,
+        _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Create or resume a child session and start the assigned task."""
+        runtime_context = (
+            _agent_state.tool_context.runtime_context
+            if _agent_state is not None
+            else None
+        )
+        current_tool_call_id = (
+            runtime_context.current_tool_call_id
+            if runtime_context is not None
+            else None
+        )
+        if not current_tool_call_id:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=(
+                            "SubAgentRun: this sub-agent call could not be "
+                            "identified."
+                        ),
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+            )
+
         caller_agent = await self._storage.get_agent(self._user_id, self._agent_id)
         caller_session = await self._storage.get_session(
             self._user_id,
@@ -213,7 +252,14 @@ Important:
         )
         if caller_agent is None or caller_session is None:
             return ToolChunk(
-                content=[TextBlock(text="SubAgentRun: caller session not found.")],
+                content=[
+                    TextBlock(
+                        text=(
+                            "SubAgentRun: the current session is unavailable, "
+                            "so the sub-agent task cannot be started."
+                        ),
+                    ),
+                ],
                 state=ToolResultState.ERROR,
             )
 
@@ -222,8 +268,8 @@ Important:
                 content=[
                     TextBlock(
                         text=(
-                            "SubAgentRun: this agent is not allowed to call "
-                            "sub-agents."
+                            "SubAgentRun: this agent cannot start sub-agent "
+                            "tasks."
                         ),
                     ),
                 ],
@@ -235,8 +281,8 @@ Important:
                 content=[
                     TextBlock(
                         text=(
-                            f"SubAgentRun: agent {agent_id!r} is not in the "
-                            "allowed sub-agent list."
+                            f"SubAgentRun: agent {agent_id!r} cannot be used "
+                            "as a sub-agent here."
                         ),
                     ),
                 ],
@@ -248,7 +294,10 @@ Important:
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"SubAgentRun: target agent {agent_id!r} not found.",
+                        text=(
+                            f"SubAgentRun: the requested sub-agent "
+                            f"{agent_id!r} was not found."
+                        ),
                     ),
                 ],
                 state=ToolResultState.ERROR,
@@ -260,8 +309,8 @@ Important:
                 content=[
                     TextBlock(
                         text=(
-                            "SubAgentRun: session_name is required when "
-                            "creating a new child session."
+                            "SubAgentRun: a session_name is required when "
+                            "starting a new sub-agent task."
                         ),
                     ),
                 ],
@@ -272,7 +321,7 @@ Important:
                 content=[
                     TextBlock(
                         text=(
-                            "SubAgentRun: session_name must be omitted when "
+                            "SubAgentRun: do not provide session_name when "
                             "resuming an existing child session."
                         ),
                     ),
@@ -292,8 +341,8 @@ Important:
                 content=[
                     TextBlock(
                         text=(
-                            "SubAgentRun: no chat model is available for the "
-                            "target sub-agent."
+                            "SubAgentRun: the requested sub-agent does not "
+                            "have an available chat model."
                         ),
                     ),
                 ],
@@ -303,6 +352,15 @@ Important:
         mode = "resume" if session_id is not None else "new"
         child_session_id: str
         child_session_name: str
+        launch_time = datetime.now()
+        caller_active_task = None
+        if caller_session.parent_session_id is not None:
+            caller_active_task = (
+                await self._storage.get_active_subagent_task_by_child_session(
+                    self._user_id,
+                    self._session_id,
+                )
+            )
         if session_id is None:
             child_state = AgentState(
                 permission_context=PermissionContext(
@@ -321,7 +379,6 @@ Important:
                 state=child_state,
                 source=SessionSource.SUBAGENT,
                 parent_session_id=self._session_id,
-                parent_tool_call_id=None,
             )
             child_session_id = child_session.id
             child_session_name = child_session.config.name
@@ -348,7 +405,7 @@ Important:
                         TextBlock(
                             text=(
                                 f"SubAgentRun: child session {session_id!r} "
-                                "not found."
+                                "was not found."
                             ),
                         ),
                     ],
@@ -359,27 +416,68 @@ Important:
                     content=[
                         TextBlock(
                             text=(
-                                "SubAgentRun: the requested session does not "
-                                "belong to this parent session."
+                                "SubAgentRun: this child session does not "
+                                "belong to the current parent session."
                             ),
                         ),
                     ],
                     state=ToolResultState.ERROR,
                 )
-            child_session = await self._storage.upsert_session(
-                user_id=self._user_id,
-                agent_id=agent_id,
-                session_id=child_session.id,
-                config=SessionConfig(
-                    workspace_id=child_session.config.workspace_id,
-                    name=child_session.config.name,
-                    chat_model_config=chat_model_config,
-                    fallback_chat_model_config=fallback_chat_model_config,
-                ),
-                state=child_session.state,
+            existing_active_task = (
+                await self._storage.get_active_subagent_task_by_child_session(
+                    self._user_id,
+                    child_session.id,
+                )
             )
+            if (
+                existing_active_task is not None
+                and not is_terminal_subagent_task_status(existing_active_task.status)
+            ):
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                "SubAgentRun: the child session has not "
+                                "finished its previous task yet."
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                )
             child_session_id = child_session.id
             child_session_name = child_session.config.name
+        parent_task_id = None
+        if (
+            caller_active_task is not None
+            and not is_terminal_subagent_task_status(caller_active_task.status)
+        ):
+            caller_active_task.open_descendant_count += 1
+            caller_active_task.last_progress_at = launch_time
+            await self._storage.upsert_subagent_task(
+                self._user_id,
+                caller_active_task,
+            )
+            parent_task_id = caller_active_task.id
+
+        task_record = SubAgentTaskRecord(
+            user_id=self._user_id,
+            parent_session_id=self._session_id,
+            child_session_id=child_session_id,
+            child_agent_id=agent_id,
+            parent_tool_call_id=current_tool_call_id,
+            parent_task_id=parent_task_id,
+            status="running",
+            open_descendant_count=0,
+            terminal_reason=None,
+            launch_requested_at=launch_time,
+            last_progress_at=None,
+        )
+        await self._storage.upsert_subagent_task(self._user_id, task_record)
+        await self._storage.mark_active_subagent_task(
+            self._user_id,
+            child_session_id,
+            task_record.id,
+        )
 
         hint = HintBlock(
             hint=self._build_subagent_task_hint(
@@ -391,6 +489,9 @@ Important:
                     "label": "subagent_task",
                     "sublabel": caller_agent.data.name,
                     "parent_session_id": self._session_id,
+                    "parent_tool_call_id": current_tool_call_id,
+                    "mode": mode,
+                    "subagent_task_id": task_record.id,
                 },
                 ensure_ascii=False,
             ),
@@ -415,6 +516,7 @@ Important:
             "session_id": child_session_id,
             "session_name": child_session_name,
             "mode": mode,
+            "subagent_task_id": task_record.id,
         }
         return ToolChunk(
             content=[TextBlock(text=json.dumps(payload, ensure_ascii=False))],

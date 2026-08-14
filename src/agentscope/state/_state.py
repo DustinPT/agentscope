@@ -92,6 +92,9 @@ class ToolRuntimeContext(BaseModel):
     workdir: str
     """The agent-visible workspace root directory."""
 
+    current_tool_call_id: str | None = None
+    """The current tool call id being executed, if any."""
+
 
 class WaitNewMessagesCursor(BaseModel):
     """Incremental cursor tracked for one managed session wait loop."""

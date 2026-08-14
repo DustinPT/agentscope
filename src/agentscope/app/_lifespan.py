@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """The lifespan of the agent service."""
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from ._manager import (
     BackgroundTaskManager,
     CancelDispatcher,
     ChatRunRegistry,
     SchedulerManager,
+    SubAgentReaper,
     WakeupDispatcher,
 )
 from ._service import ChatService, SessionService
@@ -19,7 +20,7 @@ else:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage startup and shutdown of all application-wide resources.
 
     Every resource with a lifecycle is an async context manager and is
@@ -95,6 +96,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 storage=storage,
                 chat_service=chat_service,
                 chat_run_registry=chat_run_registry,
+            ),
+        )
+        await stack.enter_async_context(
+            SubAgentReaper(
+                storage=storage,
+                message_bus=message_bus,
             ),
         )
         await stack.enter_async_context(
