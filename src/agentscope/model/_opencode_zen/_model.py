@@ -5,7 +5,7 @@ from typing import Literal, Any, AsyncGenerator, Type
 from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase
-from .._model_response import ChatResponse
+from .._model_response import ChatResponse, StructuredResponse
 from .._openai_chat._model import OpenAIChatModel
 from .._openai_response._model import OpenAIResponseModel
 from ...credential import OpenAICredential, OpenCodeZenCredential
@@ -242,4 +242,28 @@ class OpenCodeZenChatModel(ChatModelBase):
             tools=tools,
             tool_choice=tool_choice,
             **self._build_generate_kwargs(generate_kwargs),
+        )
+
+    async def _call_api_with_structured_output(
+        self,
+        model_name: str,
+        messages: list[Msg],
+        structured_model: Type[BaseModel] | dict,
+        tool_choice: ToolChoice | None = None,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """OpenCode Zen structured-output compatibility shim.
+
+        Structured output is implemented on this wrapper, so it must mirror
+        the provider-specific thinking/tool-choice compatibility logic used by
+        the delegated OpenAI-compatible models.
+        """
+        if tool_choice is None and self.parameters.thinking_enable:
+            tool_choice = ToolChoice(mode="auto")
+        return await super()._call_api_with_structured_output(
+            model_name=model_name,
+            messages=messages,
+            structured_model=structured_model,
+            tool_choice=tool_choice,
+            **kwargs,
         )
