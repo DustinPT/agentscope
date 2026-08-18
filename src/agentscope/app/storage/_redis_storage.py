@@ -14,8 +14,10 @@ from ._model import (
     ScheduleRecord,
     SubAgentTaskRecord,
     SessionRecord,
+    SessionStateRecord,
     SessionConfig,
     SessionSource,
+    SessionWithState,
     TeamRecord,
     UserRecord,
 )
@@ -49,6 +51,9 @@ class RedisStorage(StorageBase):
         )
         agent: str = "agentscope:user:{user_id}:agent:{agent_id}"
         session: str = "agentscope:user:{user_id}:session:{session_id}"
+        session_state: str = (
+            "agentscope:user:{user_id}:session_state:{session_id}"
+        )
         subagent_task: str = (
             "agentscope:user:{user_id}:subagent_task:{task_id}"
         )
@@ -570,6 +575,61 @@ class RedisStorage(StorageBase):
         await self._client.srem(index_key, agent_id)
         return deleted > 0
 
+    @staticmethod
+    def _sync_permission_mode(
+        permission_mode,
+        state: AgentState,
+    ) -> AgentState:
+        """Keep runtime permission mode aligned with persisted config."""
+        state.permission_context = state.permission_context.model_copy(
+            update={"mode": permission_mode},
+        )
+        return state
+
+    def _session_state_key(self, user_id: str, session_id: str) -> str:
+        return self._key(
+            self.key_config.session_state,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+    async def _write_session_state(
+        self,
+        user_id: str,
+        session_id: str,
+        permission_mode,
+        state: AgentState,
+        *,
+        created_at: datetime | None = None,
+    ) -> AgentState:
+        synced_state = self._sync_permission_mode(permission_mode, state)
+        key = self._session_state_key(user_id, session_id)
+        raw = await self._client.get(key)
+        record = (
+            SessionStateRecord.model_validate_json(raw)
+            if raw
+            else SessionStateRecord(
+                id=session_id,
+                session_id=session_id,
+                user_id=user_id,
+                created_at=created_at or datetime.now(),
+            )
+        )
+        record.state = synced_state
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(key, record.model_dump_json())
+        return synced_state
+
+    @staticmethod
+    def _hydrate_session(
+        record: SessionRecord,
+        state: AgentState,
+    ) -> SessionWithState:
+        return SessionWithState(
+            **record.model_dump(mode="python"),
+            state=state,
+        )
+
     async def upsert_session(
         self,
         user_id: str,
@@ -580,28 +640,26 @@ class RedisStorage(StorageBase):
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
         parent_session_id: str | None = None,
-    ) -> SessionRecord:
+    ) -> SessionWithState:
         """Create or update a session for a (user, agent) pair.
 
         When *session_id* is provided the existing session is updated.
         When *session_id* is ``None`` a new session is always created.
         """
         if session_id:
-            key = self._key(
-                self.key_config.session,
-                user_id=user_id,
-                session_id=session_id,
-            )
-            raw = await self._client.get(key)
-            if raw:
-                record = SessionRecord.model_validate_json(raw)
+            existing = await self.get_session_meta(user_id, session_id)
+            if existing:
+                record = existing.model_copy(deep=True)
                 old_parent_session_id = record.parent_session_id
                 record.config = config
-                if state is not None:
-                    record.state = state
                 if parent_session_id is not None:
                     record.parent_session_id = parent_session_id
                 record.updated_at = datetime.now()
+                key = self._key(
+                    self.key_config.session,
+                    user_id=user_id,
+                    session_id=session_id,
+                )
                 await self._set_with_ttl(key, record.model_dump_json())
                 if old_parent_session_id != record.parent_session_id:
                     if old_parent_session_id is not None:
@@ -618,7 +676,20 @@ class RedisStorage(StorageBase):
                             parent_session_id=record.parent_session_id,
                         )
                         await self._client.sadd(children_key, record.id)
-                return record
+                session_state = state or await self.get_session_state(
+                    user_id,
+                    session_id,
+                )
+                if session_state is None:
+                    raise KeyError(f"Session {session_id!r} state not found.")
+                synced_state = await self._write_session_state(
+                    user_id=user_id,
+                    session_id=session_id,
+                    permission_mode=config.permission_mode,
+                    state=session_state,
+                    created_at=record.created_at,
+                )
+                return self._hydrate_session(record, synced_state)
 
         # Use the caller-provided ``session_id`` when given so a
         # "create-if-missing under this id" call (e.g. scheduler's
@@ -631,7 +702,6 @@ class RedisStorage(StorageBase):
             source=source,
             source_schedule_id=source_schedule_id,
             parent_session_id=parent_session_id,
-            state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
         key = self._key(
@@ -645,6 +715,13 @@ class RedisStorage(StorageBase):
             agent_id=agent_id,
         )
         await self._set_with_ttl(key, record.model_dump_json())
+        synced_state = await self._write_session_state(
+            user_id=user_id,
+            session_id=record.id,
+            permission_mode=config.permission_mode,
+            state=state if state is not None else AgentState(),
+            created_at=record.created_at,
+        )
         await self._client.sadd(index_key, record.id)
         if record.parent_session_id is not None:
             children_key = self._key(
@@ -662,7 +739,7 @@ class RedisStorage(StorageBase):
             )
             await self._client.sadd(schedule_session_key, record.id)
 
-        return record
+        return self._hydrate_session(record, synced_state)
 
     async def update_session_state(
         self,
@@ -676,6 +753,35 @@ class RedisStorage(StorageBase):
         Raises:
             KeyError: If the session does not exist.
         """
+        record = await self.get_session_meta(user_id, session_id)
+        if record is None:
+            raise KeyError(f"Session {session_id!r} not found.")
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(
+            self._key(
+                self.key_config.session,
+                user_id=user_id,
+                session_id=session_id,
+            ),
+            record.model_dump_json(),
+        )
+        synced_state = self._sync_permission_mode(
+            record.config.permission_mode,
+            state,
+        )
+        await self._write_session_state(
+            user_id=user_id,
+            session_id=session_id,
+            permission_mode=record.config.permission_mode,
+            state=synced_state,
+            created_at=record.created_at,
+        )
+
+    async def get_session_meta(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> SessionRecord | None:
         key = self._key(
             self.key_config.session,
             user_id=user_id,
@@ -683,11 +789,41 @@ class RedisStorage(StorageBase):
         )
         raw = await self._client.get(key)
         if not raw:
-            raise KeyError(f"Session {session_id!r} not found.")
-        record = SessionRecord.model_validate_json(raw)
-        record.state = state
-        record.updated_at = datetime.now()
-        await self._set_with_ttl(key, record.model_dump_json())
+            return None
+        return SessionRecord.model_validate_json(raw)
+
+    async def get_session_state(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> AgentState | None:
+        raw = await self._client.get(self._session_state_key(user_id, session_id))
+        if not raw:
+            return None
+        return SessionStateRecord.model_validate_json(raw).state
+
+    async def get_sessions_meta_by_ids(
+        self,
+        user_id: str,
+        session_ids: list[str],
+    ) -> list[SessionRecord]:
+        if not session_ids:
+            return []
+        raws = await self._client.mget(
+            [
+                self._key(
+                    self.key_config.session,
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+                for session_id in session_ids
+            ],
+        )
+        return [
+            SessionRecord.model_validate_json(raw)
+            for raw in raws
+            if raw
+        ]
 
     async def list_sessions(
         self,
@@ -714,17 +850,7 @@ class RedisStorage(StorageBase):
             agent_id=agent_id,
         )
         ids = await self._client.smembers(index_key)
-        records = []
-        for session_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.session,
-                    user_id=user_id,
-                    session_id=session_id,
-                ),
-            )
-            if raw:
-                records.append(SessionRecord.model_validate_json(raw))
+        records = await self.get_sessions_meta_by_ids(user_id, list(ids))
         records.sort(key=lambda r: r.created_at, reverse=True)
         return records
 
@@ -740,17 +866,7 @@ class RedisStorage(StorageBase):
             parent_session_id=parent_session_id,
         )
         ids = await self._client.smembers(children_key)
-        records = []
-        for session_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.session,
-                    user_id=user_id,
-                    session_id=session_id,
-                ),
-            )
-            if raw:
-                records.append(SessionRecord.model_validate_json(raw))
+        records = await self.get_sessions_meta_by_ids(user_id, list(ids))
         records.sort(key=lambda r: r.created_at, reverse=True)
         return records
 
@@ -892,17 +1008,19 @@ class RedisStorage(StorageBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-    ) -> SessionRecord | None:
-        """Fetch a single session record by id."""
-        key = self._key(
-            self.key_config.session,
-            user_id=user_id,
-            session_id=session_id,
-        )
-        raw = await self._client.get(key)
-        if not raw:
+    ) -> SessionWithState | None:
+        """Fetch one hydrated session record by id."""
+        record = await self.get_session_meta(user_id, session_id)
+        if record is None:
             return None
-        return SessionRecord.model_validate_json(raw)
+        state = await self.get_session_state(user_id, session_id)
+        if state is None:
+            return None
+        synced_state = self._sync_permission_mode(
+            record.config.permission_mode,
+            state,
+        )
+        return self._hydrate_session(record, synced_state)
 
     async def delete_session(
         self,
@@ -977,6 +1095,7 @@ class RedisStorage(StorageBase):
             child_session_id=session_id,
         )
         await self._client.delete(key)
+        await self._client.delete(self._session_state_key(user_id, session_id))
         await self._client.srem(index_key, session_id)
         await self._client.delete(msg_key)
         if active_task is not None:
@@ -1011,17 +1130,7 @@ class RedisStorage(StorageBase):
             schedule_id=schedule_id,
         )
         ids = await self._client.smembers(schedule_session_key)
-        records = []
-        for session_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.session,
-                    user_id=user_id,
-                    session_id=session_id,
-                ),
-            )
-            if raw:
-                records.append(SessionRecord.model_validate_json(raw))
+        records = await self.get_sessions_meta_by_ids(user_id, list(ids))
         records.sort(key=lambda r: r.created_at, reverse=True)
         return records
 

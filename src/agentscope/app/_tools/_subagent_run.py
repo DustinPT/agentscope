@@ -375,6 +375,7 @@ Important:
                     name=session_name_value,
                     chat_model_config=chat_model_config,
                     fallback_chat_model_config=fallback_chat_model_config,
+                    permission_mode=caller_session.config.permission_mode,
                 ),
                 state=child_state,
                 source=SessionSource.SUBAGENT,

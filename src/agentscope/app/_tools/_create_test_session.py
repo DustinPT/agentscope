@@ -70,6 +70,7 @@ class CreateTestSession(_SessionToolBase):
                 workspace_id=self._workspace_id,
                 name=session_name,
                 chat_model_config=model_config,
+                permission_mode=PermissionMode.BYPASS,
             ),
             state=AgentState(
                 permission_context=PermissionContext(

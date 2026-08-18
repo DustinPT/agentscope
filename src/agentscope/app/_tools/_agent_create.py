@@ -393,6 +393,7 @@ optional):
                     fallback_chat_model_config=(
                         leader_session.config.fallback_chat_model_config
                     ),
+                    permission_mode=leader_session.config.permission_mode,
                 ),
                 state=worker_state,
             )

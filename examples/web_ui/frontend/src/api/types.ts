@@ -163,6 +163,7 @@ export interface SessionConfig {
 	/** Fallback model used when the primary model fails. */
 	fallback_chat_model_config: ChatModelConfig | null;
 	workspace_id: string;
+        permission_mode: PermissionMode;
 }
 
 // TODO: update when Python side is finalised
@@ -181,8 +182,10 @@ export interface SessionRecord extends RecordBase {
 	 */
 	team_id: string | null;
 	parent_session_id: string | null;
-	parent_tool_call_id: string | null;
 	config: SessionConfig;
+}
+
+export interface SessionWithState extends SessionRecord {
 	state: AgentState;
 }
 
@@ -231,7 +234,7 @@ export interface UpdateSessionRequest {
 }
 
 export interface SessionListResponse {
-	sessions: SessionView[];
+        sessions: SessionSummaryView[];
 	total: number;
 }
 
@@ -326,14 +329,19 @@ export interface TeamDetailResponse {
  * since they paginate independently.
  */
 export interface SessionView {
-	session: SessionRecord;
+        session: SessionWithState;
 	is_running: boolean;
 	team: TeamDetailResponse | null;
 	children: SubAgentSessionView[];
 }
 
+export interface SessionSummaryView {
+        session: SessionRecord;
+        is_running: boolean;
+}
+
 export interface SubAgentSessionView {
-	session: SessionRecord;
+        session: SessionWithState;
 	agent: AgentRecord;
 	is_running: boolean;
 	children: SubAgentSessionView[];

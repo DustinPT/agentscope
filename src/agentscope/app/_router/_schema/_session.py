@@ -4,7 +4,13 @@ from pydantic import BaseModel, Field
 
 from ....message import Msg
 from ....permission import PermissionMode
-from ...storage import AgentRecord, ChatModelConfig, SessionRecord, TeamRecord
+from ...storage import (
+    AgentRecord,
+    ChatModelConfig,
+    SessionRecord,
+    SessionWithState,
+    TeamRecord,
+)
 
 
 class TeamMemberView(BaseModel):
@@ -50,7 +56,9 @@ class TeamDetailResponse(BaseModel):
 class SubAgentSessionView(BaseModel):
     """Recursive child-session view for sub-agent sessions."""
 
-    session: SessionRecord = Field(description="The child session record.")
+    session: SessionWithState = Field(
+        description="The hydrated child session record.",
+    )
     agent: AgentRecord = Field(description="The child agent record.")
     is_running: bool = Field(
         description="Whether a chat run is currently active on this child session.",
@@ -171,6 +179,17 @@ class UpdateSessionRequest(BaseModel):
     )
 
 
+class SessionSummaryView(BaseModel):
+    """Lightweight session bundle used by the session sidebar."""
+
+    session: SessionRecord = Field(
+        description="The persisted lightweight session record.",
+    )
+    is_running: bool = Field(
+        description="Whether a chat run is currently active on this session.",
+    )
+
+
 class SessionView(BaseModel):
     """Per-session bundle with everything the frontend needs to
     render either the list view or open a session.
@@ -178,7 +197,7 @@ class SessionView(BaseModel):
     Bundles three orthogonal pieces of information so opening a
     session does not require a waterfall of follow-up requests:
 
-    - the persisted :class:`SessionRecord` itself (config + state),
+    - the persisted :class:`SessionWithState` itself (config + state),
     - whether the session has an active chat run right now,
     - the team detail (resolved leader + members) when the session
       participates in a team.
@@ -187,7 +206,7 @@ class SessionView(BaseModel):
     paginated separately via ``GET /sessions/{id}/messages``.
     """
 
-    session: SessionRecord = Field(
+    session: SessionWithState = Field(
         description=(
             "The persisted session record. Includes ``state`` "
             "(``permission_context`` / ``tool_context`` / "
@@ -214,8 +233,8 @@ class SessionView(BaseModel):
 class ListSessionsResponse(BaseModel):
     """Response body for listing sessions."""
 
-    sessions: list[SessionView] = Field(
-        description="Session views (record + is_running + team).",
+    sessions: list[SessionSummaryView] = Field(
+        description="Lightweight session views for the session sidebar.",
     )
     total: int = Field(description="Total number of sessions.")
 

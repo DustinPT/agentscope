@@ -12,6 +12,7 @@ from ._model import (
     ScheduleRecord,
     SubAgentTaskRecord,
     SessionRecord,
+    SessionWithState,
     SessionConfig,
     SessionSource,
     TeamRecord,
@@ -214,7 +215,7 @@ class StorageBase(ABC):
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
         parent_session_id: str | None = None,
-    ) -> SessionRecord:
+    ) -> SessionWithState:
         """Create or update a session for a (user, agent) pair.
 
         Args:
@@ -237,7 +238,7 @@ class StorageBase(ABC):
                 when this session is spawned as a child session.
 
         Returns:
-            `SessionRecord`: The created or updated record.
+            `SessionWithState`: The created or updated full session.
         """
 
     @abstractmethod
@@ -284,6 +285,30 @@ class StorageBase(ABC):
             session_id (`str`): The session id.
             state (`AgentState`): The new agent state to persist.
         """
+
+    @abstractmethod
+    async def get_session_meta(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> SessionRecord | None:
+        """Fetch one lightweight session record by id."""
+
+    @abstractmethod
+    async def get_session_state(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> AgentState | None:
+        """Fetch one persisted session state snapshot by session id."""
+
+    @abstractmethod
+    async def get_sessions_meta_by_ids(
+        self,
+        user_id: str,
+        session_ids: list[str],
+    ) -> list[SessionRecord]:
+        """Fetch lightweight session records for the given ids."""
 
     @abstractmethod
     async def list_sessions(
@@ -396,7 +421,7 @@ class StorageBase(ABC):
         user_id: str,
         agent_id: str,
         session_id: str,
-    ) -> SessionRecord | None:
+    ) -> SessionWithState | None:
         """Fetch a single session record by id.
 
         Args:
@@ -405,7 +430,8 @@ class StorageBase(ABC):
             session_id (`str`): The session id.
 
         Returns:
-            `SessionRecord | None`: The record, or ``None`` if not found.
+            `SessionWithState | None`: The hydrated record, or ``None`` if not
+            found.
         """
 
     @abstractmethod

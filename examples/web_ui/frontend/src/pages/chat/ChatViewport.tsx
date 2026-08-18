@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
+import { useSessionView } from '@/hooks/useSessionView';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useTranslation } from '@/i18n/useI18n';
 import { buildSessionExportFilename, downloadJsonFile } from '@/utils/sessionExport';
@@ -97,23 +98,29 @@ export function ChatViewport({
 	onPendingInitialUserMsgConsumed,
 	onTeamUpdated,
 }: ChatViewportProps) {
-        const { sessions, loading: sessionsLoading, refetch: refetchSessions } = useSessions(agentId);
+        const { refetch: refetchSessions } = useSessions(agentId);
+        const { sessionView, loading: sessionViewLoading, refetch: refetchSessionView } = useSessionView(
+                sessionViewOverride ? null : agentId,
+                sessionViewOverride ? null : sessionId,
+        );
 	const { groups } = useAvailableModels();
 	const { t } = useTranslation();
 
 	// When the viewport agent differs from the outer page's selected
 	// agent (i.e. user drilled into a team member), `refetchSessions`
-	// only refreshes the member's session list. The team sidebar is
-	// driven by the leader's session list owned by the outer page, so
-	// we also fire the parent's refetch to keep that in sync.
+        // only refreshed the member's session list. The team sidebar is
+        // driven by the leader's session data owned by the outer page, so
+        // we also fire the parent's refetch to keep that in sync.
 	const handleTeamUpdated = useCallback(() => {
-		refetchSessions();
+                void refetchSessions();
+                void refetchSessionView();
 		onTeamUpdated?.();
-	}, [refetchSessions, onTeamUpdated]);
+        }, [refetchSessionView, refetchSessions, onTeamUpdated]);
 	const refetchRelatedSessions = useCallback(async () => {
-		await refetchSessions();
+                await refetchSessions();
+                await refetchSessionView();
 		onTeamUpdated?.();
-	}, [refetchSessions, onTeamUpdated]);
+        }, [refetchSessionView, refetchSessions, onTeamUpdated]);
 
 	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
@@ -166,7 +173,7 @@ export function ChatViewport({
                 buildWorkspaceFilePreviewUrl,
         } = useWorkspace(agentId, sessionId, { enabled: workspaceDrawerOpen });
 
-	const view = sessionViewOverride ?? sessions.find((v) => v.session.id === sessionId) ?? null;
+        const view = sessionViewOverride ?? sessionView ?? null;
 
 	const userMessageOutline = useMemo(
 		() =>
@@ -188,9 +195,9 @@ export function ChatViewport({
 		if (!sessionId) return;
 		if (view) return;
 		if (sessionViewOverride) return;
-                if (sessionsLoading) return;
-		refetchSessions();
-        }, [sessionId, view, sessionViewOverride, sessionsLoading, refetchSessions]);
+                if (sessionViewLoading) return;
+                void refetchSessionView();
+        }, [sessionId, view, sessionViewOverride, sessionViewLoading, refetchSessionView]);
 
 	// Reset local UI state when the target session changes. Otherwise
 	// the model select (and disabled-state guards on `send`) would
@@ -321,9 +328,7 @@ export function ChatViewport({
 	// to "default" while the new session view is still on the wire.
 	useEffect(() => {
 		if (!view) return;
-		const mode = (view.session.state?.permission_context as Record<string, unknown>)
-			?.mode as string;
-		setSelectedPermissionMode(mode ?? 'default');
+                setSelectedPermissionMode(view.session.config.permission_mode ?? 'default');
 	}, [sessionId, view]);
 
 	/**

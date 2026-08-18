@@ -16,7 +16,12 @@ import { useMatch, useNavigate, useParams } from 'react-router-dom';
 
 import { ChatViewport } from './ChatViewport';
 import { chatApi } from '@/api';
-import type { PermissionMode, SessionRecord, SessionView } from '@/api';
+import type {
+        PermissionMode,
+        SessionRecord,
+        SessionSummaryView,
+        SessionView,
+} from '@/api';
 import { buildTemporarySessionTitle } from '@/components/chat/inputUtils';
 import {
 	SessionDraftComposer,
@@ -68,6 +73,7 @@ import {
 } from '@/components/ui/sidebar';
 import { AudioProvider } from '@/context/AudioContext';
 import { useAgents } from '@/hooks/useAgents';
+import { useSessionView } from '@/hooks/useSessionView';
 import { useSessions } from '@/hooks/useSessions';
 import { useTranslation } from '@/i18n/useI18n.ts';
 
@@ -112,6 +118,7 @@ const ChatPageInner = () => {
 		importPackage,
 		composeUpdate,
 	} = useAgents();
+        const isDraftRoute = draftMatch !== null && !urlFocusedSessionId;
 	const {
 		sessions,
 		refetch: refetchSessions,
@@ -119,6 +126,13 @@ const ChatPageInner = () => {
 		update: updateSession,
 		remove: removeSession,
 	} = useSessions(urlAgentId ?? null);
+        const {
+                sessionView: currentView,
+                refetch: refetchCurrentView,
+        } = useSessionView(
+                isDraftRoute ? null : (urlAgentId ?? null),
+                isDraftRoute ? null : (urlSessionId ?? null),
+        );
 
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [editOpen, setEditOpen] = useState(false);
@@ -133,21 +147,25 @@ const ChatPageInner = () => {
 	const [draftSubmitting, setDraftSubmitting] = useState(false);
 	const [pendingInitialUserMsgs, setPendingInitialUserMsgs] = useState<Record<string, Msg>>({});
 
-	const isDraftRoute = draftMatch !== null && !urlFocusedSessionId;
 	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
-	const currentView = isDraftRoute
-		? null
-		: (sessions.find((v) => v.session.id === urlSessionId) ?? null);
+        const currentSummaryView = isDraftRoute
+                ? null
+                : (sessions.find((v) => v.session.id === urlSessionId) ?? null);
 	const hasScheduleSessions = sessions.some((v) => v.session.source === 'schedule');
 
-	const getPermissionMode = useCallback((view: SessionView | null): PermissionMode => {
-		const mode = (view?.session.state?.permission_context as Record<string, unknown> | undefined)
-			?.mode;
-		return typeof mode === 'string' ? (mode as PermissionMode) : 'default';
-	}, []);
+        const getPermissionMode = useCallback(
+                (
+                        view: Pick<SessionView, 'session'> | Pick<SessionSummaryView, 'session'> | null,
+                ): PermissionMode => {
+                        return view?.session.config.permission_mode ?? 'default';
+                },
+                [],
+        );
 
 	const buildDraftSeed = useCallback(
-		(view: SessionView | null): SessionDraftState => ({
+                (
+                        view: Pick<SessionView, 'session'> | Pick<SessionSummaryView, 'session'> | null,
+                ): SessionDraftState => ({
 			text: '',
 			files: [],
 			chatModelConfig: view?.session.config.chat_model_config ?? null,
@@ -160,7 +178,8 @@ const ChatPageInner = () => {
 	const activeDraft =
 		urlAgentId === undefined
 			? null
-			: (draftsByAgentId[urlAgentId] ?? buildDraftSeed(currentView ?? sessions[0] ?? null));
+                        : (draftsByAgentId[urlAgentId] ??
+                                  buildDraftSeed(currentView ?? currentSummaryView ?? sessions[0] ?? null));
 
 	// "Inner focus" — when the URL carries a third `:memberId` segment
 	// the user is drilling into a team member's chat. The main sidebar
@@ -225,10 +244,10 @@ const ChatPageInner = () => {
 			if (prev[urlAgentId]) return prev;
 			return {
 				...prev,
-				[urlAgentId]: buildDraftSeed(sessions[0] ?? null),
+                                        [urlAgentId]: buildDraftSeed(currentView ?? sessions[0] ?? null),
 			};
 		});
-	}, [buildDraftSeed, isDraftRoute, urlAgentId, sessions]);
+        }, [buildDraftSeed, currentView, isDraftRoute, urlAgentId, sessions]);
 
 	/**
 	 * Create a new session under the currently selected agent and
@@ -246,7 +265,7 @@ const ChatPageInner = () => {
 			if (prev[urlAgentId]) return prev;
 			return {
 				...prev,
-				[urlAgentId]: buildDraftSeed(currentView ?? sessions[0] ?? null),
+                                [urlAgentId]: buildDraftSeed(currentView ?? currentSummaryView ?? sessions[0] ?? null),
 			};
 		});
 		navigate(`/chat/${urlAgentId}/new`);
@@ -257,13 +276,15 @@ const ChatPageInner = () => {
 	) => {
 		if (!urlAgentId) return;
 		setDraftsByAgentId((prev) => {
-			const base = prev[urlAgentId] ?? buildDraftSeed(currentView ?? sessions[0] ?? null);
+                        const base =
+                                prev[urlAgentId] ??
+                                buildDraftSeed(currentView ?? currentSummaryView ?? sessions[0] ?? null);
 			const nextDraft = typeof updater === 'function' ? updater(base) : updater;
 			return {
 				...prev,
 				[urlAgentId]: nextDraft,
 			};
-		});
+                });
 	};
 
 	const handleDraftSubmit = async (content: ContentBlock[]) => {
@@ -551,7 +572,10 @@ const ChatPageInner = () => {
 								? () => navigate(`/chat/${urlAgentId}/${urlSessionId}`)
 								: undefined
 						}
-						onTeamUpdated={refetchSessions}
+                                                onTeamUpdated={async () => {
+                                                        await refetchSessions();
+                                                        await refetchCurrentView();
+                                                }}
 						onAgentUpdated={refetchAgents}
 					/>
 				)}

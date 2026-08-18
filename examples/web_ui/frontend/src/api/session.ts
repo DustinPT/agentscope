@@ -9,7 +9,8 @@ import type {
 	SessionListResponse,
         SessionExportOptions,
         SessionExportResponse,
-	SessionRecord,
+        SessionView,
+        SessionWithState,
 	UpdateSessionRequest,
 	Msg,
 } from './types';
@@ -24,10 +25,13 @@ export interface MessagesResponse {
 export const sessionApi = {
 	list: (agentId: string) => client.get<SessionListResponse>('/sessions/', { agent_id: agentId }),
 
+        getView: (sessionId: string, agentId: string) =>
+                client.get<SessionView>(`/sessions/${sessionId}/view`, { agent_id: agentId }),
+
 	create: (body: CreateSessionRequest) => client.post<CreateSessionResponse>('/sessions/', body),
 
 	update: (sessionId: string, agentId: string, body: UpdateSessionRequest) =>
-		client.patch<SessionRecord>(`/sessions/${sessionId}`, body, { agent_id: agentId }),
+                client.patch<SessionWithState>(`/sessions/${sessionId}`, body, { agent_id: agentId }),
 
 	delete: (sessionId: string, agentId: string) =>
 		client.delete(`/sessions/${sessionId}`, { agent_id: agentId }),

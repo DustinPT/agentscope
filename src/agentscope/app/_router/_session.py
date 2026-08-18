@@ -22,6 +22,7 @@ from ._schema import (
     CreateSessionResponse,
     ListMessagesResponse,
     ListSessionsResponse,
+    SessionSummaryView,
     RollbackSessionRequest,
     RollbackSessionResponse,
     SessionExportResponse,
@@ -37,11 +38,11 @@ from ..storage import (
     AgentRecord,
     ChatModelConfig,
     SessionConfig,
-    SessionRecord,
+    SessionWithState,
     StorageBase,
     TeamRecord,
 )
-from ...permission import PermissionContext
+from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
 
 
@@ -101,12 +102,15 @@ async def _build_child_sessions(
     children = await storage.list_child_sessions(user_id, parent_session_id)
     views: list[SubAgentSessionView] = []
     for child in children:
+        full_child = await storage.get_session(user_id, child.agent_id, child.id)
+        if full_child is None:
+            continue
         agent = await storage.get_agent(user_id, child.agent_id)
         if agent is None:
             continue
         views.append(
             SubAgentSessionView(
-                session=child,
+                session=full_child,
                 agent=agent,
                 is_running=await message_bus.session_is_running(child.id),
                 children=await _build_child_sessions(
@@ -118,6 +122,35 @@ async def _build_child_sessions(
             ),
         )
     return views
+
+
+async def _build_session_view(
+    storage: StorageBase,
+    message_bus: MessageBus,
+    user_id: str,
+    session: SessionWithState,
+) -> SessionView:
+    """Build one full session view for a root session."""
+    team_detail = None
+    if session.team_id:
+        team_record = await storage.get_team(user_id, session.team_id)
+        if team_record is not None:
+            team_detail = await _build_team_detail(
+                storage,
+                user_id,
+                team_record,
+            )
+    return SessionView(
+        session=session,
+        is_running=await message_bus.session_is_running(session.id),
+        team=team_detail,
+        children=await _build_child_sessions(
+            storage,
+            message_bus,
+            user_id,
+            session.id,
+        ),
+    )
 
 
 session_router = APIRouter(
@@ -166,14 +199,7 @@ async def list_sessions(
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
 ) -> ListSessionsResponse:
-    """Return all sessions for an agent as enriched
-    :class:`SessionView` entries.
-
-    Each entry bundles three things the chat UI needs to render
-    without follow-up requests: the session record (incl.
-    ``state``), whether a chat run is currently active, and — when
-    the session participates in a team — the resolved team detail
-    (leader agent + member agents with their session ids).
+    """Return lightweight session entries for one agent.
 
     Args:
         agent_id (`str`):
@@ -187,7 +213,7 @@ async def list_sessions(
 
     Returns:
         `ListSessionsResponse`:
-            Enriched session views and their count.
+            Lightweight session views and their count.
 
     Raises:
         `HTTPException`: 404 if the agent does not exist or does not
@@ -205,33 +231,44 @@ async def list_sessions(
         )
 
     sessions = await storage.list_sessions(user_id, agent_id)
-    views: list[SessionView] = []
+    views: list[SessionSummaryView] = []
     for session in sessions:
         if session.parent_session_id is not None:
             continue
-        team_detail = None
-        if session.team_id:
-            team_record = await storage.get_team(user_id, session.team_id)
-            if team_record is not None:
-                team_detail = await _build_team_detail(
-                    storage,
-                    user_id,
-                    team_record,
-                )
         views.append(
-            SessionView(
+            SessionSummaryView(
                 session=session,
                 is_running=await message_bus.session_is_running(session.id),
-                team=team_detail,
-                children=await _build_child_sessions(
-                    storage,
-                    message_bus,
-                    user_id,
-                    session.id,
-                ),
             ),
         )
     return ListSessionsResponse(sessions=views, total=len(views))
+
+
+@session_router.get(
+    "/{session_id}/view",
+    response_model=SessionView,
+    summary="Get full session view",
+)
+async def get_session_view(
+    session_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    message_bus: MessageBus = Depends(get_message_bus),
+) -> SessionView:
+    """Return the full session view for one root session."""
+    session = await storage.get_session(user_id, agent_id, session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+    return await _build_session_view(
+        storage=storage,
+        message_bus=message_bus,
+        user_id=user_id,
+        session=session,
+    )
 
 
 @session_router.post(
@@ -284,11 +321,10 @@ async def create_session(
         body.fallback_chat_model_config,
     )
 
-    state = None
-    if body.permission_mode is not None:
-        state = AgentState(
-            permission_context=PermissionContext(mode=body.permission_mode),
-        )
+    permission_mode = body.permission_mode or PermissionMode.DEFAULT
+    state = AgentState(
+        permission_context=PermissionContext(mode=permission_mode),
+    )
 
     session_record = await storage.upsert_session(
         user_id=user_id,
@@ -297,6 +333,7 @@ async def create_session(
             workspace_id=body.workspace_id or uuid.uuid4().hex,
             chat_model_config=resolved_chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
+            permission_mode=permission_mode,
             **({"name": body.name} if body.name is not None else {}),
         ),
         state=state,
@@ -402,7 +439,7 @@ async def cancel_session(
 
 @session_router.patch(
     "/{session_id}",
-    response_model=SessionRecord,
+    response_model=SessionWithState,
     summary="Update a session",
 )
 async def update_session(
@@ -411,7 +448,7 @@ async def update_session(
     agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-) -> SessionRecord:
+) -> SessionWithState:
     """Update the model configuration of an existing session.
 
     Args:
@@ -421,7 +458,7 @@ async def update_session(
         storage (`StorageBase`): Injected storage backend.
 
     Returns:
-        `SessionRecord`: The full session record after the update.
+        `SessionWithState`: The full hydrated session after the update.
 
     Raises:
         `HTTPException`: 404 if the session, agent, or credential does not
@@ -461,6 +498,8 @@ async def update_session(
         exclude_unset=True,
         exclude={"permission_mode"},
     )
+    if body.permission_mode is not None:
+        config_updates["permission_mode"] = body.permission_mode
 
     return await storage.upsert_session(
         user_id=user_id,

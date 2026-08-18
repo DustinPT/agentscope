@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { sessionApi } from '../api';
-import type { SessionView, CreateSessionRequest, UpdateSessionRequest } from '../api';
+import type {
+        SessionSummaryView,
+        CreateSessionRequest,
+        UpdateSessionRequest,
+} from '../api';
 
 interface SessionsSnapshot {
-        sessions: SessionView[];
+        sessions: SessionSummaryView[];
         loading: boolean;
         error: Error | null;
 }
 
 interface SessionStore {
-        sessions: SessionView[] | null;
+        sessions: SessionSummaryView[] | null;
         error: Error | null;
-        inflight: Promise<SessionView[]> | null;
+        inflight: Promise<SessionSummaryView[]> | null;
         listeners: Set<(snapshot: SessionsSnapshot) => void>;
 }
 
@@ -59,7 +63,7 @@ function emitSnapshot(agentId: string) {
 async function loadSessions(agentId: string, force = false) {
         const store = getStore(agentId);
         if (!force && store.sessions) {
-            return store.sessions;
+                return store.sessions;
         }
         if (!force && store.inflight) {
                 return store.inflight;
@@ -86,12 +90,11 @@ async function loadSessions(agentId: string, force = false) {
 }
 
 /**
- * Manages session views for a given agent. Concurrent consumers that
+ * Manages lightweight session views for a given agent. Concurrent consumers that
  * point at the same agent share the same in-flight fetch and cache.
  *
- * Each entry is a `SessionView` (record + is_running + optional team
- * detail) — the same shape the backend returns. The hook clears and
- * re-fetches whenever agentId changes.
+ * Each entry is a `SessionSummaryView` (record + is_running). The hook
+ * clears and re-fetches whenever agentId changes.
  *
  * @param agentId - The agent whose sessions to load. Pass null to skip fetching.
  * @returns Object with the loaded `sessions` array plus `loading` /

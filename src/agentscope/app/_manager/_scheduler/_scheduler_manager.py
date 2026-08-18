@@ -165,6 +165,7 @@ class SchedulerManager:
                         session_config = SessionConfig(
                             workspace_id="",
                             chat_model_config=record.data.chat_model_config,
+                            permission_mode=record.data.permission_mode,
                         )
                         session = await storage.upsert_session(
                             user_id=record.user_id,
@@ -200,6 +201,7 @@ class SchedulerManager:
                         config=SessionConfig(
                             workspace_id="",
                             chat_model_config=record.data.chat_model_config,
+                            permission_mode=record.data.permission_mode,
                         ),
                         state=state,
                         source=SessionSource.SCHEDULE,

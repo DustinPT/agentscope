@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""The session data class for storage."""
+"""The session data classes for storage."""
 from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
 
 from ._base import _RecordBase
+from ....permission import PermissionMode
 from ....state import AgentState
 
 
@@ -52,9 +53,12 @@ class SessionConfig(BaseModel):
     """The fallback chat model config. Used as a backup when the primary
     model fails. None means no fallback configured."""
 
+    permission_mode: PermissionMode = PermissionMode.DEFAULT
+    """Persisted permission mode for this session."""
+
 
 class SessionRecord(_RecordBase):
-    """The session record."""
+    """The lightweight persisted session record."""
 
     user_id: str
     """The user id."""
@@ -77,10 +81,14 @@ class SessionRecord(_RecordBase):
     """
 
     config: SessionConfig
-    """Session configuration (workspace, name, model)."""
+    """Session configuration (workspace, name, model, permission)."""
 
     parent_session_id: str | None = None
     """The parent session that spawned this child session, if any."""
 
+
+class SessionWithState(SessionRecord):
+    """A hydrated session record with runtime state attached."""
+
     state: AgentState = Field(default_factory=AgentState)
-    """Mutable runtime state, updated after each chat turn."""
+    """Mutable runtime state, loaded on demand for full session reads."""
