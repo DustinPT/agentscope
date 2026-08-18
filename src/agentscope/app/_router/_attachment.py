@@ -57,7 +57,7 @@ async def download_attachment(
     attachment_store: AttachmentStore = Depends(get_attachment_store),
 ) -> Response:
     """Proxy one attachment from the session workspace to the client."""
-    session = await storage.get_session(user_id, "", session_id)
+    session = await storage.get_session_meta(user_id, session_id)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

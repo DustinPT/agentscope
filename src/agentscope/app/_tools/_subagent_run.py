@@ -395,11 +395,12 @@ Important:
                 ).model_dump(mode="json"),
             )
         else:
-            child_session = await self._storage.get_session(
+            child_session = await self._storage.get_session_meta(
                 self._user_id,
-                agent_id,
                 session_id,
             )
+            if child_session is not None and child_session.agent_id != agent_id:
+                child_session = None
             if child_session is None:
                 return ToolChunk(
                     content=[

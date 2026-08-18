@@ -180,9 +180,8 @@ class SubAgentReaper:
             )
             return
 
-        parent_session = await self._storage.get_session(
+        parent_session = await self._storage.get_session_meta(
             user_id,
-            "",
             task.parent_session_id,
         )
         child_agent = await self._storage.get_agent(user_id, task.child_agent_id)

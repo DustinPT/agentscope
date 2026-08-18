@@ -146,11 +146,12 @@ class SchedulerManager:
                         record.data.name,
                         stateful_session_id,
                     )
-                    session = await storage.get_session(
+                    session = await storage.get_session_meta(
                         record.user_id,
-                        record.agent_id,
                         stateful_session_id,
                     )
+                    if session is not None and session.agent_id != record.agent_id:
+                        session = None
                     if session is None:
                         logger.info(
                             "[Schedule:%s(%s)] First fire, "

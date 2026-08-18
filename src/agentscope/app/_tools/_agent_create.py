@@ -219,11 +219,12 @@ optional):
                 error chunk on failure.
         """
         try:
-            session = await self._storage.get_session(
+            session = await self._storage.get_session_meta(
                 self._user_id,
-                self._agent_id,
                 self._session_id,
             )
+            if session is not None and session.agent_id != self._agent_id:
+                session = None
             if session is None or session.team_id is None:
                 return ToolChunk(
                     content=[
@@ -267,9 +268,8 @@ optional):
                 )
 
             # Look up leader session for chat-model inheritance + name.
-            leader_session = await self._storage.get_session(
+            leader_session = await self._storage.get_session_meta(
                 self._user_id,
-                "",  # agent_id unused at storage level
                 team.session_id,
             )
             if leader_session is None:

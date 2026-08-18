@@ -56,11 +56,12 @@ This is irreversible.
                 precondition fails.
         """
         try:
-            session = await self._storage.get_session(
+            session = await self._storage.get_session_meta(
                 self._user_id,
-                self._agent_id,
                 self._session_id,
             )
+            if session is not None and session.agent_id != self._agent_id:
+                session = None
             if session is None or session.team_id is None:
                 return ToolChunk(
                     content=[

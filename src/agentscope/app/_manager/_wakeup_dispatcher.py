@@ -210,14 +210,8 @@ class WakeupDispatcher:
             # schedule trigger) will still arrive here. Drop it
             # rather than letting ChatService.run crash on a missing
             # storage record.
-            if (
-                await self._storage.get_session(
-                    user_id,
-                    agent_id,
-                    session_id,
-                )
-                is None
-            ):
+            session = await self._storage.get_session_meta(user_id, session_id)
+            if session is None or session.agent_id != agent_id:
                 logger.warning(
                     "WakeupDispatcher: dropping wake-up for session %s "
                     "(agent %s, user %s) — session no longer exists in "

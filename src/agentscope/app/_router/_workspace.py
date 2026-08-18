@@ -135,8 +135,8 @@ async def _resolve_agent_workspace(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent {agent_id!r} not found.",
         )
-    session_record = await storage.get_session(user_id, agent_id, session_id)
-    if session_record is None:
+    session_record = await storage.get_session_meta(user_id, session_id)
+    if session_record is None or session_record.agent_id != agent_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id!r} not found.",

@@ -330,9 +330,8 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         if is_terminal_parent_invocation_status(task.status):
             return
 
-        parent_session = await self._storage.get_session(
+        parent_session = await self._storage.get_session_meta(
             self._user_id,
-            "",
             task.parent_session_id,
         )
         if parent_session is None:
@@ -343,11 +342,12 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             )
             return
 
-        child_session = await self._storage.get_session(
+        child_session = await self._storage.get_session_meta(
             self._user_id,
-            self._agent_id,
             self._session_id,
         )
+        if child_session is not None and child_session.agent_id != self._agent_id:
+            child_session = None
         child_agent = await self._storage.get_agent(self._user_id, self._agent_id)
         if child_session is None or child_agent is None:
             await self._persist_terminal_task(
@@ -401,11 +401,12 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 exceeded_max_iters = True
             yield item
 
-        child_session = await self._storage.get_session(
+        child_session = await self._storage.get_session_meta(
             self._user_id,
-            self._agent_id,
             self._session_id,
         )
+        if child_session is not None and child_session.agent_id != self._agent_id:
+            child_session = None
         if child_session is None or child_session.parent_session_id is None:
             return
 

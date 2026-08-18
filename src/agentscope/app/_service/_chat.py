@@ -847,11 +847,12 @@ class ChatService:
         if not current_name or first_user_msg is None or first_reply_msg is None:
             return
 
-        latest_session = await self._storage.get_session(
+        latest_session = await self._storage.get_session_meta(
             user_id,
-            agent_id,
             session_id,
         )
+        if latest_session is not None and latest_session.agent_id != agent_id:
+            latest_session = None
         if latest_session is None:
             return
         if latest_session.source != SessionSource.USER:
@@ -879,11 +880,12 @@ class ChatService:
         if not title or title == current_name:
             return
 
-        latest_session = await self._storage.get_session(
+        latest_session = await self._storage.get_session_meta(
             user_id,
-            agent_id,
             session_id,
         )
+        if latest_session is not None and latest_session.agent_id != agent_id:
+            latest_session = None
         if latest_session is None or latest_session.config.name != current_name:
             return
 
@@ -896,7 +898,6 @@ class ChatService:
                     "name": title,
                 },
             ),
-            state=latest_session.state,
             session_id=session_id,
         )
 

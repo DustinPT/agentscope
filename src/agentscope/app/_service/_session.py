@@ -327,7 +327,9 @@ class SessionService:
             user_id,
             session_id,
         )
-        session = await self._storage.get_session(user_id, agent_id, session_id)
+        session = await self._storage.get_session_meta(user_id, session_id)
+        if session is not None and session.agent_id != agent_id:
+            session = None
         descendant_sids = [session.id for session in descendant_sessions]
         all_sids = list(
             dict.fromkeys([session_id, *worker_sids, *descendant_sids]),
@@ -454,7 +456,9 @@ class SessionService:
         message_id: str,
     ) -> tuple:
         """Rollback the current session to the state before a user message."""
-        session = await self._storage.get_session(user_id, agent_id, session_id)
+        session = await self._storage.get_session_meta(user_id, session_id)
+        if session is not None and session.agent_id != agent_id:
+            session = None
         if session is None:
             raise HTTPException(
                 status_code=404,
@@ -521,11 +525,12 @@ class SessionService:
         )
         await self._bus.session_purge(session_id)
 
-        updated_session = await self._storage.get_session(
+        updated_session = await self._storage.get_session_meta(
             user_id,
-            agent_id,
             session_id,
         )
+        if updated_session is not None and updated_session.agent_id != agent_id:
+            updated_session = None
         if updated_session is None:
             raise HTTPException(
                 status_code=404,
@@ -603,11 +608,9 @@ class SessionService:
                 Worker session ids, empty when this session is not a
                 team leader.
         """
-        session = await self._storage.get_session(
-            user_id,
-            agent_id,
-            session_id,
-        )
+        session = await self._storage.get_session_meta(user_id, session_id)
+        if session is not None and agent_id and session.agent_id != agent_id:
+            session = None
         if session is None or not session.team_id:
             return []
         team = await self._storage.get_team(user_id, session.team_id)
@@ -629,11 +632,9 @@ class SessionService:
         session_id: str,
     ) -> list:
         """Return worker session records for the team led by ``session_id``."""
-        session = await self._storage.get_session(
-            user_id,
-            agent_id,
-            session_id,
-        )
+        session = await self._storage.get_session_meta(user_id, session_id)
+        if session is not None and agent_id and session.agent_id != agent_id:
+            session = None
         if session is None or not session.team_id:
             return []
         team = await self._storage.get_team(user_id, session.team_id)
@@ -654,7 +655,9 @@ class SessionService:
         session_id: str,
     ) -> list:
         """Return the full recursive interrupt closure for ``session_id``."""
-        root = await self._storage.get_session(user_id, agent_id, session_id)
+        root = await self._storage.get_session_meta(user_id, session_id)
+        if root is not None and root.agent_id != agent_id:
+            root = None
         if root is None:
             return []
 

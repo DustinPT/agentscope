@@ -69,7 +69,7 @@ async def _build_team_detail(
             member paired with its session id when available).
     """
     leader_agent: AgentRecord | None = None
-    leader_session = await storage.get_session(user_id, "", team.session_id)
+    leader_session = await storage.get_session_meta(user_id, team.session_id)
     if leader_session is not None:
         leader_agent = await storage.get_agent(
             user_id,
@@ -418,7 +418,9 @@ async def cancel_session(
         `HTTPException`: 404 if the session does not exist or does not belong
             to the authenticated user.
     """
-    existing = await storage.get_session(user_id, agent_id, session_id)
+    existing = await storage.get_session_meta(user_id, session_id)
+    if existing is not None and existing.agent_id != agent_id:
+        existing = None
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -464,7 +466,9 @@ async def update_session(
         `HTTPException`: 404 if the session, agent, or credential does not
             exist or does not belong to the authenticated user.
     """
-    existing = await storage.get_session(user_id, agent_id, session_id)
+    existing = await storage.get_session_meta(user_id, session_id)
+    if existing is not None and existing.agent_id != agent_id:
+        existing = None
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -478,13 +482,19 @@ async def update_session(
         body.fallback_chat_model_config,
     )
 
-    updated_state = existing.state
+    updated_state = None
     if body.permission_mode is not None:
-        updated_ctx = existing.state.permission_context.model_copy(
+        existing_state = await storage.get_session_state(user_id, session_id)
+        if existing_state is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Session '{session_id}' state is missing.",
+            )
+        updated_ctx = existing_state.permission_context.model_copy(
             update={"mode": body.permission_mode},
         )
 
-        updated_state = existing.state.model_copy(
+        updated_state = existing_state.model_copy(
             update={
                 "permission_context": updated_ctx,
             },
@@ -547,7 +557,9 @@ async def list_messages(
     Returns:
         Messages and running status.
     """
-    existing = await storage.get_session(user_id, agent_id, session_id)
+    existing = await storage.get_session_meta(user_id, session_id)
+    if existing is not None and existing.agent_id != agent_id:
+        existing = None
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -641,7 +653,9 @@ async def export_session(
     chat_service: ChatService = Depends(get_chat_service),
 ) -> SessionExportResponse:
     """Return the fully assembled export payload for a session."""
-    existing = await storage.get_session(user_id, agent_id, session_id)
+    existing = await storage.get_session_meta(user_id, session_id)
+    if existing is not None and existing.agent_id != agent_id:
+        existing = None
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
