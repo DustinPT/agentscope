@@ -150,7 +150,11 @@ export function useMessages(
 
                 let mutated = false;
                 const normalized = messages.map((message) => {
-                        if (message.role !== 'assistant' || message.finished_at) {
+                        if (
+                                message.role !== 'assistant' ||
+                                message.finished_at ||
+                                isAwaitingToolInteraction(message)
+                        ) {
                                 return message;
                         }
                         mutated = true;
@@ -163,9 +167,8 @@ export function useMessages(
                                 },
                         };
                 });
-
                 return mutated ? normalized : messages;
-        }, []);
+        }, [isAwaitingToolInteraction]);
 	const getHistoryReplayBoundary = useCallback((messages: Msg[]): string | null => {
 		for (let i = messages.length - 1; i >= 0; i -= 1) {
 			const entryId = messages[i]?.metadata?.[REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY];
