@@ -2,7 +2,7 @@ import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 import { credentialApi } from '@/api';
-import type { CredentialSchema } from '@/api';
+import type { CreateCredentialRequest, CredentialSchema } from '@/api';
 import { SchemaForm, type SchemaFormValue } from '@/components/form/SchemaForm';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,7 +21,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select';
-import { useCredentials } from '@/hooks/useCredentials';
 import { useTranslation } from '@/i18n/useI18n.ts';
 
 interface Props {
@@ -32,7 +31,6 @@ interface Props {
 }
 
 export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultType }: Props) {
-	const { create } = useCredentials();
 	const { t } = useTranslation();
 	const [schemas, setSchemas] = useState<CredentialSchema[]>([]);
 	const [loadingSchemas, setLoadingSchemas] = useState(false);
@@ -68,13 +66,14 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 		if (!selectedSchema) return;
 		setSubmitting(true);
 		try {
-			const data: Record<string, unknown> = { type: selectedType };
+                        const data: Record<string, unknown> = { type: selectedType };
 			for (const [key, prop] of Object.entries(selectedSchema.properties)) {
 				if (key === 'id' || key === 'type' || prop.const !== undefined) continue;
 				const val = values[key];
 				if (val !== undefined && val !== '') data[key] = val;
 			}
-			await create({ data });
+                        const payload: CreateCredentialRequest = { data };
+                        await credentialApi.create(payload);
 			onOpenChange(false);
 			onCreated?.();
 		} finally {

@@ -97,7 +97,7 @@ export function ChatViewport({
 	onPendingInitialUserMsgConsumed,
 	onTeamUpdated,
 }: ChatViewportProps) {
-	const { sessions, refetch: refetchSessions } = useSessions(agentId);
+        const { sessions, loading: sessionsLoading, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
 	const { t } = useTranslation();
 
@@ -130,6 +130,7 @@ export function ChatViewport({
         const [rollbackingMessageId, setRollbackingMessageId] = useState<string | null>(null);
         const [rollbackConfirmMessage, setRollbackConfirmMessage] = useState<Msg | null>(null);
 	const [scrollTargetMessageId, setScrollTargetMessageId] = useState<string | null>(null);
+        const [workspaceDrawerOpen, setWorkspaceDrawerOpen] = useState(false);
 	const [scrollViewportCommand, setScrollViewportCommand] = useState<{
 		type: 'top' | 'bottom';
 		nonce: number;
@@ -163,7 +164,7 @@ export function ChatViewport({
                 listWorkspaceFiles,
                 buildWorkspaceFileDownloadUrl,
                 buildWorkspaceFilePreviewUrl,
-        } = useWorkspace(agentId, sessionId);
+        } = useWorkspace(agentId, sessionId, { enabled: workspaceDrawerOpen });
 
 	const view = sessionViewOverride ?? sessions.find((v) => v.session.id === sessionId) ?? null;
 
@@ -187,8 +188,9 @@ export function ChatViewport({
 		if (!sessionId) return;
 		if (view) return;
 		if (sessionViewOverride) return;
+                if (sessionsLoading) return;
 		refetchSessions();
-	}, [sessionId, view, sessionViewOverride, refetchSessions]);
+        }, [sessionId, view, sessionViewOverride, sessionsLoading, refetchSessions]);
 
 	// Reset local UI state when the target session changes. Otherwise
 	// the model select (and disabled-state guards on `send`) would
@@ -558,6 +560,8 @@ export function ChatViewport({
                                                 <Download />
                                         </Button>
 					<WorkspaceDrawer
+                                                open={workspaceDrawerOpen}
+                                                onOpenChange={setWorkspaceDrawerOpen}
 						mcps={mcps}
 						loading={mcpsLoading}
                                                         reconnectingMcpName={reconnectingMcpName}

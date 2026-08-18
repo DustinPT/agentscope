@@ -3,10 +3,25 @@ import { useState, useEffect, useCallback } from 'react';
 import { workspaceApi } from '@/api';
 import type { MCPClientStatus, Skill, WorkspaceFileEntry } from '@/api';
 
+/**
+ * Manages workspace-backed resources for a chat session.
+ *
+ * MCP and skill metadata can be expensive to resolve because the backend may
+ * need to initialize the workspace first, so callers can defer those requests
+ * until the workspace UI is actually opened.
+ *
+ * @param agentId - The owning agent. Pass null to disable workspace access.
+ * @param sessionId - The target session. Pass null to disable workspace access.
+ * @param options - Controls whether MCP / skill metadata should be fetched.
+ */
 export function useWorkspace(
-	agentId: string | null,
-	sessionId: string | null,
+        agentId: string | null,
+        sessionId: string | null,
+        options?: {
+                enabled?: boolean;
+        },
 ) {
+        const enabled = options?.enabled ?? true;
 	const [mcps, setMcps] = useState<MCPClientStatus[]>([]);
 	const [skills, setSkills] = useState<Skill[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -15,6 +30,9 @@ export function useWorkspace(
 	const [error, setError] = useState<Error | null>(null);
 
 	const refetch = useCallback(async () => {
+                if (!enabled) {
+                        return;
+                }
 		if (!agentId || !sessionId) {
 			setMcps([]);
 			return;
@@ -28,9 +46,12 @@ export function useWorkspace(
 		} finally {
 			setLoading(false);
 		}
-	}, [agentId, sessionId]);
+        }, [agentId, enabled, sessionId]);
 
 	const refetchSkills = useCallback(async () => {
+                if (!enabled) {
+                        return;
+                }
 		if (!agentId || !sessionId) {
 			setSkills([]);
 			return;
@@ -43,7 +64,7 @@ export function useWorkspace(
 		} finally {
 			setSkillsLoading(false);
 		}
-	}, [agentId, sessionId]);
+        }, [agentId, enabled, sessionId]);
 
         const reconnectMcp = useCallback(
                 async (name: string) => {
@@ -93,11 +114,17 @@ export function useWorkspace(
         );
 
 	useEffect(() => {
+                if (!enabled) {
+                        return;
+                }
 		refetch();
-	}, [refetch]);
+        }, [enabled, refetch]);
 	useEffect(() => {
+                if (!enabled) {
+                        return;
+                }
 		refetchSkills();
-	}, [refetchSkills]);
+        }, [enabled, refetchSkills]);
 
 	return {
 		mcps,

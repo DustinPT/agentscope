@@ -27,6 +27,8 @@ import { useTranslation } from '@/i18n/useI18n.ts';
 
 interface WorkspaceDrawerProps {
 	children: ReactNode;
+        open?: boolean;
+        onOpenChange?: (open: boolean) => void;
 	mcps: MCPClientStatus[];
 	loading?: boolean;
         reconnectingMcpName?: string | null;
@@ -40,6 +42,8 @@ interface WorkspaceDrawerProps {
 
 export function WorkspaceDrawer({
 	children,
+        open,
+        onOpenChange,
 	mcps,
 	loading = false,
         reconnectingMcpName = null,
@@ -64,7 +68,7 @@ export function WorkspaceDrawer({
 		: skills;
 
 	return (
-		<Drawer direction="right">
+                <Drawer direction="right" open={open} onOpenChange={onOpenChange}>
 			<DrawerTrigger asChild>{children}</DrawerTrigger>
 			<DrawerContent>
 				<DrawerHeader>
