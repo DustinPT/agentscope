@@ -8,6 +8,7 @@ import type {
 } from '../api';
 
 interface SessionsSnapshot {
+        agentId: string | null;
         sessions: SessionSummaryView[];
         loading: boolean;
         error: Error | null;
@@ -40,6 +41,7 @@ function getStore(agentId: string): SessionStore {
 function getSnapshot(agentId: string | null): SessionsSnapshot {
         if (!agentId) {
                 return {
+                        agentId: null,
                         sessions: [],
                         loading: false,
                         error: null,
@@ -47,6 +49,7 @@ function getSnapshot(agentId: string | null): SessionsSnapshot {
         }
         const store = getStore(agentId);
         return {
+                agentId,
                 sessions: store.sessions ?? [],
                 loading: store.inflight !== null,
                 error: store.error,
@@ -111,7 +114,10 @@ export function useSessions(agentId: string | null) {
 		try {
                         await loadSessions(agentId, true);
 		} catch (e) {
-                        setSnapshot((prev) => ({ ...prev, error: e as Error }));
+                        setSnapshot({
+                                ...getSnapshot(agentId),
+                                error: e as Error,
+                        });
 		}
 	}, [agentId]);
 
@@ -162,5 +168,7 @@ export function useSessions(agentId: string | null) {
 		[agentId, refetch],
 	);
 
-        return { ...snapshot, refetch, create, update, remove };
+        const visibleSnapshot = snapshot.agentId === agentId ? snapshot : getSnapshot(agentId);
+
+        return { ...visibleSnapshot, refetch, create, update, remove };
 }
