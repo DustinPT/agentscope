@@ -423,13 +423,13 @@ class DockerWorkspace(SkillIndexMixin, WorkspaceBase):
         assert self._gateway is not None
         for spec in specs:
             client = self._gateway.make_client(spec, namespace=agent_id)
-            try:
-                await client.connect()
-            except Exception as e:
+            await client.connect()
+            if client.connection_status != "connected":
                 logger.warning(
-                    "DockerWorkspace: failed to restore agent MCP %r: %s",
+                    "DockerWorkspace: restored agent MCP %r in %s state: %s",
                     spec.get("name", "?"),
-                    e,
+                    client.connection_status,
+                    client.connection_error,
                 )
         if not specs:
             await self._save_agent_mcp_file(agent_id)
@@ -519,15 +519,23 @@ class DockerWorkspace(SkillIndexMixin, WorkspaceBase):
             spec = mcp_client.model_dump(mode="json")
             assert self._gateway is not None
             gw_client = self._gateway.make_client(spec, namespace=agent_id)
-            try:
-                await gw_client.connect()
-            except Exception:
-                raise
+            await gw_client.connect()
+            if gw_client.connection_status != "connected":
+                logger.warning(
+                    "DockerWorkspace: added MCP %r in %s state: %s",
+                    gw_client.name,
+                    gw_client.connection_status,
+                    gw_client.connection_error,
+                )
             await self._save_agent_mcp_file(agent_id)
 
     async def remove_mcp(self, name: str) -> None:
         """Remove an MCP from the direct-use default agent namespace."""
         await self._remove_agent_mcp(self._default_agent_id(), name)
+
+    async def reconnect_mcp(self, name: str) -> MCPClient:
+        """Reconnect an MCP in the direct-use default agent namespace."""
+        return await self._reconnect_agent_mcp(self._default_agent_id(), name)
 
     async def _remove_agent_mcp(
         self,
@@ -558,6 +566,22 @@ class DockerWorkspace(SkillIndexMixin, WorkspaceBase):
             except Exception as e:
                 logger.warning("MCP %r close failed: %s", name, e)
             await self._save_agent_mcp_file(agent_id)
+
+    async def _reconnect_agent_mcp(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> MCPClient:
+        """Reconnect one gateway-backed MCP by name."""
+        async with self._mcp_lock:
+            await self._ensure_agent_namespace_loaded(agent_id)
+            current = await self._list_agent_mcps(agent_id)
+            gw_client = next((client for client in current if client.name == name), None)
+            if gw_client is None:
+                raise ValueError(f"MCP {name!r} not found in workspace.")
+            await gw_client.reconnect()
+            await self._save_agent_mcp_file(agent_id)
+            return gw_client
 
     # ── dynamic skill management ────────────────────────────────
 

@@ -88,6 +88,9 @@ class ToolInfo(BaseModel):
 class MCPClientStatus(MCPClient):
     """MCPClient enriched with live tool list and health status."""
 
+    connection_status: str = "disconnected"
+    connection_error: str | None = None
+    connection_error_detail: str | None = None
     is_healthy: bool = False
     tools: list[ToolInfo] = Field(default_factory=list)
 
@@ -476,31 +479,67 @@ async def list_mcps(
     )
     clients = await workspace.list_mcps()
 
-    results = []
-    for client in clients:
-        base = client.model_dump()
-        try:
-            mcp_tools = await client.list_tools()
-            tools = [
-                ToolInfo(name=t.name, description=t.description)
-                for t in mcp_tools
-            ]
-            results.append(
-                MCPClientStatus(
-                    **base,
-                    is_healthy=True,
-                    tools=tools,
-                ),
-            )
-        except Exception:
-            results.append(
-                MCPClientStatus(
-                    **base,
-                    is_healthy=False,
-                ),
-            )
+    results = [await _build_mcp_status(client) for client in clients]
 
     return results
+
+
+async def _build_mcp_status(client: MCPClient) -> MCPClientStatus:
+    """Build one MCP status payload from runtime state."""
+    base = client.model_dump()
+    status = client.connection_status
+    error = client.connection_error
+    error_detail = client.connection_error_detail
+    tools: list[ToolInfo] = []
+    is_healthy = False
+
+    if status == "connected":
+        try:
+            mcp_tools = await client.list_tools()
+            tools = [ToolInfo(name=t.name, description=t.description) for t in mcp_tools]
+            is_healthy = True
+        except Exception as exc:
+            status = client.connection_status
+            error = client.connection_error or str(exc)
+            error_detail = client.connection_error_detail or error
+
+    return MCPClientStatus(
+        **base,
+        connection_status=status,
+        connection_error=error,
+        connection_error_detail=error_detail,
+        is_healthy=is_healthy,
+        tools=tools,
+    )
+
+
+@workspace_router.post("/mcp/{name}/reconnect")
+async def reconnect_mcp(
+    name: str,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    asset_store: AgentAssetStore = Depends(get_agent_asset_store),
+) -> MCPClientStatus:
+    """Reconnect one MCP in the current workspace and return its status."""
+    _, workspace = await _resolve_agent_workspace(
+        user_id,
+        agent_id,
+        session_id,
+        storage,
+        workspace_manager,
+        asset_store,
+    )
+    try:
+        client = await workspace.reconnect_mcp(name)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return await _build_mcp_status(client)
 
 
 # ---------------------------------------------------------------------------

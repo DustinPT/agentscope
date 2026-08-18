@@ -109,6 +109,10 @@ class AgentWorkspaceView(WorkspaceBase):
         """Remove one MCP scoped to this agent."""
         await self._runtime._remove_agent_mcp(self.agent_id, name)
 
+    async def reconnect_mcp(self, name: str) -> MCPClient:
+        """Reconnect one MCP scoped to this agent."""
+        return await self._runtime._reconnect_agent_mcp(self.agent_id, name)
+
     async def add_skill(self, skill_path: str) -> None:
         """Add one skill scoped to this agent."""
         await self._runtime._add_agent_skill(self.agent_id, skill_path)

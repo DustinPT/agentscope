@@ -156,6 +156,8 @@ export function ChatViewport({
 	const {
 		mcps,
 		loading: mcpsLoading,
+                reconnectingMcpName,
+                reconnectMcp,
 		skills,
 		skillsLoading,
                 listWorkspaceFiles,
@@ -558,6 +560,8 @@ export function ChatViewport({
 					<WorkspaceDrawer
 						mcps={mcps}
 						loading={mcpsLoading}
+                                                        reconnectingMcpName={reconnectingMcpName}
+                                                        reconnectMcp={reconnectMcp}
 						skills={skills}
 						skillsLoading={skillsLoading}
                                                 listWorkspaceFiles={listWorkspaceFiles}

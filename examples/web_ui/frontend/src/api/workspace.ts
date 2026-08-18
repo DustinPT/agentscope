@@ -8,6 +8,11 @@ export const workspaceApi = {
 				agent_id: agentId,
 				session_id: sessionId,
 			}),
+                reconnect: (agentId: string, sessionId: string, name: string) =>
+                        client.post<MCPClientStatus>(`/workspace/mcp/${encodeURIComponent(name)}/reconnect`, undefined, {
+                                agent_id: agentId,
+                                session_id: sessionId,
+                        }),
 	},
 
 	skill: {

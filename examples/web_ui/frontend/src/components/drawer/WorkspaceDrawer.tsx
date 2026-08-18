@@ -1,8 +1,16 @@
-import { Search } from 'lucide-react';
+import { Eye, Search } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
 import type { MCPClientStatus, Skill, WorkspaceFileEntry } from '@/api';
 import { ProjectDirectoryTab } from '@/components/drawer/ProjectDirectoryTab';
+import { Button } from '@/components/ui/button';
+import {
+        Dialog,
+        DialogContent,
+        DialogDescription,
+        DialogHeader,
+        DialogTitle,
+} from '@/components/ui/dialog';
 import {
 	Drawer,
 	DrawerContent,
@@ -21,6 +29,8 @@ interface WorkspaceDrawerProps {
 	children: ReactNode;
 	mcps: MCPClientStatus[];
 	loading?: boolean;
+        reconnectingMcpName?: string | null;
+        reconnectMcp?: (name: string) => Promise<unknown>;
 	skills: Skill[];
 	skillsLoading?: boolean;
         listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
@@ -32,6 +42,8 @@ export function WorkspaceDrawer({
 	children,
 	mcps,
 	loading = false,
+        reconnectingMcpName = null,
+        reconnectMcp,
 	skills,
 	skillsLoading = false,
         listWorkspaceFiles,
@@ -41,6 +53,7 @@ export function WorkspaceDrawer({
 	const { t } = useTranslation();
 	const [search, setSearch] = useState('');
 	const [skillSearch, setSkillSearch] = useState('');
+        const [detailMcp, setDetailMcp] = useState<MCPClientStatus | null>(null);
 
 	const filtered = search
 		? mcps.filter((m) => m.name.toLowerCase().includes(search.toLowerCase()))
@@ -100,7 +113,7 @@ export function WorkspaceDrawer({
 													/>
 													{mcp.name}
 												</ItemTitle>
-												<ItemDescription>
+                                                                                                <ItemDescription className="flex flex-col gap-y-2">
 													<KbdGroup>
 														<Kbd>
 															{mcp.mcp_config.type === 'stdio_mcp'
@@ -113,6 +126,53 @@ export function WorkspaceDrawer({
                                                                                                                         })}
                                                                                                                 </Kbd>
 													</KbdGroup>
+                                                                                                        {mcp.connection_error ? (
+                                                                                                                <div className="flex items-start gap-2">
+                                                                                                                        <p className="text-destructive text-xs break-words line-clamp-2 flex-1">
+                                                                                                                                {mcp.connection_error}
+                                                                                                                        </p>
+                                                                                                                        <Button
+                                                                                                                                size="icon-xs"
+                                                                                                                                variant="ghost"
+                                                                                                                                className="shrink-0"
+                                                                                                                                onClick={() =>
+                                                                                                                                        setDetailMcp(mcp)
+                                                                                                                                }
+                                                                                                                                aria-label={t(
+                                                                                                                                        'workspace-drawer.mcp.viewErrorDetail',
+                                                                                                                                )}
+                                                                                                                                title={t(
+                                                                                                                                        'workspace-drawer.mcp.viewErrorDetail',
+                                                                                                                                )}
+                                                                                                                        >
+                                                                                                                                <Eye className="size-3.5" />
+                                                                                                                        </Button>
+                                                                                                                </div>
+                                                                                                        ) : null}
+                                                                                                        {!mcp.is_healthy && reconnectMcp ? (
+                                                                                                                <div>
+                                                                                                                        <Button
+                                                                                                                                size="xs"
+                                                                                                                                variant="outline"
+                                                                                                                                disabled={
+                                                                                                                                        reconnectingMcpName ===
+                                                                                                                                        mcp.name
+                                                                                                                                }
+                                                                                                                                onClick={() =>
+                                                                                                                                        reconnectMcp(mcp.name)
+                                                                                                                                }
+                                                                                                                        >
+                                                                                                                                {reconnectingMcpName ===
+                                                                                                                                mcp.name
+                                                                                                                                        ? t(
+                                                                                                                                                  'workspace-drawer.mcp.reconnecting',
+                                                                                                                                          )
+                                                                                                                                        : t(
+                                                                                                                                                  'workspace-drawer.mcp.reconnect',
+                                                                                                                                          )}
+                                                                                                                        </Button>
+                                                                                                                </div>
+                                                                                                        ) : null}
 												</ItemDescription>
 											</ItemContent>
 										</Item>
@@ -166,6 +226,23 @@ export function WorkspaceDrawer({
                                                 </TabsContent>
 					</Tabs>
 				</div>
+                                <Dialog open={detailMcp !== null} onOpenChange={(open) => !open && setDetailMcp(null)}>
+                                        <DialogContent className="!max-w-4xl">
+                                                <DialogHeader>
+                                                        <DialogTitle>
+                                                                {t('workspace-drawer.mcp.errorDialogTitle', {
+                                                                        name: detailMcp?.name ?? '',
+                                                                })}
+                                                        </DialogTitle>
+                                                        <DialogDescription>
+                                                                {t('workspace-drawer.mcp.errorDialogDescription')}
+                                                        </DialogDescription>
+                                                </DialogHeader>
+                                                <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-all">
+                                                        {detailMcp?.connection_error_detail || detailMcp?.connection_error}
+                                                </pre>
+                                        </DialogContent>
+                                </Dialog>
 			</DrawerContent>
 		</Drawer>
 	);

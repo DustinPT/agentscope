@@ -308,6 +308,9 @@ class GatewayMCPClient(MCPClient):
         http: httpx.AsyncClient | None,
         timeout: float | None,
         connected: bool = False,
+        connection_status: str | None = None,
+        connection_error: str | None = None,
+        connection_error_detail: str | None = None,
     ) -> None:
         """Wire this client to a gateway transport.
 
@@ -346,6 +349,14 @@ class GatewayMCPClient(MCPClient):
         self._gateway_namespace = namespace
         self._http = http
         self._http_timeout = timeout
+        if connection_status is not None:
+            self.set_runtime_state(
+                status=connection_status,
+                error=connection_error,
+                error_detail=connection_error_detail,
+            )
+        elif connected:
+            self.set_runtime_state(status="connected")
         if connected:
             self._is_connected = True
 
@@ -379,7 +390,34 @@ class GatewayMCPClient(MCPClient):
                     f"gateway failed to add MCP {self.name!r}: "
                     f"{_safe_detail(resp)}",
                 )
-        self._is_connected = True
+            payload = resp.json()
+        self.set_runtime_state(
+            status=payload.get("connection_status", "disconnected"),
+            error=payload.get("connection_error"),
+            error_detail=payload.get("connection_error_detail"),
+        )
+        self._is_connected = self.is_stateful and self.connection_status == "connected"
+
+    async def reconnect(self) -> None:
+        """Reconnect one registered MCP on the gateway."""
+        async with _http_session(self._http, self._http_timeout) as http:
+            resp = await http.post(
+                f"{self._gateway_url}/mcps/{self.name}/reconnect",
+                headers=_bearer_headers(self._gateway_token),
+                params={"namespace": self._gateway_namespace},
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"gateway failed to reconnect MCP {self.name!r}: "
+                    f"{_safe_detail(resp)}",
+                )
+            payload = resp.json()
+        self.set_runtime_state(
+            status=payload.get("connection_status", "disconnected"),
+            error=payload.get("connection_error"),
+            error_detail=payload.get("connection_error_detail"),
+        )
+        self._is_connected = self.is_stateful and self.connection_status == "connected"
 
     async def close(self, ignore_errors: bool = True) -> None:
         """Deregister this MCP from the gateway via
@@ -397,12 +435,6 @@ class GatewayMCPClient(MCPClient):
                 :meth:`MCPClient.close` so callers can use the same
                 shutdown idiom regardless of transport.
         """
-        if not self._is_connected:
-            if ignore_errors:
-                return
-            raise RuntimeError(
-                f"MCP {self.name!r} is not connected. Call connect() first.",
-            )
         try:
             async with _http_session(self._http, self._http_timeout) as http:
                 resp = await http.delete(
@@ -419,6 +451,8 @@ class GatewayMCPClient(MCPClient):
             if not ignore_errors:
                 raise
         self._is_connected = False
+        self._cached_tools = None
+        self.set_runtime_state(status="disconnected")
 
     # ── tool discovery ────────────────────────────────────────────
 
@@ -443,13 +477,18 @@ class GatewayMCPClient(MCPClient):
                 response.
         """
         async with _http_session(self._http, self._http_timeout) as http:
-            resp = await http.get(
-                f"{self._gateway_url}/mcps/{self.name}/tools",
-                headers=_bearer_headers(self._gateway_token),
-                params={"namespace": self._gateway_namespace},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            try:
+                resp = await http.get(
+                    f"{self._gateway_url}/mcps/{self.name}/tools",
+                    headers=_bearer_headers(self._gateway_token),
+                    params={"namespace": self._gateway_namespace},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as exc:
+                self._cached_tools = None
+                self.set_runtime_state(status="failed", error=str(exc))
+                raise
 
         raw_tools = [mcp.types.Tool.model_validate(d) for d in data]
         self._cached_tools = raw_tools
@@ -462,6 +501,7 @@ class GatewayMCPClient(MCPClient):
             raw_tools = [
                 t for t in raw_tools if t.name not in self.disable_tools
             ]
+        self.set_runtime_state(status="connected")
         return raw_tools
 
     async def get_tool(  # type: ignore[override]
@@ -634,11 +674,7 @@ class GatewayClient:
         )
         resp.raise_for_status()
         return [
-            self.make_client(
-                spec,
-                connected=True,
-                namespace=namespace,
-            )
+            self.make_client(spec, namespace=namespace)
             for spec in resp.json()
         ]
 
@@ -676,14 +712,36 @@ class GatewayClient:
                 populated. Stateful clients still require an explicit
                 ``await client.connect()`` unless ``connected=True``.
         """
-        client = GatewayMCPClient.model_validate(spec)
+        runtime_status = spec.get("connection_status")
+        runtime_error = spec.get("connection_error")
+        runtime_error_detail = spec.get("connection_error_detail")
+        payload = {
+            key: value
+            for key, value in spec.items()
+            if key
+            not in {
+                "connection_status",
+                "connection_error",
+                "connection_error_detail",
+            }
+        }
+        client = GatewayMCPClient.model_validate(payload)
         client.attach(
             gateway_url=self.base_url,
             token=self.token,
             namespace=namespace,
             http=self._client(),
             timeout=self.timeout,
-            connected=connected,
+            connected=(
+                connected
+                or (
+                    runtime_status == "connected"
+                    and client.is_stateful
+                )
+            ),
+            connection_status=runtime_status,
+            connection_error=runtime_error,
+            connection_error_detail=runtime_error_detail,
         )
         return client
 

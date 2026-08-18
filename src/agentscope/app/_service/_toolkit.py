@@ -260,5 +260,9 @@ optional):
     return Toolkit(
         tools=tools,
         skills_or_loaders=await workspace.list_skills(),
-        mcps=await workspace.list_mcps(),
+        mcps=[
+            client
+            for client in await workspace.list_mcps()
+            if client.connection_status == "connected"
+        ],
     )

@@ -173,7 +173,7 @@ class WorkspaceBase:
 
     @abstractmethod
     async def list_mcps(self) -> list[MCPClient]:
-        """Active MCP clients (each provides its own tools)."""
+        """Registered MCP clients visible in this workspace."""
 
     @abstractmethod
     async def list_skills(self) -> list[Skill]:
@@ -236,6 +236,10 @@ class WorkspaceBase:
         Args:
             name: Name of the MCP server to remove.
         """
+
+    @abstractmethod
+    async def reconnect_mcp(self, name: str) -> MCPClient:
+        """Reconnect one registered MCP server."""
 
     # ── for User: dynamic skill management ─────────────────────────
 

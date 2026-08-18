@@ -454,6 +454,9 @@ export interface ToolInfo {
 }
 
 export interface MCPClientStatus extends MCPClient {
+        connection_status: 'connected' | 'failed' | 'disconnected';
+        connection_error?: string | null;
+        connection_error_detail?: string | null;
 	is_healthy: boolean;
 	tools: ToolInfo[];
 }

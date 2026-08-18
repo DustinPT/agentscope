@@ -6,6 +6,7 @@ import os
 
 import frontmatter
 
+from ..._logging import logger
 from ...mcp import MCPClient
 from ..._utils._fs import _hash_directory
 from ...workspace import WorkspaceBase
@@ -122,6 +123,16 @@ async def sync_workspace_mcps(
     force_reconnect_names: set[str] | None = None,
 ) -> None:
     """Synchronize workspace MCPs to the merged workspace+agent config."""
+    async def _safe_add_mcp(mcp: MCPClient) -> None:
+        try:
+            await workspace.add_mcp(mcp)
+        except Exception as exc:
+            logger.warning(
+                "Failed to add MCP %r while syncing workspace: %s",
+                mcp.name,
+                exc,
+            )
+
     current_mcps = await workspace.list_mcps()
     expected_map: dict[str, MCPClient] = {}
     for mcp in default_mcps or []:
@@ -144,7 +155,7 @@ async def sync_workspace_mcps(
         if len(current_group) > 1:
             for _ in range(len(current_group)):
                 await workspace.remove_mcp(name)
-            await workspace.add_mcp(expected)
+            await _safe_add_mcp(expected)
             continue
 
         current = current_group[0]
@@ -153,12 +164,12 @@ async def sync_workspace_mcps(
             or current.model_dump(mode="json") != expected.model_dump(mode="json")
         ):
             await workspace.remove_mcp(name)
-            await workspace.add_mcp(expected)
+            await _safe_add_mcp(expected)
 
     for name, expected in expected_map.items():
         current = current_by_name.get(name)
         if current is None:
-            await workspace.add_mcp(expected)
+            await _safe_add_mcp(expected)
 
 
 async def sync_workspace_skills(

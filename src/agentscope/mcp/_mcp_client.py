@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
 import re
+import traceback
 from datetime import timedelta
 from contextlib import (
     AsyncExitStack,
     _AsyncGeneratorContextManager,
     asynccontextmanager,
 )
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Literal
 
 import httpx
 import mcp.types
@@ -121,6 +122,11 @@ class MCPClient(BaseModel):
     _stack: AsyncExitStack | None = PrivateAttr(default=None)
     _is_connected: bool = PrivateAttr(default=False)
     _cached_tools: list[mcp.types.Tool] | None = PrivateAttr(default=None)
+    _connection_status: Literal["connected", "failed", "disconnected"] = (
+        PrivateAttr(default="disconnected")
+    )
+    _connection_error: str | None = PrivateAttr(default=None)
+    _connection_error_detail: str | None = PrivateAttr(default=None)
 
     @property
     def is_connected(self) -> bool:
@@ -130,6 +136,21 @@ class MCPClient(BaseModel):
             True if connected, False otherwise.
         """
         return self._is_connected
+
+    @property
+    def connection_status(self) -> Literal["connected", "failed", "disconnected"]:
+        """Return the current runtime connection status."""
+        return self._connection_status
+
+    @property
+    def connection_error(self) -> str | None:
+        """Return the latest runtime connection error, if any."""
+        return self._connection_error
+
+    @property
+    def connection_error_detail(self) -> str | None:
+        """Return the latest runtime connection error detail, if any."""
+        return self._connection_error_detail
 
     def model_post_init(self, __context: Any) -> None:
         """Validate configuration and initialize client."""
@@ -179,6 +200,7 @@ class MCPClient(BaseModel):
 
         # Initialize the underlying client
         self._initialize_client()
+        self._mark_disconnected()
 
     def _initialize_client(self) -> None:
         """Pre-build the stdio client context manager.
@@ -202,6 +224,71 @@ class MCPClient(BaseModel):
                     encoding_error_handler=config.encoding_error_handler,
                 ),
             )
+
+    def _mark_connected(self) -> None:
+        """Mark the client runtime status as connected."""
+        self._connection_status = "connected"
+        self._connection_error = None
+        self._connection_error_detail = None
+
+    def _mark_failed(self, error: str | BaseException) -> None:
+        """Mark the client runtime status as failed."""
+        self._connection_status = "failed"
+        self._connection_error, self._connection_error_detail = (
+            self._format_runtime_error(error)
+        )
+
+    def _mark_disconnected(self) -> None:
+        """Mark the client runtime status as disconnected."""
+        self._connection_status = "disconnected"
+        self._connection_error = None
+        self._connection_error_detail = None
+
+    @staticmethod
+    def _format_runtime_error(
+        error: str | BaseException,
+    ) -> tuple[str | None, str | None]:
+        """Build a short summary and a full diagnostic detail."""
+        if isinstance(error, BaseException):
+            summary = str(error) or error.__class__.__name__
+            detail = "".join(
+                traceback.format_exception(
+                    type(error),
+                    error,
+                    error.__traceback__,
+                ),
+            ).strip()
+            return summary, (detail or summary)
+
+        summary = error or None
+        return summary, summary
+
+    def set_runtime_state(
+        self,
+        *,
+        status: Literal["connected", "failed", "disconnected"],
+        error: str | None = None,
+        error_detail: str | None = None,
+    ) -> None:
+        """Set the runtime connection state explicitly."""
+        self._connection_status = status
+        self._connection_error = error
+        self._connection_error_detail = error_detail
+
+    async def warmup(self) -> None:
+        """Probe the MCP and update runtime status.
+
+        Stateful MCPs connect and prime their tool cache. Stateless MCPs
+        probe via ``list_raw_tools``.
+        """
+        try:
+            if self.is_stateful:
+                await self.connect()
+            await self.list_raw_tools()
+            self._mark_connected()
+        except Exception as exc:
+            self._mark_failed(exc)
+            raise
 
     def _create_http_client(
         self,
@@ -280,8 +367,9 @@ class MCPClient(BaseModel):
                 "Call close() before reconnecting.",
             )
 
-        # Create HTTP client if needed
-        if self._client is None and self.mcp_config.type == "http_mcp":
+        if self.mcp_config.type == "stdio_mcp":
+            self._initialize_client()
+        else:
             self._client = self._create_http_client()
 
         self._stack = AsyncExitStack()
@@ -294,10 +382,15 @@ class MCPClient(BaseModel):
             await self._session.initialize()
 
             self._is_connected = True
+            self._mark_connected()
             logger.info("MCP connected: %s", self.name)
-        except Exception:
+        except Exception as exc:
             await self._stack.aclose()
             self._stack = None
+            self._session = None
+            self._is_connected = False
+            self._cached_tools = None
+            self._mark_failed(exc)
             raise
 
     async def close(self, ignore_errors: bool = True) -> None:
@@ -338,6 +431,8 @@ class MCPClient(BaseModel):
             self._stack = None
             self._session = None
             self._is_connected = False
+            self._cached_tools = None
+            self._mark_disconnected()
             logger.info("MCP closed: %s", self.name)
 
     def _get_client_gen(self) -> _AsyncGeneratorContextManager[Any]:
@@ -362,22 +457,26 @@ class MCPClient(BaseModel):
         Raises:
             RuntimeError: If not connected (for stateful connections).
         """
-        if not self.is_stateful:
-            # Stateless: create temporary session
-            async with self._get_client_gen() as cli:
-                read_stream, write_stream = cli[0], cli[1]
-                async with ClientSession(
-                    read_stream,
-                    write_stream,
-                ) as session:
-                    await session.initialize()
-                    res = await session.list_tools()
-                    self._cached_tools = res.tools
-        else:
-            # Stateful: use existing session
-            self._validate_connection()
-            res = await self._session.list_tools()
-            self._cached_tools = res.tools
+        try:
+            if not self.is_stateful:
+                # Stateless: create temporary session
+                async with self._get_client_gen() as cli:
+                    read_stream, write_stream = cli[0], cli[1]
+                    async with ClientSession(
+                        read_stream,
+                        write_stream,
+                    ) as session:
+                        await session.initialize()
+                        res = await session.list_tools()
+                        self._cached_tools = res.tools
+            else:
+                # Stateful: use existing session
+                self._validate_connection()
+                res = await self._session.list_tools()
+                self._cached_tools = res.tools
+        except Exception as exc:
+            self._mark_failed(exc)
+            raise
 
         available_tools: list = self._cached_tools
         if self.enable_tools is not None:
@@ -390,6 +489,7 @@ class MCPClient(BaseModel):
             available_tools = [
                 _ for _ in available_tools if _.name not in self.disable_tools
             ]
+        self._mark_connected()
         return available_tools
 
     async def list_tools(self) -> list[ToolBase]:

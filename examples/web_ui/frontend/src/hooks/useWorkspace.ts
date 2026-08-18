@@ -11,6 +11,7 @@ export function useWorkspace(
 	const [skills, setSkills] = useState<Skill[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [skillsLoading, setSkillsLoading] = useState(false);
+        const [reconnectingMcpName, setReconnectingMcpName] = useState<string | null>(null);
 	const [error, setError] = useState<Error | null>(null);
 
 	const refetch = useCallback(async () => {
@@ -43,6 +44,23 @@ export function useWorkspace(
 			setSkillsLoading(false);
 		}
 	}, [agentId, sessionId]);
+
+        const reconnectMcp = useCallback(
+                async (name: string) => {
+                        if (!agentId || !sessionId) {
+                                return null;
+                        }
+                        setReconnectingMcpName(name);
+                        try {
+                                const updated = await workspaceApi.mcp.reconnect(agentId, sessionId, name);
+                                await refetch();
+                                return updated;
+                        } finally {
+                                setReconnectingMcpName(null);
+                        }
+                },
+                [agentId, sessionId, refetch],
+        );
 
         const listWorkspaceFiles = useCallback(
                 async (path = ''): Promise<WorkspaceFileEntry[]> => {
@@ -84,8 +102,10 @@ export function useWorkspace(
 	return {
 		mcps,
 		loading,
+                reconnectingMcpName,
 		error,
 		refetch,
+                reconnectMcp,
 		skills,
 		skillsLoading,
                 refetchSkills,

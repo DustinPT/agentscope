@@ -172,7 +172,12 @@
                         "description": "当前工作区中可用的 MCP 服务。",
                         "searchPlaceholder": "搜索工作区中的 MCP",
                         "empty": "暂无 MCP",
-                        "toolCount": "{{count}} 个工具"
+                        "toolCount": "{{count}} 个工具",
+                        "reconnect": "重连",
+                        "reconnecting": "重连中...",
+                        "viewErrorDetail": "查看错误详情",
+                        "errorDialogTitle": "{{name}} 错误详情",
+                        "errorDialogDescription": "这里展示该 MCP 最近一次连接失败的完整错误信息，方便诊断问题。"
                 },
                 "skill": {
                         "description": "当前工作区中可用的技能。",

@@ -173,24 +173,24 @@ class LocalWorkspace(SkillIndexMixin, WorkspaceBase):
                     str(e),
                 )
 
-        failed: list[MCPClient] = []
         for mcp in mcps:
-            if mcp.is_stateful and not mcp.is_connected:
-                try:
-                    await mcp.connect()
-                except Exception as e:
-                    logger.warning(
-                        "Failed to connect stateful MCP '%s': %s, removing.",
-                        mcp.name,
-                        e,
-                    )
-                    failed.append(mcp)
-        for mcp in failed:
-            mcps.remove(mcp)
+            try:
+                await self._activate_mcp(mcp)
+            except Exception as e:
+                logger.warning(
+                    "Failed to activate MCP '%s': %s",
+                    mcp.name,
+                    e,
+                )
 
         self._agent_mcps[agent_id] = mcps
         await self._save_agent_mcp_file(agent_id)
         return mcps
+
+    @staticmethod
+    async def _activate_mcp(mcp: MCPClient) -> None:
+        """Probe one MCP and retain runtime failure state on error."""
+        await mcp.warmup()
 
     async def _save_agent_mcp_file(self, agent_id: str) -> None:
         """Persist one agent's MCP client list to its own ``.mcp`` file."""
@@ -475,15 +475,29 @@ class LocalWorkspace(SkillIndexMixin, WorkspaceBase):
         """
         async with self._mcp_lock:
             mcps = await self._load_agent_mcps(agent_id)
-            if mcp_client.is_stateful and not mcp_client.is_connected:
-                await mcp_client.connect()
+            if any(existing.name == mcp_client.name for existing in mcps):
+                raise ValueError(
+                    f"MCP client {mcp_client.name!r} already exists in workspace",
+                )
             mcps.append(mcp_client)
             self._agent_mcps[agent_id] = mcps
+            try:
+                await self._activate_mcp(mcp_client)
+            except Exception as e:
+                logger.warning(
+                    "Failed to activate MCP '%s' on add: %s",
+                    mcp_client.name,
+                    e,
+                )
             await self._save_agent_mcp_file(agent_id)
 
     async def remove_mcp(self, name: str) -> None:
         """Remove an MCP from the direct-use default agent namespace."""
         await self._remove_agent_mcp(self._default_agent_id(), name)
+
+    async def reconnect_mcp(self, name: str) -> MCPClient:
+        """Reconnect an MCP in the direct-use default agent namespace."""
+        return await self._reconnect_agent_mcp(self._default_agent_id(), name)
 
     async def _remove_agent_mcp(
         self,
@@ -506,6 +520,32 @@ class LocalWorkspace(SkillIndexMixin, WorkspaceBase):
                     await self._save_agent_mcp_file(agent_id)
                     return
         logger.warning("MCP client %r not found in workspace", name)
+
+    async def _reconnect_agent_mcp(
+        self,
+        agent_id: str,
+        name: str,
+    ) -> MCPClient:
+        """Reconnect one MCP client by name and retain failures."""
+        async with self._mcp_lock:
+            mcps = await self._load_agent_mcps(agent_id)
+            for mcp in mcps:
+                if mcp.name != name:
+                    continue
+                if mcp.is_stateful and mcp.is_connected:
+                    await mcp.close(ignore_errors=True)
+                try:
+                    await self._activate_mcp(mcp)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to reconnect MCP '%s': %s",
+                        mcp.name,
+                        e,
+                    )
+                self._agent_mcps[agent_id] = mcps
+                await self._save_agent_mcp_file(agent_id)
+                return mcp
+        raise ValueError(f"MCP client {name!r} not found in workspace")
 
     async def sync_mcp_asset(
         self,

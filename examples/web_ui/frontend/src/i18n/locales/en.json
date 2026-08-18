@@ -172,7 +172,12 @@
                         "description": "MCP servers currently available in the workspace.",
                         "searchPlaceholder": "Search MCP servers in the workspace",
                         "empty": "No MCP servers found",
-                        "toolCount": "{{count}} tools"
+                        "toolCount": "{{count}} tools",
+                        "reconnect": "Reconnect",
+                        "reconnecting": "Reconnecting...",
+                        "viewErrorDetail": "View error details",
+                        "errorDialogTitle": "{{name}} Error Details",
+                        "errorDialogDescription": "This dialog shows the full error information from the latest MCP connection failure for troubleshooting."
                 },
                 "skill": {
                         "description": "Skills currently available in the workspace.",

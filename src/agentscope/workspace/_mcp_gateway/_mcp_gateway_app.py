@@ -82,11 +82,20 @@ async def _build_client(spec: dict[str, Any]) -> MCPClient:
     ``get_tool`` work without re-spawning the upstream session.
     """
     client = MCPClient.model_validate(spec)
-    if client.is_stateful:
-        await client.connect()
-    # Prime the tool cache so /mcps/{name}/tools is cheap and stable.
-    await client.list_raw_tools()
+    try:
+        await client.warmup()
+    except Exception:
+        pass
     return client
+
+
+def _serialize_client(client: MCPClient) -> dict[str, Any]:
+    """Serialize one MCP client plus its runtime status."""
+    payload = client.model_dump(mode="json")
+    payload["connection_status"] = client.connection_status
+    payload["connection_error"] = client.connection_error
+    payload["connection_error_detail"] = client.connection_error_detail
+    return payload
 
 
 # ── FastAPI app ────────────────────────────────────────────────────
@@ -113,7 +122,7 @@ def _build_app(state: _State) -> FastAPI:
         # `GatewayMCPClient.model_validate(spec)` losslessly.
         namespace = _namespace(request)
         clients = _namespace_clients(namespace)
-        return [c.model_dump(mode="json") for c in clients.values()]
+        return [_serialize_client(c) for c in clients.values()]
 
     @app.post("/mcps", dependencies=[auth])
     async def _add_mcp(request: Request) -> dict[str, Any]:
@@ -126,17 +135,25 @@ def _build_app(state: _State) -> FastAPI:
             clients = _namespace_clients(namespace)
             if name in clients:
                 raise HTTPException(409, f"{name!r} already exists")
-            try:
-                client = await _build_client(body)
-            except HTTPException:
-                raise
-            except Exception as e:  # noqa: BLE001
-                raise HTTPException(
-                    500,
-                    f"connect failed: {e}",
-                ) from e
+            client = await _build_client(body)
             clients[name] = client
-        return {"ok": True}
+        return _serialize_client(client)
+
+    @app.post("/mcps/{name}/reconnect", dependencies=[auth])
+    async def _reconnect_mcp(name: str, request: Request) -> dict[str, Any]:
+        namespace = _namespace(request)
+        async with state.lock:
+            clients = _namespace_clients(namespace)
+            client = clients.get(name)
+            if client is None:
+                raise HTTPException(404, f"{name!r} not found")
+            if client.is_stateful and client.is_connected:
+                await client.close(ignore_errors=True)
+            try:
+                await client.warmup()
+            except Exception:
+                pass
+        return _serialize_client(client)
 
     @app.delete("/mcps/{name}", dependencies=[auth])
     async def _remove_mcp(name: str, request: Request) -> dict[str, Any]:
@@ -159,7 +176,10 @@ def _build_app(state: _State) -> FastAPI:
         # Send raw mcp.types.Tool over the wire so the host-side
         # GatewayMCPClient can re-wrap them via the standard MCPClient
         # path (preserves inputSchema, annotations.readOnlyHint, ...).
-        raw = await client.list_raw_tools()
+        try:
+            raw = await client.list_raw_tools()
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, client.connection_error or str(e)) from e
         return [t.model_dump(mode="json") for t in raw]
 
     @app.post("/mcps/{name}/tools/{tool}", dependencies=[auth])
@@ -206,7 +226,17 @@ async def _connect_initial(
                 f"Duplicated server name in config: {client.name!r}",
             )
         clients[client.name] = client
-        print(f"[gateway] connected {client.name!r}", flush=True)
+        print(
+            (
+                f"[gateway] connected {client.name!r}"
+                if client.connection_status == "connected"
+                else (
+                    f"[gateway] registered {client.name!r} in failed state: "
+                    f"{client.connection_error}"
+                )
+            ),
+            flush=True,
+        )
 
 
 async def _run(config_path: str, port: int) -> None:
