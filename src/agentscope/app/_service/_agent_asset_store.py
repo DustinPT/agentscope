@@ -297,19 +297,11 @@ class AgentAssetStore:
                         f"Agent '{agent_slug}' has an invalid 'description'."
                     ),
                 )
-            allowed_subagent_slugs = item.get("allowed_subagent_slugs", [])
-            if not isinstance(allowed_subagent_slugs, list) or any(
-                not isinstance(subagent_slug, str)
-                or not subagent_slug.strip()
-                for subagent_slug in allowed_subagent_slugs
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"Agent '{agent_slug}' must use a string array for "
-                        "'allowed_subagent_slugs'."
-                    ),
-                )
+            allowed_subagent_slugs = AgentAssetStore._normalize_package_string_list(
+                item.get("allowed_subagent_slugs", []),
+                field_name="allowed_subagent_slugs",
+                agent_slug=agent_slug,
+            )
             if agent_slug in allowed_subagent_slugs:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -318,6 +310,16 @@ class AgentAssetStore:
                         "sub-agent target."
                     ),
                 )
+            skill_names = AgentAssetStore._normalize_package_string_list(
+                item.get("skills", []),
+                field_name="skills",
+                agent_slug=agent_slug,
+            )
+            mcp_names = AgentAssetStore._normalize_package_string_list(
+                item.get("mcps", []),
+                field_name="mcps",
+                agent_slug=agent_slug,
+            )
             normalized_agents.append(
                 {
                     "slug": agent_slug,
@@ -325,6 +327,8 @@ class AgentAssetStore:
                     "name": name.strip(),
                     "description": description,
                     "allowed_subagent_slugs": list(allowed_subagent_slugs),
+                    "skills": skill_names,
+                    "mcps": mcp_names,
                 },
             )
             agent_slugs.append(agent_slug)
@@ -387,6 +391,106 @@ class AgentAssetStore:
             ]
 
         return slug_to_agent_id[main_agent_slug], normalized_agents
+
+    @staticmethod
+    def _normalize_package_string_list(
+        value: object,
+        *,
+        field_name: str,
+        agent_slug: str,
+    ) -> list[str]:
+        if not isinstance(value, list):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Agent '{agent_slug}' must use a string array for "
+                    f"'{field_name}'."
+                ),
+            )
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Agent '{agent_slug}' must use a string array for "
+                        f"'{field_name}'."
+                    ),
+                )
+            normalized.append(item.strip())
+        if len(normalized) != len(set(normalized)):
+            duplicate = next(
+                entry
+                for entry in normalized
+                if normalized.count(entry) > 1
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Agent '{agent_slug}' contains duplicate '{duplicate}' "
+                    f"in '{field_name}'."
+                ),
+            )
+        return normalized
+
+    @classmethod
+    def _index_package_skill_dirs(cls, package_root: str) -> dict[str, str]:
+        skills_root = os.path.join(package_root, "skills")
+        skill_dirs: dict[str, str] = {}
+        if not os.path.isdir(skills_root):
+            return skill_dirs
+        for entry in sorted(os.listdir(skills_root)):
+            abs_path = os.path.join(skills_root, entry)
+            if not os.path.isdir(abs_path):
+                continue
+            skill_name, _description, _content_hash = cls._read_skill_metadata(
+                abs_path,
+            )
+            if skill_name != entry:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Skill directory name must match "
+                        f"SKILL.md front matter name. Directory '{entry}' "
+                        f"declares '{skill_name}'."
+                    ),
+                )
+            if skill_name in skill_dirs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Duplicate shared skill '{skill_name}' in package root."
+                    ),
+                )
+            skill_dirs[skill_name] = abs_path
+        return skill_dirs
+
+    @classmethod
+    def _index_package_mcp_dirs(cls, package_root: str) -> dict[str, str]:
+        mcps_root = os.path.join(package_root, "mcps")
+        mcp_dirs: dict[str, str] = {}
+        if not os.path.isdir(mcps_root):
+            return mcp_dirs
+        for entry in sorted(os.listdir(mcps_root)):
+            abs_path = os.path.join(mcps_root, entry)
+            if not os.path.isdir(abs_path):
+                continue
+            mcp_name, _client = cls._read_mcp_metadata(abs_path)
+            if mcp_name != entry:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "MCP directory name must match mcp.json name. "
+                        f"Directory '{entry}' declares '{mcp_name}'."
+                    ),
+                )
+            if mcp_name in mcp_dirs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Duplicate shared MCP '{mcp_name}' in package root.",
+                )
+            mcp_dirs[mcp_name] = abs_path
+        return mcp_dirs
 
     @staticmethod
     def _read_skill_metadata(skill_dir: str) -> tuple[str, str, str]:
@@ -604,6 +708,8 @@ class AgentAssetStore:
                 main_agent_id, agent_configs = self._read_agent_package_config(
                     package_root,
                 )
+                shared_skill_dirs = self._index_package_skill_dirs(package_root)
+                shared_mcp_dirs = self._index_package_mcp_dirs(package_root)
                 agents: list[StagedAgentPackageAgent] = []
                 for config in agent_configs:
                     agent_slug = str(config["slug"])
@@ -625,20 +731,38 @@ class AgentAssetStore:
                         )
                     with open(prompt_path, "r", encoding="utf-8") as f:
                         system_prompt = f.read()
-                    skill_dirs: list[str] = []
-                    skills_root = os.path.join(agent_dir, "skills")
-                    if os.path.isdir(skills_root):
-                        for entry in sorted(os.listdir(skills_root)):
-                            abs_path = os.path.join(skills_root, entry)
-                            if os.path.isdir(abs_path):
-                                skill_dirs.append(abs_path)
-                    mcp_dirs: list[str] = []
-                    mcps_root = os.path.join(agent_dir, "mcps")
-                    if os.path.isdir(mcps_root):
-                        for entry in sorted(os.listdir(mcps_root)):
-                            abs_path = os.path.join(mcps_root, entry)
-                            if os.path.isdir(abs_path):
-                                mcp_dirs.append(abs_path)
+                    skill_names = list(config["skills"])  # type: ignore[arg-type]
+                    mcp_names = list(config["mcps"])  # type: ignore[arg-type]
+                    missing_skills = sorted(
+                        skill_name
+                        for skill_name in skill_names
+                        if skill_name not in shared_skill_dirs
+                    )
+                    if missing_skills:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=(
+                                f"Agent '{agent_slug}' references unknown "
+                                f"shared skill '{missing_skills[0]}'."
+                            ),
+                        )
+                    missing_mcps = sorted(
+                        mcp_name
+                        for mcp_name in mcp_names
+                        if mcp_name not in shared_mcp_dirs
+                    )
+                    if missing_mcps:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=(
+                                f"Agent '{agent_slug}' references unknown "
+                                f"shared MCP '{missing_mcps[0]}'."
+                            ),
+                        )
+                    skill_dirs = [
+                        shared_skill_dirs[skill_name] for skill_name in skill_names
+                    ]
+                    mcp_dirs = [shared_mcp_dirs[mcp_name] for mcp_name in mcp_names]
                     agents.append(
                         StagedAgentPackageAgent(
                             slug=agent_slug,
