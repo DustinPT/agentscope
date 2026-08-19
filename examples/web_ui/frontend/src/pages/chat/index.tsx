@@ -73,8 +73,8 @@ import {
 } from '@/components/ui/sidebar';
 import { AudioProvider } from '@/context/AudioContext';
 import { useAgents } from '@/hooks/useAgents';
-import { useSessionView } from '@/hooks/useSessionView';
 import { useSessions } from '@/hooks/useSessions';
+import { useSessionView } from '@/hooks/useSessionView';
 import { useTranslation } from '@/i18n/useI18n.ts';
 
 /**
@@ -121,6 +121,7 @@ const ChatPageInner = () => {
         const isDraftRoute = draftMatch !== null && !urlFocusedSessionId;
 	const {
 		sessions,
+                loading: sessionsLoading,
 		refetch: refetchSessions,
 		create: createSession,
 		update: updateSession,
@@ -228,15 +229,21 @@ const ChatPageInner = () => {
 		}
 	}, [agents, urlAgentId, navigate]);
 
-	// Redirect: URL has an agent but no session, or its sessionId no
-	// longer exists for this agent → pick the first available session.
+        // Redirect: URL has an agent but no session, or its sessionId no
+        // longer exists for this agent. When the agent has no sessions
+        // yet, normalize to the draft route so the user can start typing
+        // immediately without clicking "new session" first.
 	useEffect(() => {
 		if (isDraftRoute) return;
-		if (!urlAgentId || sessions.length === 0) return;
+                if (!urlAgentId || sessionsLoading) return;
 		const matches = urlSessionId && sessions.some((v) => v.session.id === urlSessionId);
 		if (matches) return;
+                if (sessions.length === 0) {
+                        navigate(`/chat/${urlAgentId}/new`, { replace: true });
+                        return;
+                }
 		navigate(`/chat/${urlAgentId}/${sessions[0].session.id}`, { replace: true });
-	}, [isDraftRoute, urlAgentId, urlSessionId, sessions, navigate]);
+        }, [isDraftRoute, urlAgentId, urlSessionId, sessions, sessionsLoading, navigate]);
 
 	useEffect(() => {
 		if (!isDraftRoute || !urlAgentId) return;
