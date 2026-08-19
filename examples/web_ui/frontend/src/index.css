@@ -212,3 +212,41 @@ body,
 		@apply font-sans;
 	}
 }
+
+.mermaid-diagram svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+}
+
+.mermaid-chart-card {
+        overflow: hidden;
+}
+
+.mermaid-chart-card--fullscreen {
+        background: var(--background);
+}
+
+.mermaid-chart-card__header {
+        background: color-mix(in srgb, var(--background) 92%, var(--muted) 8%);
+        color: var(--foreground);
+}
+
+.mermaid-chart-card__viewport {
+        min-height: 0;
+}
+
+.mermaid-chart-card__canvas {
+        user-select: none;
+}
+
+.mermaid-chart-card__svg {
+        will-change: transform, left, top;
+}
+
+.mermaid-chart-card pre,
+.mermaid-chart-card code {
+        color: var(--foreground);
+        opacity: 1;
+}

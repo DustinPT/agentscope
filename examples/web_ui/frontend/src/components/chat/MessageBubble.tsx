@@ -14,7 +14,6 @@ import {
 	CheckCircle,
 	ChevronDownIcon,
 	CirclePlay,
-	Copy,
         FileText,
 	Gauge,
 	Loader2,
@@ -23,8 +22,7 @@ import {
 	Wrench,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { defaultUrlTransform } from 'react-markdown';
 import { toast } from 'sonner';
 
 import { ConfirmCard } from './ConfirmCard';
@@ -32,6 +30,7 @@ import { renderToolGroup } from './tool-renderers';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
 import type { WorkspaceFileEntry } from '@/api';
 import { workspaceApi } from '@/api';
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ProjectDirectoryDialog } from '@/components/project-directory/ProjectDirectoryDialog';
 import { ProjectFilePreviewDialog } from '@/components/project-directory/ProjectFilePreviewDialog';
 import { parseProjectLinkHref } from '@/components/project-directory/projectLink';
@@ -489,8 +488,7 @@ function renderBlock(
 		case 'text':
 			return (
 				<div key={index} className="prose w-full min-w-full">
-					<ReactMarkdown
-						remarkPlugins={[remarkGfm]}
+                                        <MarkdownRenderer
                                                 urlTransform={(url) => {
                                                         if (parseProjectLinkHref(url)) {
                                                                 return url;
@@ -574,43 +572,10 @@ function renderBlock(
                                                                         </button>
                                                                 );
                                                         },
-							code: ({ className, children, ...props }) => {
-								const isInline = !String(className ?? '').startsWith('language-');
-								if (isInline) {
-									return (
-										<code className={`${className ?? ''} break-all`} {...props}>
-											{children}
-										</code>
-									);
-								}
-								return (
-									<div className="relative w-full">
-										<Button
-											size="icon-xs"
-											variant="ghost"
-											className="absolute top-0 right-0 z-10"
-											onClick={async (e) => {
-												e.preventDefault();
-												e.stopPropagation();
-												await navigator.clipboard.writeText(
-													String(children),
-												);
-											}}
-										>
-											<Copy />
-										</Button>
-										<div className="overflow-x-auto max-w-full w-full">
-											<code className={className} {...props}>
-												{children}
-											</code>
-										</div>
-									</div>
-								);
-							},
 						}}
 					>
 						{block.text}
-					</ReactMarkdown>
+                                        </MarkdownRenderer>
 				</div>
 			);
 

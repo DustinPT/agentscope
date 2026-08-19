@@ -2,11 +2,10 @@
 import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { ChevronDownIcon } from 'lucide-react';
 import { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 import { ToolStateIcon } from './_shared';
 import type { TFunction, ToolCallWithResult, ToolRenderer } from './types';
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -188,9 +187,9 @@ function ContextCompressGroup({
 								</div>
 								{summary && (
 									<div className="prose prose-sm max-w-none rounded-md bg-background px-3 py-2 text-foreground dark:prose-invert">
-										<ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                                                <MarkdownRenderer>
 											{summary}
-										</ReactMarkdown>
+                                                                                </MarkdownRenderer>
 									</div>
 								)}
 							</CollapsibleContent>

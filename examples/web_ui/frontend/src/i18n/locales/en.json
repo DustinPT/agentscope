@@ -133,6 +133,25 @@
 			"schedule": "Schedule"
 		}
 	},
+        "markdown": {
+                "mermaid": {
+                        "diagramTab": "Diagram",
+                        "codeTab": "Code",
+                        "fit": "Fit",
+                        "actualSize": "100%",
+                        "zoomIn": "Zoom in",
+                        "zoomOut": "Zoom out",
+                        "dragHint": "Drag the canvas to inspect the diagram",
+                        "download": "Download",
+                        "downloadSvg": "Download SVG",
+                        "downloadPng": "Download PNG",
+                        "downloadSource": "Download source",
+                        "fullscreen": "Fullscreen",
+                        "exitFullscreen": "Exit fullscreen",
+                        "rendering": "Rendering Mermaid diagram…",
+                        "renderFailed": "Failed to render the Mermaid diagram. Showing the original source below."
+                }
+        },
 	"chat": {
 		"inputPlaceholder": "Type a message...",
 		"placeholder": "Type a message...",

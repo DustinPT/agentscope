@@ -1,10 +1,9 @@
 import { Copy, Download } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 
 import type { WorkspaceFileEntry } from '@/api';
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { Button } from '@/components/ui/button';
 import {
         Dialog,
@@ -207,9 +206,9 @@ export function ProjectFilePreviewDialog({
                                                 ) : isMarkdownPreview ? (
                                                         <div className="max-h-[70vh] overflow-auto rounded-md border bg-muted/20 p-4">
                                                                 <div className="prose prose-sm max-w-none text-foreground dark:prose-invert">
-                                                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                                        <MarkdownRenderer>
                                                                                 {previewText}
-                                                                        </ReactMarkdown>
+                                                                        </MarkdownRenderer>
                                                                 </div>
                                                         </div>
                                                 ) : (
