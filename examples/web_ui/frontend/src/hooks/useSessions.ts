@@ -16,6 +16,7 @@ interface SessionsSnapshot {
 
 interface SessionStore {
         sessions: SessionSummaryView[] | null;
+        loaded: boolean;
         error: Error | null;
         inflight: Promise<SessionSummaryView[]> | null;
         listeners: Set<(snapshot: SessionsSnapshot) => void>;
@@ -30,6 +31,7 @@ function getStore(agentId: string): SessionStore {
         }
         const created: SessionStore = {
                 sessions: null,
+                loaded: false,
                 error: null,
                 inflight: null,
                 listeners: new Set(),
@@ -51,7 +53,7 @@ function getSnapshot(agentId: string | null): SessionsSnapshot {
         return {
                 agentId,
                 sessions: store.sessions ?? [],
-                loading: store.inflight !== null,
+                loading: !store.loaded || store.inflight !== null,
                 error: store.error,
         };
 }
@@ -77,10 +79,12 @@ async function loadSessions(agentId: string, force = false) {
                 .list(agentId)
                 .then((res) => {
                         store.sessions = res.sessions;
+                        store.loaded = true;
                         store.error = null;
                         return res.sessions;
                 })
                 .catch((error: Error) => {
+                        store.loaded = true;
                         store.error = error;
                         throw error;
                 })

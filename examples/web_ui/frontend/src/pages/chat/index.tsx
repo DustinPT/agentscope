@@ -12,7 +12,7 @@ import {
 	Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { useMatch, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 import { ChatViewport } from './ChatViewport';
 import { chatApi } from '@/api';
@@ -100,7 +100,6 @@ import { useTranslation } from '@/i18n/useI18n.ts';
  */
 const ChatPageInner = () => {
 	const navigate = useNavigate();
-	const draftMatch = useMatch('/chat/:agentId/new');
 	const {
 		agentId: urlAgentId,
 		sessionId: urlSessionId,
@@ -118,7 +117,7 @@ const ChatPageInner = () => {
 		importPackage,
 		composeUpdate,
 	} = useAgents();
-        const isDraftRoute = draftMatch !== null && !urlFocusedSessionId;
+        const isDraftRoute = !!urlAgentId && !urlSessionId && !urlFocusedSessionId;
 	const {
 		sessions,
                 loading: sessionsLoading,
@@ -180,7 +179,7 @@ const ChatPageInner = () => {
 		urlAgentId === undefined
 			? null
                         : (draftsByAgentId[urlAgentId] ??
-                                  buildDraftSeed(currentView ?? currentSummaryView ?? sessions[0] ?? null));
+                                  buildDraftSeed(currentSummaryView ?? sessions[0] ?? null));
 
 	// "Inner focus" — when the URL carries a third `:memberId` segment
 	// the user is drilling into a team member's chat. The main sidebar
@@ -229,21 +228,16 @@ const ChatPageInner = () => {
 		}
 	}, [agents, urlAgentId, navigate]);
 
-        // Redirect: URL has an agent but no session, or its sessionId no
-        // longer exists for this agent. When the agent has no sessions
-        // yet, normalize to the draft route so the user can start typing
-        // immediately without clicking "new session" first.
-	useEffect(() => {
-		if (isDraftRoute) return;
-                if (!urlAgentId || sessionsLoading) return;
+        // If a session-specific URL points at a deleted or unknown
+        // session, fall back to the agent home page instead of silently
+        // auto-opening another session.
+        useEffect(() => {
+                if (isDraftRoute) return;
+                if (!urlAgentId || !urlSessionId || sessionsLoading) return;
 		const matches = urlSessionId && sessions.some((v) => v.session.id === urlSessionId);
 		if (matches) return;
-                if (sessions.length === 0) {
-                        navigate(`/chat/${urlAgentId}/new`, { replace: true });
-                        return;
-                }
-		navigate(`/chat/${urlAgentId}/${sessions[0].session.id}`, { replace: true });
-        }, [isDraftRoute, urlAgentId, urlSessionId, sessions, sessionsLoading, navigate]);
+                navigate(`/chat/${urlAgentId}`, { replace: true });
+        }, [isDraftRoute, navigate, sessions, sessionsLoading, urlAgentId, urlSessionId]);
 
 	useEffect(() => {
 		if (!isDraftRoute || !urlAgentId) return;
@@ -251,10 +245,10 @@ const ChatPageInner = () => {
 			if (prev[urlAgentId]) return prev;
 			return {
 				...prev,
-                                        [urlAgentId]: buildDraftSeed(currentView ?? sessions[0] ?? null),
+                                [urlAgentId]: buildDraftSeed(currentSummaryView ?? sessions[0] ?? null),
 			};
 		});
-        }, [buildDraftSeed, currentView, isDraftRoute, urlAgentId, sessions]);
+        }, [buildDraftSeed, currentSummaryView, isDraftRoute, urlAgentId, sessions]);
 
 	/**
 	 * Create a new session under the currently selected agent and
@@ -275,7 +269,7 @@ const ChatPageInner = () => {
                                 [urlAgentId]: buildDraftSeed(currentView ?? currentSummaryView ?? sessions[0] ?? null),
 			};
 		});
-		navigate(`/chat/${urlAgentId}/new`);
+                navigate(`/chat/${urlAgentId}`);
 	};
 
 	const handleDraftChange = (
@@ -546,7 +540,7 @@ const ChatPageInner = () => {
 				/>
 			)}
 			<div className="flex flex-1 min-w-0">
-				{isDraftRoute && urlAgentId && activeDraft ? (
+                                {isDraftRoute && urlAgentId && activeDraft ? (
 					<SessionDraftComposer
 						agentId={urlAgentId}
 						draft={activeDraft}
