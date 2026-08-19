@@ -498,7 +498,7 @@ export function ChatViewport({
 							/>
 						</div>
 					</div>
-					<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:36rem]">
+                                        <div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:750px]">
 						<TaskPanel
 							className="absolute left-0 top-0 h-full max-w-[calc(50%-var(--chat-content-w)/2)]"
 							tasksContext={tasksContext}

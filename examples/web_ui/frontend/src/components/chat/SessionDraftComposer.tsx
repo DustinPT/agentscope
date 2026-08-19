@@ -134,7 +134,7 @@ export function SessionDraftComposer({
 							/>
 						</div>
 					</div>
-					<div className="flex flex-1 justify-center min-h-0 overflow-hidden [--chat-content-w:36rem]">
+                                        <div className="flex flex-1 justify-center min-h-0 overflow-hidden [--chat-content-w:750px]">
 						<div className="flex h-full w-full max-w-[var(--chat-content-w)] flex-col gap-4 p-2">
 							<div className="flex-1 overflow-auto no-scrollbar">
 								<div className="flex size-full flex-col">
