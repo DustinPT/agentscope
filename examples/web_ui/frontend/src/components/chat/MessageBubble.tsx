@@ -43,7 +43,7 @@ import {
 } from '@/components/ui/collapsible.tsx';
 import { Item, ItemContent } from '@/components/ui/item.tsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useAudioBlock, useReplayController } from '@/context/AudioContext';
+import { useAudioBlock, useReplayController } from '@/context/useAudio';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 import { formatNumber, formatTime } from '@/utils/common';

@@ -3,6 +3,7 @@ import { CircleAlert } from 'lucide-react';
 import { useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 
+import { parseMcpConfig } from './mcpConfig';
 import type { MCPClient } from '@/api/types';
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -26,7 +27,6 @@ import {
 } from '@/components/ui/field.tsx';
 import { InputGroup, InputGroupTextarea } from '@/components/ui/input-group.tsx';
 import { useTranslation } from '@/i18n/useI18n.ts';
-import { parseMcpConfig } from './mcpConfig';
 
 type Status = 'idle' | 'loading' | 'success' | 'error';
 

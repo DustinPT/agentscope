@@ -1,6 +1,6 @@
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { ChevronRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { getDisplayName, renderConfirmBody } from './tool-renderers';
 import { Button } from '@/components/ui/button';
@@ -19,9 +19,11 @@ export function ConfirmCard({
 }) {
 	const { t } = useTranslation();
 	const hasSuggestedRules = !!toolCall.suggested_rules?.length;
-	const options: SelectOption[] = hasSuggestedRules
-		? ['yes', 'yes_with_rule', 'no']
-		: ['yes', 'no'];
+        const suggestedRule = toolCall.suggested_rules?.[0];
+        const options = useMemo<SelectOption[]>(
+                () => (hasSuggestedRules ? ['yes', 'yes_with_rule', 'no'] : ['yes', 'no']),
+                [hasSuggestedRules],
+        );
 	const [selected, setSelected] = useState<SelectOption>('yes');
 
 	useEffect(() => {
@@ -38,8 +40,8 @@ export function ConfirmCard({
 					break;
 				case 'Enter':
 					e.preventDefault();
-					if (selected === 'yes_with_rule') {
-						onUserConfirm(true, [toolCall.suggested_rules![0]]);
+                                        if (selected === 'yes_with_rule' && suggestedRule) {
+                                                onUserConfirm(true, [suggestedRule]);
 					} else {
 						onUserConfirm(selected === 'yes');
 					}
@@ -49,7 +51,7 @@ export function ConfirmCard({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [onUserConfirm, selected, options]);
+        }, [onUserConfirm, options, selected, suggestedRule]);
 
 	return (
 		<div className="ring ring-border rounded-xl w-full p-4 space-y-4 text-sm overflow-hidden">
@@ -97,7 +99,9 @@ export function ConfirmCard({
 						onClick={(e) => {
 							e.stopPropagation();
 							e.preventDefault();
-							onUserConfirm(true, [toolCall.suggested_rules![0]]);
+                                                          if (suggestedRule) {
+                                                                  onUserConfirm(true, [suggestedRule]);
+                                                          }
 						}}
 					>
 						<span className="flex items-start gap-1 w-full break-words whitespace-normal min-w-0">
@@ -110,8 +114,8 @@ export function ConfirmCard({
 							<span className="break-words min-w-0">
 								2.{' '}
 								{t('confirmCard.yesWithRule', {
-									toolName: toolCall.suggested_rules![0].tool_name,
-									ruleContent: toolCall.suggested_rules![0].rule_content,
+                                                                                  toolName: suggestedRule?.tool_name,
+                                                                                  ruleContent: suggestedRule?.rule_content,
 								})}
 								{selected === 'yes_with_rule' && (
 									<span className="text-muted-foreground ml-1 whitespace-nowrap">

@@ -14,8 +14,11 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: {
-			'@': path.resolve(__dirname, './src'),
-			'next/navigation': path.resolve(__dirname, './src/lib/next-navigation-shim.ts'),
+                        '@': path.resolve(import.meta.dirname, './src'),
+                        'next/navigation': path.resolve(
+                                import.meta.dirname,
+                                './src/lib/next-navigation-shim.ts',
+                        ),
 		},
 	},
 	optimizeDeps: {

@@ -4,11 +4,11 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import type { AgentMCPAsset, ContextConfig, MCPClient, ReActConfig } from '@/api';
+import { defaultAgentFormValues } from '@/components/form/agentFormDefaults';
 import {
 	AgentFormFields,
-	defaultAgentFormValues,
-	type AgentFormValues,
-	type AgentSection,
+        type AgentFormValues,
+        type AgentSection,
 } from '@/components/form/AgentFormFields';
 import {
 	createAgentModelConfigValue,

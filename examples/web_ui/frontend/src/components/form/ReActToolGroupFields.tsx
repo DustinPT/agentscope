@@ -1,5 +1,9 @@
 import { useTranslation } from 'react-i18next';
 
+import type {
+	BuiltinToolGroup,
+	ReActToolGroupConfigValue,
+} from '@/components/form/reactToolGroupConfig';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
 	Field,
@@ -10,10 +14,6 @@ import {
 	FieldTitle,
 } from '@/components/ui/field';
 
-import type {
-	BuiltinToolGroup,
-	ReActToolGroupConfigValue,
-} from '@/components/form/reactToolGroupConfig';
 
 interface Props {
 	value: ReActToolGroupConfigValue;

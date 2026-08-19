@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import type { ChatModelConfig, GlobalModelCategoryKey, ModelCard, UserModelDefaults } from '@/api';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useUserModelDefaults } from '@/hooks/useUserModelDefaults';
 import { useTranslation } from '@/i18n/useI18n';

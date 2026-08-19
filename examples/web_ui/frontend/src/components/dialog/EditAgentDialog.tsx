@@ -11,33 +11,33 @@ import type {
 	AgentSkillAsset,
 	ContextConfig,
 	MCPClient,
-	ReActConfig,
+        ReActConfig,
 } from '@/api';
+import { defaultAgentFormValues } from '@/components/form/agentFormDefaults';
 import {
 	AgentFormFields,
-	defaultAgentFormValues,
 	type AgentFormValues,
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
-import { AgentWorkspaceConfigFields } from '@/components/form/AgentWorkspaceConfigFields';
 import {
 	createAgentModelConfigValue,
 	parseAgentModelConfigValue,
 	type AgentModelConfigValue,
 } from '@/components/form/agentModelConfig';
 import { AgentModelConfigFields } from '@/components/form/AgentModelConfigFields';
-import type { SchemaFormValue } from '@/components/form/SchemaForm';
-import {
-	createSubAgentConfigValue,
-	parseSubAgentConfigValue,
-	type SubAgentConfigValue,
-} from '@/components/form/subAgentConfig';
+import { AgentWorkspaceConfigFields } from '@/components/form/AgentWorkspaceConfigFields';
 import {
 	createReActToolGroupConfigValue,
 	parseReActToolGroupConfigValue,
 	type ReActToolGroupConfigValue,
 } from '@/components/form/reactToolGroupConfig';
 import { ReActToolGroupFields } from '@/components/form/ReActToolGroupFields';
+import type { SchemaFormValue } from '@/components/form/SchemaForm';
+import {
+	createSubAgentConfigValue,
+	parseSubAgentConfigValue,
+	type SubAgentConfigValue,
+} from '@/components/form/subAgentConfig';
 import {
 	SubAgentConfigFields,
 } from '@/components/form/SubAgentConfigFields';
@@ -98,11 +98,12 @@ export function EditAgentDialog({
 		// Start from schema defaults, then overlay the existing agent's data so
 		// any unset fields fall back to defaults rather than empty.
 		const base = defaultAgentFormValues(schema);
-		const d = agent.data;
-		const {
-			enabled_builtin_tool_groups: _enabledBuiltinToolGroups,
-			...reactConfigFields
-		} = d.react_config ?? {};
+                const d = agent.data;
+                const reactConfigFields = Object.fromEntries(
+                        Object.entries(d.react_config ?? {}).filter(
+                                ([key]) => key !== 'enabled_builtin_tool_groups',
+                        ),
+                ) as Record<string, SchemaFormValue>;
 		setValues({
 			identity: {
 				...base.identity,

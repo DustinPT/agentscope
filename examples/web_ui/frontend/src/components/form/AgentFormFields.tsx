@@ -94,23 +94,3 @@ export function AgentFormFields({
 		</FieldGroup>
 	);
 }
-
-/** Build a fresh `AgentFormValues` populated from each section schema's defaults. */
-export function defaultAgentFormValues(schema: AgentSchemaResponse): AgentFormValues {
-	const fromDefaults = (
-		section: AgentSchemaResponse[AgentSection],
-	): Record<string, SchemaFormValue> => {
-		const out: Record<string, SchemaFormValue> = {};
-		for (const [k, prop] of Object.entries(section.properties ?? {})) {
-			if (section === schema.react_config && REACT_CONFIG_SKIP_FIELDS.has(k)) continue;
-			if (prop.const !== undefined) continue;
-			if (prop.default !== undefined) out[k] = prop.default as SchemaFormValue;
-		}
-		return out;
-	};
-	return {
-		identity: fromDefaults(schema.identity),
-		context_config: fromDefaults(schema.context_config),
-		react_config: fromDefaults(schema.react_config),
-	};
-}

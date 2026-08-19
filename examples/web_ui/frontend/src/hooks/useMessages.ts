@@ -17,7 +17,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { sessionApi } from '@/api';
 import { chatApi } from '@/api';
 import type { StreamAgentEvent } from '@/api/session';
-import { useAudioManager } from '@/context/AudioContext';
+import { useAudioManager } from '@/context/useAudio';
 
 type JsonLike =
 	| string

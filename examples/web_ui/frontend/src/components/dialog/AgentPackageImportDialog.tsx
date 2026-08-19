@@ -2,6 +2,7 @@ import { CircleAlert, Loader2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import type { AgentPackageImportResponse } from '@/api';
 import { Button } from '@/components/ui/button';
 import {
 	Dialog,
@@ -14,7 +15,6 @@ import {
 } from '@/components/ui/dialog';
 import { FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { useTranslation } from '@/i18n/useI18n';
-import type { AgentPackageImportResponse } from '@/api';
 
 interface Props {
 	importPackage: (body: FormData) => Promise<AgentPackageImportResponse>;
