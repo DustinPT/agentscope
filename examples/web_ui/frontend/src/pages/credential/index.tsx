@@ -307,13 +307,17 @@ export const CredentialPage = () => {
 						groupedByType.map(({ type, title, records }) => (
 							<SidebarGroup key={type}>
 								<SidebarGroupLabel>{title}</SidebarGroupLabel>
-								<SidebarGroupAction
-									title={t('credential.addConfig')}
-									onClick={() => handleOpenCreate(type)}
-								>
-									<Button variant="ghost" size={'icon-sm'}>
-										<Plus />
-									</Button>
+								<SidebarGroupAction asChild>
+									<div>
+										<Button
+											variant="ghost"
+											size={'icon-sm'}
+											title={t('credential.addConfig')}
+											onClick={() => handleOpenCreate(type)}
+										>
+											<Plus />
+										</Button>
+									</div>
 								</SidebarGroupAction>
 								<SidebarGroupContent>
 									{records.length > 0 && (

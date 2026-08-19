@@ -417,16 +417,18 @@ const ChatPageInner = () => {
 					<SidebarContent className="my-5">
 						<SidebarGroup>
 							<SidebarGroupLabel>{t('chat.session.label')}</SidebarGroupLabel>
-							<SidebarGroupAction>
-								<Button
-									id="tour-create-session"
-									size="icon-xs"
-									variant="default"
-									disabled={!urlAgentId}
-									onClick={handleCreateSession}
-								>
-									<Plus />
-								</Button>
+							<SidebarGroupAction asChild>
+								<div>
+									<Button
+										id="tour-create-session"
+										size="icon-xs"
+										variant="default"
+										disabled={!urlAgentId}
+										onClick={handleCreateSession}
+									>
+										<Plus />
+									</Button>
+								</div>
 							</SidebarGroupAction>
 							<SidebarGroupContent>
 								{sessions.length === 0 ? (
