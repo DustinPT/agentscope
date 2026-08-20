@@ -235,30 +235,20 @@ Usage:
                 is_last=True,
             )
 
-        # Check file exists
-        if not await self._backend.file_exists(file_path):
-            return ToolChunk(
-                content=[
-                    TextBlock(text=f"Error: File does not exist: {file_path}"),
-                ],
-                state=ToolResultState.ERROR,
-                is_last=True,
-            )
-
-        # Check it's not a directory
-        if await self._backend.is_dir(file_path):
-            return ToolChunk(
-                content=[
-                    TextBlock(
-                        text=f"Error: Path is a directory, not a file: "
-                        f"{file_path}",
-                    ),
-                ],
-                state=ToolResultState.ERROR,
-                is_last=True,
-            )
-
         try:
+            file_exists = await self._backend.file_exists(file_path)
+            if file_exists and await self._backend.is_dir(file_path):
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=f"Error: Path is a directory, not a file: "
+                            f"{file_path}",
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+
             file_bytes = await self._backend.read_file(file_path)
 
             media_type = self._guess_media_type(file_path)
@@ -394,6 +384,24 @@ Usage:
                 },
             )
 
+        except FileNotFoundError:
+            return ToolChunk(
+                content=[
+                    TextBlock(text=f"Error: File does not exist: {file_path}"),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+        except IsADirectoryError:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=f"Error: Path is a directory, not a file: {file_path}",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
         except Exception as e:
             return ToolChunk(
                 content=[TextBlock(text=f"Error reading file: {str(e)}")],

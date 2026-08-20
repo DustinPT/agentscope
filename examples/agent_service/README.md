@@ -67,6 +67,18 @@ After that, you can set the API endpoint `http://localhost:8000` in the Web UI a
 ## What Next
 
 - You can customize the service in `main.py` by adding your own MCPs, middlewares, or workspace manager implementations.
+- If you want builtin tools and `stdio MCP` processes to run inside a local OS sandbox instead of Docker, you can switch to `SRTWorkspaceManager` with a default `srt` settings template:
+
+```python
+from agentscope.app.workspace_manager import SRTWorkspaceManager
+
+workspace_manager = SRTWorkspaceManager(
+    basedir="./workspaces",
+    default_srt_settings_path="./srt-settings.json",
+)
+```
+
+  Make sure `@anthropic-ai/sandbox-runtime` is installed and that your template settings allow reading and writing the workspace directory.
 
 - Experience the agent service, including
     - human-in-the-loop interactions & permission system

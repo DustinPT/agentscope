@@ -117,6 +117,7 @@ include-package-data = true
 #   live alongside the parent package's source on disk).
 "*" = ["py.typed", "_models/*.yaml"]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
+"agentscope.workspace._srt" = ["*.json"]
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]
