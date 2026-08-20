@@ -12,11 +12,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import os
+import shutil
+import stat as stat_module
 from dataclasses import asdict
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 
+from ...tool import DirEntry
 from ...tool._builtin._backend import LocalBackend
 from .._mcp_gateway._mcp_gateway_app import _State, _build_app, _make_auth_dep
 
@@ -31,6 +35,56 @@ def _encode_bytes(data: bytes) -> str:
 
 def _entry_to_dict(entry: Any) -> dict[str, Any]:
     return asdict(entry)
+
+
+def _strict_stat(path: str) -> DirEntry | None:
+    """Return metadata for one path without collapsing permission errors."""
+    try:
+        stat_result = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+
+    is_dir = stat_module.S_ISDIR(stat_result.st_mode)
+    return DirEntry(
+        name=os.path.basename(path),
+        is_dir=is_dir,
+        size_bytes=None if is_dir else stat_result.st_size,
+        mtime=stat_result.st_mtime,
+    )
+
+
+def _strict_exists(path: str) -> bool:
+    """Check path existence while preserving permission failures."""
+    return _strict_stat(path) is not None
+
+
+def _strict_is_dir(path: str) -> bool:
+    """Check whether one path is a directory without hiding permission errors."""
+    entry = _strict_stat(path)
+    return False if entry is None else entry.is_dir
+
+
+def _strict_stat_mtime(path: str) -> float | None:
+    """Return path mtime while preserving permission failures."""
+    entry = _strict_stat(path)
+    return None if entry is None else entry.mtime
+
+
+def _strict_delete_path(path: str) -> None:
+    """Delete one path while preserving filesystem permission errors."""
+    try:
+        stat_result = os.lstat(path)
+    except FileNotFoundError:
+        return
+
+    is_dir = stat_module.S_ISDIR(stat_result.st_mode)
+    is_link = stat_module.S_ISLNK(stat_result.st_mode)
+
+    if is_dir and not is_link:
+        shutil.rmtree(path)
+        return
+
+    os.remove(path)
 
 
 def _build_runtime_app(state: _State) -> FastAPI:
@@ -72,7 +126,14 @@ def _build_runtime_app(state: _State) -> FastAPI:
 
     @app.put("/backend/file", dependencies=[auth])
     async def _write_file(path: str, request: Request) -> dict[str, bool]:
-        await backend.write_file(path, await request.body())
+        try:
+            await backend.write_file(path, await request.body())
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except IsADirectoryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True}
 
     @app.post("/backend/dir", dependencies=[auth])
@@ -81,16 +142,29 @@ def _build_runtime_app(state: _State) -> FastAPI:
         path = body.get("path")
         if not isinstance(path, str) or not path:
             raise HTTPException(status_code=400, detail="path is required")
-        await backend.ensure_dir(path)
+        try:
+            await backend.ensure_dir(path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except NotADirectoryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True}
 
     @app.get("/backend/exists", dependencies=[auth])
     async def _file_exists(path: str) -> dict[str, bool]:
-        return {"exists": await backend.file_exists(path)}
+        try:
+            return {"exists": _strict_exists(path)}
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.get("/backend/is-dir", dependencies=[auth])
     async def _is_dir(path: str) -> dict[str, bool]:
-        return {"is_dir": await backend.is_dir(path)}
+        try:
+            return {"is_dir": _strict_is_dir(path)}
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.get("/backend/list-dir", dependencies=[auth])
     async def _list_dir(path: str, recursive: bool = False) -> dict[str, list[str]]:
@@ -98,6 +172,10 @@ def _build_runtime_app(state: _State) -> FastAPI:
             entries = await backend.list_dir(path, recursive=recursive)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except NotADirectoryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"entries": entries}
 
     @app.get("/backend/scandir", dependencies=[auth])
@@ -106,20 +184,37 @@ def _build_runtime_app(state: _State) -> FastAPI:
             entries = await backend.scandir(path)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except NotADirectoryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"entries": [_entry_to_dict(entry) for entry in entries]}
 
     @app.get("/backend/stat", dependencies=[auth])
     async def _stat(path: str) -> dict[str, Any] | None:
-        entry = await backend.stat(path)
+        try:
+            entry = _strict_stat(path)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         return None if entry is None else _entry_to_dict(entry)
 
     @app.get("/backend/stat-mtime", dependencies=[auth])
     async def _stat_mtime(path: str) -> dict[str, float | None]:
-        return {"mtime": await backend.stat_mtime(path)}
+        try:
+            return {"mtime": _strict_stat_mtime(path)}
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.delete("/backend/path", dependencies=[auth])
     async def _delete_path(path: str) -> dict[str, bool]:
-        await backend.delete_path(path)
+        try:
+            _strict_delete_path(path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (IsADirectoryError, NotADirectoryError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True}
 
     return app

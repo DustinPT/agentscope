@@ -255,7 +255,14 @@ Usage:
                     is_last=True,
                 )
 
-        await self._backend.write_file(file_path, content.encode("utf-8"))
+        try:
+            await self._backend.write_file(file_path, content.encode("utf-8"))
+        except Exception as e:
+            return ToolChunk(
+                content=[TextBlock(text=f"Error writing file: {str(e)}")],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
 
         if _agent_state is not None:
             await _agent_state.tool_context.cache_file_version(

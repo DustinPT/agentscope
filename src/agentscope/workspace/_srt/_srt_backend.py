@@ -62,6 +62,14 @@ class SRTBackend(BackendBase):
         )
         if expected_404 and resp.status_code == 404:
             raise FileNotFoundError(_detail(resp))
+        if resp.status_code == 400:
+            detail = _detail(resp)
+            lowered = detail.lower()
+            if "not a directory" in lowered:
+                raise NotADirectoryError(detail)
+            if "is a directory" in lowered:
+                raise IsADirectoryError(detail)
+            raise ValueError(detail)
         if resp.status_code == 403:
             raise PermissionError(_detail(resp))
         resp.raise_for_status()
