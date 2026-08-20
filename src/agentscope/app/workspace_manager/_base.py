@@ -30,9 +30,9 @@ class WorkspaceManagerBase(ABC):
         agent_id: str,
         session_id: str,
         workspace_id: str,
-        default_mcps: list[MCPClient] | None = None,
-        mcp_assets: list[AgentMCPAsset] | None = None,
-        skill_assets: list[AgentSkillAsset] | None = None,
+        agent_mcps: list[MCPClient] | None = None,
+        agent_mcp_assets: list[AgentMCPAsset] | None = None,
+        agent_skill_assets: list[AgentSkillAsset] | None = None,
     ) -> WorkspaceBase:
         """Return an initialized workspace.
 

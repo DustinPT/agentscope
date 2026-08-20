@@ -1154,9 +1154,9 @@ class ChatService:
             agent_record.id,
             session_id,
             session_record.config.workspace_id,
-            default_mcps=agent_record.data.mcps,
-            mcp_assets=resolved_mcp_assets,
-            skill_assets=resolved_skills,
+            agent_mcps=agent_record.data.mcps,
+            agent_mcp_assets=resolved_mcp_assets,
+            agent_skill_assets=resolved_skills,
         )
 
         session_state = deepcopy(session_record.state)
@@ -1535,9 +1535,9 @@ class ChatService:
             agent_id,
             session_id,
             session_record.config.workspace_id,
-            default_mcps=agent_record.data.mcps,
-            mcp_assets=resolved_mcp_assets,
-            skill_assets=resolved_skills,
+            agent_mcps=agent_record.data.mcps,
+            agent_mcp_assets=resolved_mcp_assets,
+            agent_skill_assets=resolved_skills,
         )
 
         # Add workspace working directory to the permission context

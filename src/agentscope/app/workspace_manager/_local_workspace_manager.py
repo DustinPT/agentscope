@@ -69,9 +69,9 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
         workspace_id: str,
-        default_mcps: list[MCPClient] | None = None,
-        mcp_assets: list[AgentMCPAsset] | None = None,
-        skill_assets: list[AgentSkillAsset] | None = None,
+        agent_mcps: list[MCPClient] | None = None,
+        agent_mcp_assets: list[AgentMCPAsset] | None = None,
+        agent_skill_assets: list[AgentSkillAsset] | None = None,
     ) -> AgentWorkspaceView:
         """Return an initialized workspace, reconstructing from
         disk on cache miss.
@@ -110,9 +110,9 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             view = AgentWorkspaceView(hit, agent_id)
             await sync_workspace_state(
                 view,
-                expected_mcps=default_mcps or [],
-                expected_mcp_assets=mcp_assets or [],
-                expected_skills=skill_assets or [],
+                expected_mcps=agent_mcps or [],
+                expected_mcp_assets=agent_mcp_assets or [],
+                expected_skills=agent_skill_assets or [],
                 manager_default_mcps=self._default_mcps,
                 manager_skill_paths=self._skill_paths,
             )
@@ -129,9 +129,9 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 view = AgentWorkspaceView(ws, agent_id)
                 await sync_workspace_state(
                     view,
-                    expected_mcps=default_mcps or [],
-                    expected_mcp_assets=mcp_assets or [],
-                    expected_skills=skill_assets or [],
+                    expected_mcps=agent_mcps or [],
+                    expected_mcp_assets=agent_mcp_assets or [],
+                    expected_skills=agent_skill_assets or [],
                     manager_default_mcps=self._default_mcps,
                     manager_skill_paths=self._skill_paths,
                 )
@@ -146,9 +146,9 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             view = AgentWorkspaceView(ws, agent_id)
             await sync_workspace_state(
                 view,
-                expected_mcps=default_mcps or [],
-                expected_mcp_assets=mcp_assets or [],
-                expected_skills=skill_assets or [],
+                expected_mcps=agent_mcps or [],
+                expected_mcp_assets=agent_mcp_assets or [],
+                expected_skills=agent_skill_assets or [],
                 manager_default_mcps=self._default_mcps,
                 manager_skill_paths=self._skill_paths,
             )

@@ -154,9 +154,9 @@ async def _resolve_agent_workspace(
         agent_id,
         session_id,
         session_record.config.workspace_id,
-        default_mcps=agent_record.data.mcps,
-        mcp_assets=resolved_mcp_assets,
-        skill_assets=resolved_skills,
+        agent_mcps=agent_record.data.mcps,
+        agent_mcp_assets=resolved_mcp_assets,
+        agent_skill_assets=resolved_skills,
     )
     return agent_record, workspace
 
