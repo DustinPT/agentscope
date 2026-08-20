@@ -54,25 +54,26 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
         self._service_host = service_host
         self._startup_timeout = startup_timeout
 
-    def _settings_path_for(self, workspace_id: str) -> str:
+    def _settings_path_for(self, workspace_id: str, user_id: str) -> str:
         """Return the derived SRT settings path for one workspace."""
-        return os.path.join(self._basedir, workspace_id, ".srt-settings.json")
+        return os.path.join(self._basedir, user_id, workspace_id, ".srt-settings.json")
 
-    def _ensure_workspace_layout(self, workspace_id: str) -> tuple[str, str]:
+    def _ensure_workspace_layout(self, workspace_id: str, user_id: str) -> tuple[str, str]:
         """Ensure one workspace has both workdir and fresh derived SRT settings."""
-        workdir = os.path.join(self._basedir, workspace_id)
-        settings_path = self._settings_path_for(workspace_id)
+        user_dir = os.path.join(self._basedir, user_id)
+        workdir = os.path.join(user_dir, workspace_id)
+        settings_path = self._settings_path_for(workspace_id, user_id)
         os.makedirs(workdir, exist_ok=True)
         _write_derived_srt_settings(
             template_path=self._default_srt_settings_path,
             target_path=settings_path,
-            workdir=workdir,
+            user_dir=user_dir,
         )
         return workdir, settings_path
 
-    def _build_workspace(self, workspace_id: str) -> SRTWorkspace:
+    def _build_workspace(self, workspace_id: str, user_id: str) -> SRTWorkspace:
         """Construct one SRTWorkspace for an existing or newly materialized workdir."""
-        workdir, settings_path = self._ensure_workspace_layout(workspace_id)
+        workdir, settings_path = self._ensure_workspace_layout(workspace_id, user_id)
         return SRTWorkspace(
             workspace_id=workspace_id,
             workdir=workdir,
@@ -93,7 +94,7 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
         agent_skill_assets: list[AgentSkillAsset] | None = None,
     ) -> AgentWorkspaceView:
         """Return an initialized SRT workspace, rebuilding on cache miss."""
-        del user_id, session_id
+        del session_id
 
         async with self._lock:
             now = time.monotonic()
@@ -140,7 +141,7 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
                 )
                 return view
 
-            ws = self._build_workspace(workspace_id)
+            ws = self._build_workspace(workspace_id, user_id)
             await ws.initialize()
             view = AgentWorkspaceView(ws, agent_id)
             await sync_workspace_state(
@@ -164,7 +165,7 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
         del user_id, session_id
 
         workspace_id = uuid.uuid4().hex
-        ws = self._build_workspace(workspace_id)
+        ws = self._build_workspace(workspace_id, user_id)
         await ws.initialize()
         view = AgentWorkspaceView(ws, agent_id)
         await sync_workspace_state(
@@ -195,7 +196,7 @@ def _write_derived_srt_settings(
     *,
     template_path: str | None,
     target_path: str,
-    workdir: str,
+    user_dir: str,
 ) -> None:
     """Create a workspace-specific SRT settings file from the template."""
     config = _load_srt_template_config(template_path)
@@ -205,11 +206,11 @@ def _write_derived_srt_settings(
 
     filesystem["allowRead"] = _append_unique_path(
         filesystem.get("allowRead"),
-        workdir,
+        user_dir,
     )
     filesystem["allowWrite"] = _append_unique_path(
         filesystem.get("allowWrite"),
-        workdir,
+        user_dir,
     )
     venv_dir = active_virtualenv_dir()
     if venv_dir is not None:
