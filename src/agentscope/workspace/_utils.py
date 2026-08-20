@@ -75,8 +75,12 @@ Markdown link in the format
 - When you want to point the user to a directory in the current workspace, use \
 a Markdown link in the format
   `[readable label](workspace-dir://relative/path/to/directory)`.
-- Only use these links for paths inside the current workspace. Do not use \
-absolute local filesystem paths.
+- The path portion must be relative to the workspace root. Do not include the \
+workspace root itself, any absolute local filesystem path, or any leading `/`.
+- For example, use `workspace-file://scratch/foo.txt`, not \
+`workspace-file:///workspace/scratch/foo.txt` or \
+`workspace-file:///tmp/foo.txt`.
+- Only use these links for paths inside the current workspace.
 
 ### Python Environment
 - `uv` is recommended for managing and isolating Python environments per \
