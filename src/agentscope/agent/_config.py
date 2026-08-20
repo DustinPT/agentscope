@@ -162,10 +162,8 @@ class ReActConfig(BaseModel):
         default_factory=lambda: [
             "read",
             "edit",
-            "schedule",
             "terminal",
             "network",
-            "team",
         ],
         description=(
             "Builtin tool groups enabled for this agent. Controls file "

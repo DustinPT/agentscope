@@ -19,6 +19,13 @@ export const ALL_BUILTIN_TOOL_GROUPS: BuiltinToolGroup[] = [
         'session_management',
 ];
 
+export const DEFAULT_ENABLED_BUILTIN_TOOL_GROUPS: BuiltinToolGroup[] = [
+        'read',
+        'edit',
+        'terminal',
+        'network',
+];
+
 export function normalizeBuiltinToolGroups(
 	groups?: ReadonlyArray<BuiltinToolGroup> | null,
 ): BuiltinToolGroup[] {
@@ -30,9 +37,9 @@ export function createReActToolGroupConfigValue(
 	agent?: AgentRecord,
 ): ReActToolGroupConfigValue {
 	return {
-		enabled_builtin_tool_groups: normalizeBuiltinToolGroups(
-			agent?.data.react_config?.enabled_builtin_tool_groups,
-		),
+                enabled_builtin_tool_groups: agent
+                        ? normalizeBuiltinToolGroups(agent.data.react_config?.enabled_builtin_tool_groups)
+                        : [...DEFAULT_ENABLED_BUILTIN_TOOL_GROUPS],
 	};
 }
 
