@@ -9,6 +9,7 @@ import os
 import shutil
 import socket
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -60,6 +61,7 @@ class SRTWorkspace(LocalWorkspace):
         self._runtime_process: asyncio.subprocess.Process | None = None
         self._runtime_log_path = os.path.join(self.workdir, "srt-runtime.log")
         self._runtime_log_fp: Any = None
+        self._runtime_tmpdir: str | None = None
         self._backend = None
 
     async def initialize(self) -> None:
@@ -151,6 +153,17 @@ class SRTWorkspace(LocalWorkspace):
         srt_executable = _resolve_srt_executable(self.srt_executable)
         os.makedirs(os.path.dirname(self._runtime_log_path), exist_ok=True)
         self._runtime_log_fp = open(self._runtime_log_path, "ab")
+        runtime_tmpdir_root = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
+        runtime_tmpdir = tempfile.mkdtemp(
+            prefix="",
+            dir=runtime_tmpdir_root,
+        )
+        self._runtime_tmpdir = runtime_tmpdir
+        env = os.environ.copy()
+        # SRT still honors CLAUDE_TMPDIR, but we drop the newer variable so
+        # the per-workspace temp directory always wins deterministically.
+        env.pop("CLAUDE_CODE_TMPDIR", None)
+        env["CLAUDE_TMPDIR"] = runtime_tmpdir
         cmd = [
             srt_executable,
             "--settings",
@@ -165,12 +178,20 @@ class SRTWorkspace(LocalWorkspace):
             "--token",
             self.service_token,
         ]
-        self._runtime_process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=self.workdir,
-            stdout=self._runtime_log_fp,
-            stderr=self._runtime_log_fp,
-        )
+        try:
+            self._runtime_process = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=self.workdir,
+                env=env,
+                stdout=self._runtime_log_fp,
+                stderr=self._runtime_log_fp,
+            )
+        except Exception:
+            if self._runtime_log_fp is not None:
+                self._runtime_log_fp.close()
+                self._runtime_log_fp = None
+            self._cleanup_runtime_tmpdir()
+            raise
 
     async def _wait_for_runtime_ready(self) -> None:
         """Wait until the local runtime service reports healthy."""
@@ -211,6 +232,15 @@ class SRTWorkspace(LocalWorkspace):
         if self._runtime_log_fp is not None:
             self._runtime_log_fp.close()
             self._runtime_log_fp = None
+
+        self._cleanup_runtime_tmpdir()
+
+    def _cleanup_runtime_tmpdir(self) -> None:
+        """Remove the dedicated runtime temp directory if it still exists."""
+        runtime_tmpdir = self._runtime_tmpdir
+        self._runtime_tmpdir = None
+        if runtime_tmpdir and os.path.isdir(runtime_tmpdir):
+            shutil.rmtree(runtime_tmpdir, ignore_errors=True)
 
     async def _ensure_agent_namespace_loaded(self, agent_id: str) -> None:
         """Restore one agent namespace's persisted MCPs into the runtime."""

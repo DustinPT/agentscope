@@ -14,7 +14,8 @@
       "*.npmjs.org",
       "nodejs.org",
       "*.nodejs.org",
-      "registry.yarnpkg.com"
+      "registry.yarnpkg.com",
+      "mirrors.tuna.tsinghua.edu.cn"
     ],
     "deniedDomains": []
   },
@@ -30,6 +31,7 @@
       "/private/var/folders",
       "~/.cache/uv",
       "~/.cache/mise",
+      "~/.cache/pip",
       "~/.local/share/uv",
       "~/.local/share/mise",
       "~/.local/bin",
@@ -40,6 +42,7 @@
       "~/.cache/node",
       "~/.node-gyp",
       "~/Library/Caches/uv",
+      "~/Library/Caches/pip",
       "~/Library/Caches/npm",
       "~/Library/Caches/npx",
       "~/Library/Caches/node",
@@ -54,6 +57,7 @@
       "/private/var/folders",
       "~/.cache/uv",
       "~/.cache/mise",
+      "~/.cache/pip",
       "~/.local/share/uv",
       "~/.local/share/mise",
       "~/.local/bin",
@@ -64,6 +68,7 @@
       "~/.cache/node",
       "~/.node-gyp",
       "~/Library/Caches/uv",
+      "~/Library/Caches/pip",
       "~/Library/Caches/npm",
       "~/Library/Caches/npx",
       "~/Library/Caches/node",
