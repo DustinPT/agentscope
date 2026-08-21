@@ -76,5 +76,6 @@
       "~/Library/Application Support/npm"
     ],
     "denyWrite": []
-  }
+  },
+  "enableWeakerNetworkIsolation": true
 }
