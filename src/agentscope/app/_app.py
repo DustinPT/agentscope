@@ -10,9 +10,11 @@ from ._router import (
     attachment_router,
     chat_router,
     credential_router,
+    embedding_model_router,
     model_router,
     schedule_router,
     session_router,
+    tts_model_router,
     user_router,
     workspace_router,
 )
@@ -176,10 +178,12 @@ def create_app(
         credential_router,
         schedule_router,
         session_router,
-    user_router,
+        user_router,
         workspace_router,
         workspace_router,
         model_router,
+        embedding_model_router,
+        tts_model_router,
     ):
         app.include_router(router)
 

@@ -10,6 +10,7 @@ from ...storage import (
     SessionRecord,
     SessionWithState,
     TeamRecord,
+    TTSModelConfig,
 )
 
 
@@ -92,6 +93,10 @@ class CreateSessionRequest(BaseModel):
         description="Fallback model used when the primary model fails. "
         "Can be set later via PATCH.",
     )
+    tts_model_config: TTSModelConfig | None = Field(
+        default=None,
+        description="Optional TTS model. Can be set later via PATCH.",
+    )
     permission_mode: PermissionMode | None = Field(
         default=None,
         description="Initial permission mode for the session. "
@@ -172,6 +177,11 @@ class UpdateSessionRequest(BaseModel):
         default=None,
         description="New fallback model configuration. "
         "Pass null to clear; omit to leave unchanged.",
+    )
+    tts_model_config: TTSModelConfig | None = Field(
+        default=None,
+        description="New TTS model configuration. "
+        "Pass null to disable; omit to leave unchanged.",
     )
     permission_mode: PermissionMode | None = Field(
         default=None,

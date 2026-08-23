@@ -5,7 +5,13 @@ import { ArrowDownToLine, ArrowLeft, ArrowUpToLine, Bot, Download, List, Toolbox
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
-import type { ChatModelConfig, SessionExportOptions, SessionView, SubAgentSessionView } from '@/api';
+import type {
+        ChatModelConfig,
+        SessionExportOptions,
+        SessionView,
+        SubAgentSessionView,
+        TTSModelConfig,
+} from '@/api';
 import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import {
@@ -126,6 +132,7 @@ export function ChatViewport({
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
 		null,
 	);
+        const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
@@ -207,6 +214,7 @@ export function ChatViewport({
 	useEffect(() => {
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
+                setSelectedTTSModel(null);
 	}, [sessionId]);
 
 	useEffect(() => {
@@ -321,6 +329,7 @@ export function ChatViewport({
 		}
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
+                setSelectedTTSModel(view.session.config.tts_model_config ?? null);
 	}, [view, sessionId, agentId, getFirstAvailableModel, refetchRelatedSessions]);
 
 	// Sync selectedPermissionMode when the session changes. Same
@@ -369,6 +378,18 @@ export function ChatViewport({
 		await sessionApi.update(sessionId, agentId, { fallback_chat_model_config: config });
 		await refetchRelatedSessions();
 	};
+
+        /**
+         * Persist a TTS-model change. `null` disables TTS for the session.
+         *
+         * @param config - New TTS config or `null` to disable.
+         */
+        const handleTTSChange = async (config: TTSModelConfig | null) => {
+                if (!sessionId || !agentId) return;
+                setSelectedTTSModel(config);
+                await sessionApi.update(sessionId, agentId, { tts_model_config: config });
+                await refetchRelatedSessions();
+        };
 
 	/**
 	 * Persist a permission-mode change.
@@ -488,6 +509,8 @@ export function ChatViewport({
 								onChange={handleParametersChange}
 								selectedFallbackModel={selectedFallbackModel}
 								onFallbackChange={handleFallbackChange}
+                                                                selectedTTSModel={selectedTTSModel}
+                                                                onTTSChange={handleTTSChange}
 							/>
 						</div>
 						<div id="tour-permission-mode" className="flex flex-row gap-x-2">

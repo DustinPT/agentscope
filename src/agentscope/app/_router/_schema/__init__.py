@@ -2,6 +2,10 @@
 """Schema models for the agent service."""
 
 from ._chat import ChatRequest, ChatTriggerResponse
+from ._embedding_model import (
+    ListEmbeddingModelsRequest,
+    ListEmbeddingModelsResponse,
+)
 from ._model import ListModelsResponse, ListModelsRequest
 from ._schedule import (
     CreateScheduleRequest,
@@ -31,6 +35,7 @@ from ._credential import (
     ListCredentialsResponse,
     ListCredentialSchemasResponse,
 )
+from ._tts_model import ListTTSModelsResponse, ListTTSModelsRequest
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -81,6 +86,10 @@ __all__ = [
     # Model
     "ListModelsRequest",
     "ListModelsResponse",
+    "ListEmbeddingModelsRequest",
+    "ListEmbeddingModelsResponse",
+    "ListTTSModelsRequest",
+    "ListTTSModelsResponse",
     # Schedule
     "CreateScheduleRequest",
     "CreateScheduleResponse",

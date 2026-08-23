@@ -430,9 +430,15 @@
 		"noModelsDescription": "This provider returned no models.",
 		"deleteEntity": "credential",
 		"subtitle": "Model API credential configuration",
+                "llmTab": "LLM",
+                "ttsTab": "TTS",
+                "embeddingTab": "Embedding",
 		"reasoning": "Reasoning",
+                "realtime": "Realtime",
 		"maxContext": "Max. Context",
 		"maxOutput": "Max. Output",
+                "dimensions": "Dimensions",
+                "supportedDimensions": "Supported Dimensions",
 		"inputTypes": "Input",
 		"outputTypes": "Output"
 	},
@@ -537,7 +543,12 @@
 		"empty": "No configurable parameters.",
 		"fallbackLabel": "Fallback model",
 		"fallbackLabelWithModel": "Fallback model ({{model}})",
-		"parametersLabel": "Parameters"
+                "parametersLabel": "Parameters",
+                "ttsLabel": "Text to Speech",
+                "ttsEmpty": "No TTS models are currently available.",
+                "ttsParameters": "TTS Parameters",
+                "ttsParametersDescription": "Adjust parameters for the selected TTS model.",
+                "noTts": "Disable TTS"
 	},
         "settings": {
                 "home": {

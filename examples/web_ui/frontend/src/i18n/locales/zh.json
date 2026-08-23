@@ -430,9 +430,15 @@
 		"noModelsDescription": "该提供商未返回任何模型。",
 		"deleteEntity": "凭证",
 		"subtitle": "模型 API 授权配置",
+                "llmTab": "LLM",
+                "ttsTab": "TTS",
+                "embeddingTab": "Embedding",
 		"reasoning": "推理模型",
+                "realtime": "实时",
 		"maxContext": "最大上下文",
 		"maxOutput": "最大输出",
+                "dimensions": "向量维度",
+                "supportedDimensions": "可选维度",
 		"inputTypes": "输入模态",
 		"outputTypes": "输出模态"
 	},
@@ -537,7 +543,12 @@
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",
 		"fallbackLabelWithModel": "兜底模型（{{model}}）",
-		"parametersLabel": "参数"
+                "parametersLabel": "参数",
+                "ttsLabel": "语音合成",
+                "ttsEmpty": "当前没有可用的 TTS 模型。",
+                "ttsParameters": "TTS 参数",
+                "ttsParametersDescription": "调整语音合成模型参数。",
+                "noTts": "关闭 TTS"
 	},
         "settings": {
                 "home": {

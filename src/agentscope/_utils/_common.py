@@ -18,6 +18,11 @@ from .._logging import logger
 from ..exception import ToolJSONDecodeError
 
 
+def _generate_id() -> str:
+    """Generate a random entity ID."""
+    return uuid.uuid4().hex
+
+
 def _json_loads_with_repair(
     json_str: str,
     schema: dict | None = None,

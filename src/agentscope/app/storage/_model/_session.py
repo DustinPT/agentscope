@@ -34,6 +34,45 @@ class ChatModelConfig(BaseModel):
     """The model parameters."""
 
 
+class TTSModelConfig(BaseModel):
+    """The TTS model configuration class."""
+
+    type: str
+    """The provider type."""
+
+    credential_id: str
+    """The credential id."""
+
+    model: str
+    """The TTS model name."""
+
+    parameters: dict = Field(default_factory=dict)
+    """TTS parameters (voice, language, etc.)."""
+
+
+class EmbeddingModelConfig(BaseModel):
+    """Configuration for constructing an embedding model from a credential.
+
+    This DTO is kept independent from :class:`SessionConfig` because this
+    project does not enable the official knowledge base / RAG subsystem yet.
+    """
+
+    type: str
+    """The provider type (e.g. ``"openai_credential"``)."""
+
+    credential_id: str
+    """The credential id to use for authentication."""
+
+    model: str
+    """The embedding model name."""
+
+    dimensions: int = Field(..., gt=0)
+    """The output embedding vector dimensions."""
+
+    parameters: dict = Field(default_factory=dict)
+    """The provider-specific non-dimensional parameters."""
+
+
 class SessionConfig(BaseModel):
     """Session configuration — set at creation, updatable via PATCH."""
 
@@ -52,6 +91,9 @@ class SessionConfig(BaseModel):
     fallback_chat_model_config: ChatModelConfig | None = None
     """The fallback chat model config. Used as a backup when the primary
     model fails. None means no fallback configured."""
+
+    tts_model_config: TTSModelConfig | None = None
+    """The TTS model config. None means TTS is disabled."""
 
     permission_mode: PermissionMode = PermissionMode.DEFAULT
     """Persisted permission mode for this session."""

@@ -41,6 +41,7 @@ from ..storage import (
     SessionWithState,
     StorageBase,
     TeamRecord,
+    TTSModelConfig,
 )
 from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
@@ -163,7 +164,7 @@ session_router = APIRouter(
 async def _ensure_credential_exists(
     storage: StorageBase,
     user_id: str,
-    config: ChatModelConfig | None,
+    config: ChatModelConfig | TTSModelConfig | None,
 ) -> None:
     """Validate that the credential referenced by ``config`` belongs to the
     given user. No-op when ``config`` is ``None``.
@@ -320,6 +321,11 @@ async def create_session(
         user_id,
         body.fallback_chat_model_config,
     )
+    await _ensure_credential_exists(
+        storage,
+        user_id,
+        body.tts_model_config,
+    )
 
     permission_mode = body.permission_mode or PermissionMode.DEFAULT
     state = AgentState(
@@ -333,6 +339,7 @@ async def create_session(
             workspace_id=body.workspace_id or uuid.uuid4().hex,
             chat_model_config=resolved_chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
+            tts_model_config=body.tts_model_config,
             permission_mode=permission_mode,
             **({"name": body.name} if body.name is not None else {}),
         ),
@@ -480,6 +487,11 @@ async def update_session(
         storage,
         user_id,
         body.fallback_chat_model_config,
+    )
+    await _ensure_credential_exists(
+        storage,
+        user_id,
+        body.tts_model_config,
     )
 
     updated_state = None

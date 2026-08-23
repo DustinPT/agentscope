@@ -5,11 +5,13 @@ from ._agent import AgentRecord, AgentData, AgentMCPAsset, AgentSkillAsset
 from ._credential import CredentialRecord
 from ._schedule import ScheduleData, ScheduleRecord, ScheduleSource
 from ._session import (
-    SessionRecord,
-    SessionWithState,
-    SessionConfig,
     ChatModelConfig,
+    EmbeddingModelConfig,
+    SessionConfig,
+    SessionRecord,
     SessionSource,
+    SessionWithState,
+    TTSModelConfig,
 )
 from ._session_state import SessionStateRecord
 from ._team import TeamRecord, TeamData
@@ -31,6 +33,8 @@ __all__ = [
     "SessionStateRecord",
     "SessionSource",
     "ChatModelConfig",
+    "TTSModelConfig",
+    "EmbeddingModelConfig",
     "GlobalDefaultModels",
     "TeamData",
     "TeamRecord",

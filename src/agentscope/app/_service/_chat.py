@@ -50,6 +50,7 @@ from .._types import (
 from ._model import get_model
 from ._session_title import generate_session_title
 from ._toolkit import get_toolkit
+from ._tts_model import get_tts_model
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
@@ -66,7 +67,7 @@ from ...event import (
     UserConfirmResultEvent,
 )
 from ...formatter import FormatterBase
-from ...middleware import MiddlewareBase
+from ...middleware import MiddlewareBase, TTSMiddleware
 from ...message import AssistantMsg, Msg, SystemMsg
 from ...permission import AdditionalWorkingDirectory
 from ...state import ToolRuntimeContext
@@ -1615,6 +1616,14 @@ class ChatService:
                     session_id=session_id,
                 ),
             )
+        tts_cfg = session_record.config.tts_model_config
+        if tts_cfg is not None:
+            tts_model = await get_tts_model(
+                user_id,
+                tts_cfg,
+                self._storage,
+            )
+            middlewares.append(TTSMiddleware(tts_model))
         if self._extra_agent_middlewares is not None:
             middlewares.extend(
                 await self._extra_agent_middlewares(
