@@ -12,6 +12,7 @@ that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
 import asyncio
+import inspect
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -224,6 +225,18 @@ class ChatService:
         self._message_bus = message_bus
         self._chat_run_registry = chat_run_registry
         self._extra_agent_middlewares = extra_agent_middlewares
+        self._middlewares_take_workspace = False
+        if extra_agent_middlewares is not None:
+            try:
+                inspect.signature(extra_agent_middlewares).bind(
+                    "",
+                    "",
+                    "",
+                    None,
+                )
+                self._middlewares_take_workspace = True
+            except (TypeError, ValueError):
+                pass
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
@@ -1209,12 +1222,15 @@ class ChatService:
                 ),
             )
         if self._extra_agent_middlewares is not None:
+            factory_args: tuple = (
+                user_id,
+                agent_record.id,
+                session_id,
+            )
+            if self._middlewares_take_workspace:
+                factory_args += (workspace,)
             middlewares.extend(
-                await self._extra_agent_middlewares(
-                    user_id,
-                    agent_record.id,
-                    session_id,
-                ),
+                await self._extra_agent_middlewares(*factory_args),
             )
 
         return {
@@ -1625,12 +1641,11 @@ class ChatService:
             )
             middlewares.append(TTSMiddleware(tts_model))
         if self._extra_agent_middlewares is not None:
+            factory_args: tuple = (user_id, agent_id, session_id)
+            if self._middlewares_take_workspace:
+                factory_args += (workspace,)
             middlewares.extend(
-                await self._extra_agent_middlewares(
-                    user_id,
-                    agent_id,
-                    session_id,
-                ),
+                await self._extra_agent_middlewares(*factory_args),
             )
 
         # ----------------------------------------------------------------

@@ -76,6 +76,16 @@ workspace = [
 tools = [
     "ripgrep",
 ]
+# ------------ Long-term memory ------------
+memory-mem0 = ["mem0ai>=2.0.0"]
+memory-reme = ["reme-ai>=0.4.0.6"]
+memory = [
+    "agentscope[memory-mem0]",
+    "agentscope[memory-reme]",
+]
+# ------------ Deprecated aliases ------------
+mem0 = ["agentscope[memory-mem0]"]
+reme = ["agentscope[memory-reme]"]
 
 # ------------ Full ------------
 full = [
@@ -84,6 +94,7 @@ full = [
     "agentscope[storage]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[memory]",
 ]
 
 # ------------ Development ------------

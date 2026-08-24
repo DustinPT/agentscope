@@ -188,6 +188,18 @@ def _get_bytes_from_web_url(
     )
 
 
+def _estimate_tokens(text: str) -> int:
+    """Estimate the number of tokens in a given text."""
+
+    return int(len(text.encode("utf-8")) / 4 + 0.5)
+
+
+def _estimate_bytes(tokens: int) -> int:
+    """Estimate the number of bytes with given tokens."""
+
+    return int(tokens * 4)
+
+
 def _map_text_to_uuid(text: str) -> str:
     """Map the given text to a deterministic UUID string.
 
