@@ -1,7 +1,7 @@
 import type { ContentBlock } from '@agentscope-ai/agentscope/message';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { PermissionMode, ChatModelConfig } from '@/api';
+import type { PermissionMode, ChatModelConfig, TTSModelConfig } from '@/api';
 import { EmptyMessage } from '@/components/chat/Empty';
 import {
 	buildContentBlockFromFile,
@@ -18,6 +18,7 @@ export interface SessionDraftState {
 	files: ProcessedFile[];
 	chatModelConfig: ChatModelConfig | null;
 	fallbackChatModelConfig: ChatModelConfig | null;
+        ttsModelConfig: TTSModelConfig | null;
 	permissionMode: PermissionMode;
 }
 
@@ -119,6 +120,13 @@ export function SessionDraftComposer({
 										fallbackChatModelConfig: value,
 									}))
 								}
+                                                                selectedTTSModel={draft.ttsModelConfig}
+                                                                onTTSChange={(value) =>
+                                                                        updateDraft((prev) => ({
+                                                                                ...prev,
+                                                                                ttsModelConfig: value,
+                                                                        }))
+                                                                }
 							/>
 						</div>
 						<div className="flex flex-row gap-x-2">

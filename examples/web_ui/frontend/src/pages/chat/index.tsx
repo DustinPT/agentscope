@@ -170,6 +170,7 @@ const ChatPageInner = () => {
 			files: [],
 			chatModelConfig: view?.session.config.chat_model_config ?? null,
 			fallbackChatModelConfig: view?.session.config.fallback_chat_model_config ?? null,
+                        ttsModelConfig: view?.session.config.tts_model_config ?? null,
 			permissionMode: getPermissionMode(view),
 		}),
 		[getPermissionMode],
@@ -299,6 +300,7 @@ const ChatPageInner = () => {
 				name: tempTitle,
 				chat_model_config: activeDraft.chatModelConfig,
 				fallback_chat_model_config: activeDraft.fallbackChatModelConfig,
+                                tts_model_config: activeDraft.ttsModelConfig,
 				permission_mode: activeDraft.permissionMode,
 			});
 			const userMsg = UserMsg({ name: 'user', content });
