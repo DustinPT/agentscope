@@ -9,7 +9,6 @@ import json
 import os
 import sys
 import time
-import uuid
 from typing import Any
 
 from ..._logging import logger
@@ -22,6 +21,7 @@ from ...workspace._srt._paths import (
 from ...workspace._srt._srt_workspace import SRTWorkspace
 from .._service._workspace_seed import sync_workspace_state
 from ..storage import AgentMCPAsset, AgentSkillAsset
+from ._base import IsolationPolicy
 from ._local_workspace_manager import LocalWorkspaceManager
 
 
@@ -31,6 +31,8 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
     def __init__(
         self,
         basedir: str,
+        *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         default_srt_settings_path: str | None = None,
         srt_executable: str = "srt",
         default_mcps: list | None = None,
@@ -41,6 +43,7 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
     ) -> None:
         super().__init__(
             basedir=basedir,
+            isolation=isolation,
             default_mcps=default_mcps,
             skill_paths=skill_paths,
             ttl=ttl,
@@ -88,13 +91,18 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None,
         agent_mcps: list[MCPClient] | None = None,
         agent_mcp_assets: list[AgentMCPAsset] | None = None,
         agent_skill_assets: list[AgentSkillAsset] | None = None,
     ) -> AgentWorkspaceView:
         """Return an initialized SRT workspace, rebuilding on cache miss."""
-        del session_id
+        if workspace_id is None:
+            workspace_id = await self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
 
         async with self._lock:
             now = time.monotonic()
@@ -154,31 +162,6 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return view
-
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> AgentWorkspaceView:
-        """Create a new SRT workspace and persist its derived config."""
-        del user_id, session_id
-
-        workspace_id = uuid.uuid4().hex
-        ws = self._build_workspace(workspace_id, user_id)
-        await ws.initialize()
-        view = AgentWorkspaceView(ws, agent_id)
-        await sync_workspace_state(
-            view,
-            expected_mcps=[],
-            expected_mcp_assets=[],
-            expected_skills=[],
-            manager_default_mcps=self._default_mcps,
-            manager_skill_paths=self._skill_paths,
-        )
-        async with self._lock:
-            self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return view
 
     @staticmethod
     async def _safe_close(ws: SRTWorkspace) -> None:

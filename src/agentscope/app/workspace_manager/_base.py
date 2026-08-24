@@ -1,12 +1,30 @@
 # -*- coding: utf-8 -*-
 """Workspace manager implementations."""
 
+import asyncio
+import hashlib
+import uuid
 from abc import ABC, abstractmethod
-from typing import Self
+from collections import defaultdict
+from enum import StrEnum
+from typing import TYPE_CHECKING, Self
 
 from ...mcp import MCPClient
 from ...workspace import WorkspaceBase
 from ..storage import AgentMCPAsset, AgentSkillAsset
+
+if TYPE_CHECKING:
+    from ..storage import StorageBase
+
+
+class IsolationPolicy(StrEnum):
+    """Workspace isolation grain for
+    :meth:`WorkspaceManagerBase.assign_workspace_id`.
+    """
+
+    PER_SESSION = "per_session"
+    PER_AGENT = "per_agent"
+    PER_USER = "per_user"
 
 
 class WorkspaceManagerBase(ABC):
@@ -23,13 +41,75 @@ class WorkspaceManagerBase(ABC):
     both.
     """
 
+    def __init__(
+        self,
+        *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
+    ) -> None:
+        """Bind the isolation policy for :meth:`assign_workspace_id`."""
+        self._isolation: IsolationPolicy = isolation
+        self._storage: "StorageBase | None" = None
+        self._bind_locks: defaultdict[
+            tuple[str, str],
+            asyncio.Lock,
+        ] = defaultdict(asyncio.Lock)
+        self._reserved: dict[tuple[str, str], str] = {}
+
+    def bind_storage(self, storage: "StorageBase") -> None:
+        """Hand the manager the backend holding workspace bindings."""
+        self._storage = storage
+
+    async def assign_workspace_id(
+        self,
+        *,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> str:
+        """Mint a workspace id under :attr:`_isolation`."""
+        del session_id
+
+        if self._isolation is IsolationPolicy.PER_USER:
+            return hashlib.blake2b(
+                f"user::{user_id}".encode("utf-8"),
+                digest_size=8,
+            ).hexdigest()
+
+        if self._isolation is IsolationPolicy.PER_SESSION:
+            return await self._mint_workspace_id()
+
+        if self._storage is None:
+            return hashlib.blake2b(
+                f"{user_id}::{agent_id}".encode("utf-8"),
+                digest_size=8,
+            ).hexdigest()
+
+        async with self._bind_locks[(user_id, agent_id)]:
+            for record in await self._storage.list_sessions(
+                user_id,
+                agent_id,
+            ):
+                if record.config.workspace_id:
+                    self._reserved.pop((user_id, agent_id), None)
+                    return record.config.workspace_id
+            reserved = self._reserved.get((user_id, agent_id))
+            if reserved:
+                return reserved
+            workspace_id = await self._mint_workspace_id()
+            self._reserved[(user_id, agent_id)] = workspace_id
+            return workspace_id
+
+    async def _mint_workspace_id(self) -> str:
+        """Produce an id for a workspace nobody holds yet."""
+        return uuid.uuid4().hex
+
     @abstractmethod
     async def get_workspace(
         self,
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None,
         agent_mcps: list[MCPClient] | None = None,
         agent_mcp_assets: list[AgentMCPAsset] | None = None,
         agent_skill_assets: list[AgentSkillAsset] | None = None,
@@ -43,18 +123,10 @@ class WorkspaceManagerBase(ABC):
                 The agent id.
             session_id (`str`):
                 The session id.
-            workspace_id (`str`):
-                The workspace id (reconnection credential).
+            workspace_id (`str | None`):
+                The workspace id (reconnection credential). ``None``
+                triggers :meth:`assign_workspace_id`.
         """
-
-    @abstractmethod
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> WorkspaceBase:
-        """Create a new workspace and return it."""
 
     @abstractmethod
     async def close(self, workspace_id: str) -> None:

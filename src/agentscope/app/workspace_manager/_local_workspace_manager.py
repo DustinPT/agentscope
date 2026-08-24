@@ -4,14 +4,13 @@
 import asyncio
 import os
 import time
-import uuid
 
 from ..._logging import logger
 from .._service._workspace_seed import sync_workspace_state
 from ..storage import AgentMCPAsset, AgentSkillAsset
 from ...mcp import MCPClient
 from ...workspace import AgentWorkspaceView, LocalWorkspace
-from ._base import WorkspaceManagerBase
+from ._base import IsolationPolicy, WorkspaceManagerBase
 
 
 class LocalWorkspaceManager(WorkspaceManagerBase):
@@ -26,6 +25,8 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
     def __init__(
         self,
         basedir: str,
+        *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         default_mcps: list | None = None,
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
@@ -50,6 +51,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[LocalWorkspace, float]] = {}
         self._lock = asyncio.Lock()
+        super().__init__(isolation=isolation)
 
     def _pop_expired(self, now: float) -> list[LocalWorkspace]:
         """Pop every cache entry whose last-access exceeds ``ttl``.
@@ -68,7 +70,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None,
         agent_mcps: list[MCPClient] | None = None,
         agent_mcp_assets: list[AgentMCPAsset] | None = None,
         agent_skill_assets: list[AgentSkillAsset] | None = None,
@@ -84,7 +86,12 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         cache misses for the same ``workspace_id`` cannot create two
         workspaces.
         """
-        del user_id  # accepted for interface parity; not used here
+        if workspace_id is None:
+            workspace_id = await self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
 
         # Phase 1: cache hit + collect expired.
         async with self._lock:
@@ -154,36 +161,6 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return view
-
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> AgentWorkspaceView:
-        """Create a new workspace for the given agent and return it."""
-        del user_id, session_id  # accepted for interface parity
-
-        workspace_id = uuid.uuid4().hex
-        workdir = os.path.join(self._basedir, workspace_id)
-        os.makedirs(workdir, exist_ok=True)
-        ws = LocalWorkspace(
-            workspace_id=workspace_id,
-            workdir=workdir,
-        )
-        await ws.initialize()
-        view = AgentWorkspaceView(ws, agent_id)
-        await sync_workspace_state(
-            view,
-            expected_mcps=[],
-            expected_mcp_assets=[],
-            expected_skills=[],
-            manager_default_mcps=self._default_mcps,
-            manager_skill_paths=self._skill_paths,
-        )
-        async with self._lock:
-            self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return view
 
     async def close(self, workspace_id: str) -> None:
         """Close and evict a single workspace from the cache."""

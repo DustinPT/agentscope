@@ -28,7 +28,6 @@ constructor):
 import asyncio
 import os
 import time
-import uuid
 from typing import Self
 
 from agentscope._logging import logger
@@ -41,7 +40,7 @@ from agentscope.workspace._docker._make_dockerfile import (
 )
 from .._service._workspace_seed import sync_workspace_state
 from ..storage import AgentMCPAsset, AgentSkillAsset
-from ._base import WorkspaceManagerBase
+from ._base import IsolationPolicy, WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -63,6 +62,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self,
         basedir: str,
         *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         base_image: str = DEFAULT_BASE_IMAGE,
         node_version: str = "20",
         extra_pip: list[str] | None = None,
@@ -123,6 +123,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self._cache: dict[str, tuple[DockerWorkspace, float]] = {}
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
+        super().__init__(isolation=isolation)
 
     # ── isolation helpers ─────────────────────────────────────────
 
@@ -170,7 +171,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None,
         agent_mcps: list[MCPClient] | None = None,
         agent_mcp_assets: list[AgentMCPAsset] | None = None,
         agent_skill_assets: list[AgentSkillAsset] | None = None,
@@ -202,7 +203,12 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             `AgentWorkspaceView`:
                 A live, initialised agent-scoped workspace view.
         """
-        del session_id  # accepted for interface parity; not used here
+        if workspace_id is None:
+            workspace_id = await self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
 
         async with self._lock:
             cached = self._cache.get(workspace_id)
@@ -254,60 +260,6 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return view
-
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> AgentWorkspaceView:
-        """Build a brand-new workspace and track it.
-
-        A fresh ``workspace_id`` is allocated by
-        :class:`DockerWorkspace` itself; the caller should persist
-        ``workspace.workspace_id`` for later :meth:`get_workspace`
-        calls.
-
-        Args:
-            user_id (`str`):
-                Owning user identifier.
-            agent_id (`str`):
-                Agent identifier (controls the workdir).
-            session_id (`str`):
-                Session identifier (accepted for parity; not used
-                here).
-
-        Returns:
-            `AgentWorkspaceView`:
-                The newly built agent-scoped workspace view.
-        """
-        del session_id  # accepted for interface parity; not used here
-
-        workspace_id = uuid.uuid4().hex
-        workdir = self._workdir_for(user_id, workspace_id)
-        os.makedirs(workdir, exist_ok=True)
-        ws = DockerWorkspace(
-            workspace_id=workspace_id,
-            workdir=workdir,
-            base_image=self._base_image,
-            node_version=self._node_version,
-            extra_pip=self._extra_pip,
-            gateway_port=self._gateway_port,
-            env=self._env,
-        )
-        await ws.initialize()
-        view = AgentWorkspaceView(ws, agent_id)
-        await sync_workspace_state(
-            view,
-            expected_mcps=[],
-            expected_mcp_assets=[],
-            expected_skills=[],
-            manager_default_mcps=self._default_mcps,
-            manager_skill_paths=self._skill_paths,
-        )
-        async with self._lock:
-            self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return view
 
     async def close(self, workspace_id: str) -> None:
         """Close and evict a single workspace from the cache.

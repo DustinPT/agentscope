@@ -153,6 +153,7 @@ def create_app(
     # Attach shared state that lifespan and dependencies read from app.state
     app.state.storage = storage
     app.state.message_bus = message_bus
+    workspace_manager.bind_storage(storage)
     app.state.workspace_manager = workspace_manager
     app.state.agent_asset_store = AgentAssetStore(
         agent_asset_root or ".agent_assets",

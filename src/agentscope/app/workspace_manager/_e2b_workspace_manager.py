@@ -46,7 +46,7 @@ from agentscope.workspace._e2b._bootstrap import (
 )
 from .._service._workspace_seed import sync_workspace_state
 from ..storage import AgentMCPAsset, AgentSkillAsset
-from ._base import WorkspaceManagerBase
+from ._base import IsolationPolicy, WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -62,6 +62,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
     def __init__(
         self,
         *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         template: str = DEFAULT_TEMPLATE,
         api_key: str = "",
         domain: str = "",
@@ -132,6 +133,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._cache: dict[str, tuple[E2BWorkspace, float]] = {}
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
+        super().__init__(isolation=isolation)
 
     # ── metadata helper ───────────────────────────────────────────
 
@@ -189,7 +191,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None,
         agent_mcps: list[MCPClient] | None = None,
         agent_mcp_assets: list[AgentMCPAsset] | None = None,
         agent_skill_assets: list[AgentSkillAsset] | None = None,
@@ -225,7 +227,12 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             `AgentWorkspaceView`:
                 A live, initialised agent-scoped workspace view.
         """
-        del session_id  # accepted for interface parity; not used here
+        if workspace_id is None:
+            workspace_id = await self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
 
         async with self._lock:
             cached = self._cache.get(workspace_id)
@@ -278,52 +285,6 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return view
-
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> AgentWorkspaceView:
-        """Build a brand-new workspace and track it.
-
-        A fresh ``workspace_id`` is allocated by
-        :class:`WorkspaceBase`; the caller should persist
-        ``workspace.workspace_id`` for later :meth:`get_workspace`
-        calls.
-
-        Args:
-            user_id (`str`):
-                Owning user identifier (forwarded as sandbox metadata).
-            agent_id (`str`):
-                Agent identifier (forwarded as sandbox metadata).
-            session_id (`str`):
-                Session identifier (accepted for parity; not used
-                here).
-
-        Returns:
-            `AgentWorkspaceView`:
-                The newly built agent-scoped workspace view.
-        """
-        del session_id  # accepted for interface parity; not used here
-
-        ws = await self._build_and_start(
-            workspace_id=None,
-            user_id=user_id,
-            agent_id=agent_id,
-        )
-        view = AgentWorkspaceView(ws, agent_id)
-        await sync_workspace_state(
-            view,
-            expected_mcps=[],
-            expected_mcp_assets=[],
-            expected_skills=[],
-            manager_default_mcps=self._default_mcps,
-            manager_skill_paths=self._skill_paths,
-        )
-        async with self._lock:
-            self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return view
 
     async def close(self, workspace_id: str) -> None:
         """Close (= pause the sandbox) and evict a single workspace.
