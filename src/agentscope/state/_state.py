@@ -7,7 +7,14 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field, model_validator
 
 from ._task import Task
-from ..message import TextBlock, DataBlock, Msg
+from ..message import (
+    DataBlock,
+    HintBlock,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+)
 from ..permission import PermissionContext
 
 if TYPE_CHECKING:
@@ -366,3 +373,34 @@ class AgentState(BaseModel):
     # =================================================================
     tasks_context: TaskContext = Field(default_factory=TaskContext)
     """The task context that records the agent tasks."""
+
+    def append_context(
+        self,
+        name: str,
+        blocks: list[
+            TextBlock | DataBlock | HintBlock | ToolCallBlock | ToolResultBlock
+        ],
+    ) -> None:
+        """Append blocks to the current assistant reply context.
+
+        When the tail message already belongs to the current agent reply,
+        extend its content in place; otherwise create a new assistant
+        message bound to ``self.reply_id``.
+        """
+        if (
+            self.context
+            and self.context[-1].role == "assistant"
+            and self.context[-1].name == name
+            and self.context[-1].id == self.reply_id
+        ):
+            self.context[-1].content.extend(blocks)
+            return
+
+        self.context.append(
+            Msg(
+                id=self.reply_id,
+                role="assistant",
+                name=name,
+                content=blocks,
+            ),
+        )
