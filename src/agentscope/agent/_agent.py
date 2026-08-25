@@ -46,7 +46,7 @@ from ..event import (
     RequireUserConfirmEvent,
     RequireExternalExecutionEvent,
     ExternalExecutionResultEvent,
-    SessionInterruptEvent,
+      UserInterruptEvent,
     UserConfirmResultEvent,
     DataBlockStartEvent,
     DataBlockDeltaEvent,
@@ -300,7 +300,7 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-        | SessionInterruptEvent
+          | UserInterruptEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Reply to the given inputs and stream agent events.
@@ -326,14 +326,14 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-        | SessionInterruptEvent
+          | UserInterruptEvent
         | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
         Args:
             inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
-            ExternalExecutionResultEvent | SessionInterruptEvent | None`, \
+              ExternalExecutionResultEvent | UserInterruptEvent | None`, \
             optional):
                 The inputs that trigger this reply. It can be:
 
@@ -341,7 +341,7 @@ class Agent:
                   reply,
                 - a `UserConfirmResultEvent` or
                   `ExternalExecutionResultEvent` or
-                  `SessionInterruptEvent` to continue from the
+                  `UserInterruptEvent` to continue from the
                   outside interaction required by the previous reply,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
@@ -893,7 +893,7 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-        | SessionInterruptEvent
+          | UserInterruptEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
@@ -908,6 +908,7 @@ class Agent:
                 | list[Msg]
                 | UserConfirmResultEvent
                 | ExternalExecutionResultEvent
+                  | UserInterruptEvent
                 | None = inputs,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
@@ -939,6 +940,7 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+          | UserInterruptEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
@@ -946,7 +948,7 @@ class Agent:
         event: (
             UserConfirmResultEvent
             | ExternalExecutionResultEvent
-            | SessionInterruptEvent
+            | UserInterruptEvent
             | None
         )
         msgs: Msg | list[Msg] | None
@@ -955,7 +957,7 @@ class Agent:
             (
                 UserConfirmResultEvent,
                 ExternalExecutionResultEvent,
-                SessionInterruptEvent,
+                UserInterruptEvent,
             ),
         ):
             event = inputs
@@ -963,6 +965,22 @@ class Agent:
         else:
             event = None
             msgs = inputs
+
+        if isinstance(inputs, UserInterruptEvent):
+            if self._has_interruptible_tool_calls():
+                async for evt in self._handle_incoming_event(inputs):
+                    yield evt
+                reply_metadata = await self._finalize_reply_metadata()
+                yield ReplyEndEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    metadata=reply_metadata,
+                )
+                last_msg = self._get_last_msg()
+                if last_msg is not None:
+                    last_msg.metadata.update(reply_metadata)
+                    yield last_msg
+            return
 
         # ===================================================================
         # Step 1: Checking agent input:
@@ -979,7 +997,7 @@ class Agent:
         if is_awaiting:
             async for evt in self._handle_incoming_event(event):
                 yield evt
-            if isinstance(event, SessionInterruptEvent):
+            if isinstance(event, UserInterruptEvent):
                 reply_metadata = await self._finalize_reply_metadata()
                 yield ReplyEndEvent(
                     session_id=self.state.session_id,
@@ -1302,14 +1320,14 @@ class Agent:
 
     async def _check_incoming_event(
         self,
-        event: UserConfirmResultEvent | ExternalExecutionResultEvent | SessionInterruptEvent | None,
+          event: UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | None,
     ) -> bool:
         """Check if the agent is waiting for the incoming event, if no, raise
         error.
 
         Args:
             event (`UserConfirmResultEvent | ExternalExecutionResultEvent \
-            | SessionInterruptEvent | None`):
+              | UserInterruptEvent | None`):
                 The incoming event to be checked.
 
         Raises:
@@ -1355,7 +1373,7 @@ class Agent:
                 f"but received no event.",
             )
 
-        if isinstance(event, SessionInterruptEvent):
+        if isinstance(event, UserInterruptEvent):
             return True
 
         if isinstance(event, UserConfirmResultEvent):
@@ -1396,7 +1414,7 @@ class Agent:
 
     async def _handle_incoming_event(
         self,
-        event: UserConfirmResultEvent | ExternalExecutionResultEvent | SessionInterruptEvent | None,
+        event: UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | None,
     ) -> AsyncGenerator[
         ToolResultStartEvent
         | ToolResultTextDeltaEvent
@@ -1408,7 +1426,7 @@ class Agent:
 
         Args:
             event (`UserConfirmResultEvent | ExternalExecutionResultEvent \
-            | SessionInterruptEvent | None`):
+            | UserInterruptEvent | None`):
                 The incoming event to be handled.
 
         Yields:
@@ -1492,7 +1510,7 @@ class Agent:
                     ToolCallState.FINISHED,
                 )
 
-        elif isinstance(event, SessionInterruptEvent):
+        elif isinstance(event, UserInterruptEvent):
             last_msg = self.state.context[-1]
             for tool_call in last_msg.get_content_blocks("tool_call"):
                 if tool_call.state not in (
@@ -1506,7 +1524,7 @@ class Agent:
                     tool_call,
                     message=(
                         "<system-reminder>The execution of tool "
-                        f'"{tool_call.name}" is interrupted by session cancel. '
+                        f'"{tool_call.name}" is interrupted by the user. '
                         "Any previously streamed tool output may be partial "
                         "and must not be treated as a complete tool result."
                         "</system-reminder>"
@@ -2717,6 +2735,22 @@ class Agent:
         if last_msg.role == "assistant" and last_msg.name == self.name:
             return last_msg
         return None
+
+    def _has_interruptible_tool_calls(self) -> bool:
+        """Return whether the current reply is waiting on tool interaction."""
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return False
+        return any(
+            tool_call.state
+            in (
+                ToolCallState.ASKING,
+                ToolCallState.SUBMITTED,
+                ToolCallState.PENDING,
+                ToolCallState.ALLOWED,
+            )
+            for tool_call in last_msg.get_content_blocks("tool_call")
+        )
 
     def _check_next_action(
         self,

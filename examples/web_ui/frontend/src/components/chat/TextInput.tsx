@@ -36,6 +36,7 @@ interface TextInputProps {
 	autoComplete?: (input: string) => string | null;
 	focusKey?: string | null;
 	sending?: boolean;
+        stopDisabled?: boolean;
 	disabled?: boolean;
 	className?: string;
 	/**
@@ -89,6 +90,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			autoComplete,
 			focusKey,
 			sending = false,
+                        stopDisabled = false,
 			disabled = false,
 			className,
 			allowedInputTypes,
@@ -218,7 +220,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		const handleStop = () => {
-			if (!sending) return;
+                          if (!sending || stopDisabled) return;
 			void onStop?.();
 		};
 
@@ -395,6 +397,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 											onClick={handleStop}
 											size="icon"
 											variant="secondary"
+                                                                                          disabled={stopDisabled}
 											className="shrink-0 rounded-full"
 										>
 											<X className="h-4 w-4" />

@@ -398,6 +398,12 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     target ``session_id`` and only the worker actually holding that
     session's task reacts."""
 
+    _TASK_CANCEL_KEY = "agentscope:task:cancel"
+    """Global task-cancel broadcast channel."""
+
+    _SESSION_INTERRUPT_KEY = "agentscope:session:interrupt"
+    """Global interrupt-broadcast channel for graceful chat-run interruption."""
+
     _SESSION_RUN_TTL_SECS = 600
     """Default lock lease for a chat run (10 minutes)."""
 
@@ -595,6 +601,48 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             if isinstance(sid, str):
                 yield sid
 
+    async def task_publish_cancel(self, task_id: str) -> None:
+        """Broadcast a cancel request for one background task."""
+        await self.publish(
+            self._TASK_CANCEL_KEY,
+            {"task_id": task_id},
+        )
+
+    async def task_subscribe_cancel(
+        self,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Subscribe to the task-cancel broadcast channel."""
+        async for payload in self.subscribe(
+            self._TASK_CANCEL_KEY,
+            on_ready=on_ready,
+        ):
+            task_id = payload.get("task_id")
+            if isinstance(task_id, str):
+                yield task_id
+
+    async def session_publish_interrupt(self, session_id: str) -> None:
+        """Broadcast a graceful interrupt request for ``session_id``."""
+        await self.publish(
+            self._SESSION_INTERRUPT_KEY,
+            {"session_id": session_id},
+        )
+
+    async def session_subscribe_interrupt(
+        self,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Subscribe to the interrupt-broadcast channel."""
+        async for payload in self.subscribe(
+            self._SESSION_INTERRUPT_KEY,
+            on_ready=on_ready,
+        ):
+            sid = payload.get("session_id")
+            if isinstance(sid, str):
+                yield sid
+
     # Purge -------------------------------------------------------------
 
     async def session_purge(self, session_id: str) -> None:
@@ -691,6 +739,9 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         user_id: str,
         session_id: str,
         agent_id: str,
+        *,
+        kind: str = "wake",
+        input: dict | None = None,
     ) -> None:
         """Enqueue a wake-up request and signal dispatchers.
 
@@ -708,6 +759,12 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 The session to wake.
             agent_id (`str`):
                 The agent id that owns the session.
+            kind (`str`, optional):
+                Wake-up trigger kind. ``"wake"`` starts an idle run with
+                ``input_msg=None``; ``"resume"`` restarts a parked session with
+                the serialized ``input`` payload.
+            input (`dict | None`, optional):
+                Serialized input payload for ``resume`` triggers.
         """
         await self.queue_push(
             self._WAKEUP_QUEUE_KEY,
@@ -715,6 +772,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 "user_id": user_id,
                 "session_id": session_id,
                 "agent_id": agent_id,
+                "kind": kind,
+                "input": input,
             },
         )
         await self.publish(self._WAKEUP_SIGNAL_KEY, {})
@@ -731,8 +790,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
         Returns:
             `list[dict]`:
-                Entries shaped ``{"user_id", "session_id",
-                "agent_id"}`` in enqueue order.
+                  Entries shaped ``{"user_id", "session_id", "agent_id",
+                  "kind", "input"}`` in enqueue order.
         """
         entries = await self.queue_drain(
             self._WAKEUP_QUEUE_KEY,

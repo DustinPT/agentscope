@@ -234,6 +234,21 @@ class BackgroundTaskManager:
     # Session-scoped cancel
     # ------------------------------------------------------------------
 
+    def cancel_task(self, task_id: str) -> bool:
+        """Cancel one locally tracked background task by id."""
+        bg_task = self.tasks.get(task_id)
+        if bg_task is None:
+            return False
+        logger.info(
+            "Cancelling background task by task id: task_id=%s, "
+            "session_id=%s, agent_id=%s",
+            bg_task.id,
+            bg_task.session_id,
+            bg_task.agent_id,
+        )
+        bg_task.asyncio_task.cancel()
+        return True
+
     def cancel_session_tasks(self, session_id: str) -> int:
         """Cancel every locally-tracked task whose owner session matches.
 

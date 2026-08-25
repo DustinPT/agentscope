@@ -15,7 +15,6 @@ from starlette.datastructures import UploadFile
 from ...event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
-    SessionInterruptEvent,
     UserConfirmResultEvent,
 )
 from ...message import (
@@ -352,25 +351,6 @@ class _SessionToolBase(ToolBase):
 
         return ("reply_completed", current_reply.id, [])
 
-    def _has_interruptible_tool_calls(
-        self,
-        session: "SessionRecord",
-    ) -> bool:
-        """Return whether the session is parked on interruptible tool calls."""
-        current_reply = self._get_current_reply(session)
-        if current_reply is None:
-            return False
-        return any(
-            tool_call.state
-            in (
-                ToolCallState.ASKING,
-                ToolCallState.SUBMITTED,
-                ToolCallState.PENDING,
-                ToolCallState.ALLOWED,
-            )
-            for tool_call in current_reply.get_content_blocks("tool_call")
-        )
-
     async def _interrupt_managed_session(
         self,
         *,
@@ -379,9 +359,14 @@ class _SessionToolBase(ToolBase):
         reason: str | None = None,
         timeout: float = 10.0,
     ) -> tuple[bool, "SessionRecord | None"]:
-        """Cancel a session run and clean up waiting tool interactions."""
+        """Interrupt a managed session via the unified chat-service path."""
+        _ = reason
         was_running = await self._message_bus.session_is_running(session_id)
-        await self._message_bus.session_publish_cancel(session_id)
+        await self._chat_service.interrupt(
+            user_id=self._user_id,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
 
         released = True
         if was_running:
@@ -394,32 +379,6 @@ class _SessionToolBase(ToolBase):
                     break
                 await asyncio.sleep(_CANCEL_POLL_INTERVAL_SECS)
 
-        session = await self._get_owned_session(
-            agent_id=agent_id,
-            session_id=session_id,
-        )
-        if session is None or not self._has_interruptible_tool_calls(session):
-            return released, session
-
-        interrupt_event = SessionInterruptEvent(
-            reply_id=session.state.reply_id,
-            source="session_management_tool",
-            reason=reason or "Session interrupted by InterruptSession tool.",
-            cascade_root_session_id=None,
-        )
-        existing = self._chat_run_registry.get(session.id)
-        if existing is None or existing.done():
-            task = self._chat_run_registry.spawn(
-                self._chat_service.run(
-                    user_id=self._user_id,
-                    session_id=session.id,
-                    agent_id=session.agent_id,
-                    input_msg=interrupt_event,
-                ),
-                session_id=session.id,
-                name=f"tool-interrupt-session:{session.id}",
-            )
-            await task
         return released, await self._get_owned_session(
             agent_id=agent_id,
             session_id=session_id,

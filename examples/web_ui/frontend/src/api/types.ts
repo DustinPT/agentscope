@@ -222,10 +222,8 @@ export interface CreateSessionResponse {
 	session_id: string;
 }
 
-export interface CancelSessionResponse {
-	session_id: string;
-	status: string;
-	released: boolean;
+export interface InterruptSessionResponse {
+        session_id: string;
 }
 
 export interface RollbackSessionRequest {

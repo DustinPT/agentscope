@@ -1,24 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Single per-process dispatcher for cross-process session cancels.
-
-Subscribes to the bus's shared cancel-broadcast channel. For each
-incoming ``session_id``, performs every session-scoped cancel a worker
-process can do locally:
-
-1. Look the session up in the local :class:`ChatRunRegistry` — if a
-   chat-run task is tracked here, cancel it.
-2. Ask the local :class:`BackgroundTaskManager` to cancel every BG
-   task it tracks for that session.
-
-Processes whose registry / BG-manager do not hold anything for the
-session simply do no work — the publisher does not need to know which
-worker holds which piece; it broadcasts and lets each holder self-select.
-
-Symmetric to :class:`WakeupDispatcher`: both are one asyncio task per
-process; one starts runs in response to wake-ups, the other ends them
-in response to cancels.
-"""
+"""Single per-process dispatcher for cancel and interrupt broadcasts."""
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Self
 
 from ..._logging import logger
@@ -30,23 +13,7 @@ if TYPE_CHECKING:
 
 
 class CancelDispatcher:
-    """Subscribes to the bus cancel channel and cancels every local
-    session-scoped task (chat run + BG tasks) on match.
-
-    Args:
-        message_bus (`MessageBus`):
-            Application message bus. Used for
-            :meth:`~agentscope.app.message_bus.MessageBus.
-            session_subscribe_cancel`.
-        registry (`ChatRunRegistry`):
-            The per-process chat-run registry whose tasks may be
-            cancelled.
-        bg_manager (`BackgroundTaskManager`):
-            The per-process background task manager. Its
-            :meth:`~BackgroundTaskManager.cancel_session_tasks` is
-            invoked on every incoming cancel; it returns silently when
-            no local BG task matches the session.
-    """
+    """Subscribe to cancel/interrupt channels and fan them into local tasks."""
 
     _RECONNECT_DELAY_SECS = 1.0
 
@@ -56,68 +23,72 @@ class CancelDispatcher:
         registry: "ChatRunRegistry",
         bg_manager: "BackgroundTaskManager",
     ) -> None:
-        """Bind dependencies.
-
-        Args:
-            message_bus (`MessageBus`):
-                Application message bus.
-            registry (`ChatRunRegistry`):
-                The per-process chat-run registry.
-            bg_manager (`BackgroundTaskManager`):
-                The per-process background task manager.
-        """
         self._bus = message_bus
         self._registry = registry
         self._bg_manager = bg_manager
-        self._task: asyncio.Task | None = None
+        self._tasks: list[asyncio.Task] = []
 
     async def __aenter__(self) -> Self:
-        """Start the dispatcher loop and wait until its bus
-        subscription is live.
-
-        Blocking on the readiness signal means a process that publishes
-        a cancel immediately after the dispatcher starts will not lose
-        the message to a SUBSCRIBE/PUBLISH race.
-
-        Returns:
-            `Self`: This dispatcher instance.
-        """
-        ready = asyncio.Event()
-        self._task = asyncio.create_task(
-            self._loop(ready),
-            name="cancel-dispatcher",
+        ready_cancel = asyncio.Event()
+        ready_task = asyncio.Event()
+        ready_interrupt = asyncio.Event()
+        self._tasks = [
+            asyncio.create_task(
+                self._subscription_loop(
+                    loop_name="session cancel",
+                    ready=ready_cancel,
+                    subscribe_factory=self._bus.session_subscribe_cancel,
+                    handler=self._handle_session_cancel,
+                ),
+                name="cancel-dispatcher:session-cancel",
+            ),
+            asyncio.create_task(
+                self._subscription_loop(
+                    loop_name="task cancel",
+                    ready=ready_task,
+                    subscribe_factory=self._bus.task_subscribe_cancel,
+                    handler=self._handle_task_cancel,
+                ),
+                name="cancel-dispatcher:task-cancel",
+            ),
+            asyncio.create_task(
+                self._subscription_loop(
+                    loop_name="session interrupt",
+                    ready=ready_interrupt,
+                    subscribe_factory=self._bus.session_subscribe_interrupt,
+                    handler=self._handle_session_interrupt,
+                ),
+                name="cancel-dispatcher:session-interrupt",
+            ),
+        ]
+        await asyncio.gather(
+            ready_cancel.wait(),
+            ready_task.wait(),
+            ready_interrupt.wait(),
         )
-        await ready.wait()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Cancel the dispatcher loop on context exit."""
-        if self._task is None:
+        if not self._tasks:
             return
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
-        self._task = None
+        for task in self._tasks:
+            task.cancel()
+        for task in self._tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._tasks = []
 
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-
-    async def _loop(self, ready: asyncio.Event) -> None:
-        """Long-lived loop: yield each incoming cancel and act on it.
-
-        When the Redis pub/sub subscription drops unexpectedly, keep
-        retrying with a short backoff instead of exiting permanently.
-
-        Args:
-            ready (`asyncio.Event`):
-                Signalled after the underlying SUBSCRIBE completes.
-                :meth:`__aenter__` blocks on this so callers can
-                publish a cancel immediately after start without
-                racing the subscription.
-        """
+    async def _subscription_loop(
+        self,
+        *,
+        loop_name: str,
+        ready: asyncio.Event,
+        subscribe_factory: Callable[..., object],
+        handler: Callable[[str], None],
+    ) -> None:
+        """Subscribe with reconnect and dispatch each string payload."""
         attempt = 0
         while True:
             def _on_ready() -> None:
@@ -126,72 +97,58 @@ class CancelDispatcher:
                     ready.set()
                     return
                 logger.info(
-                    "CancelDispatcher: cancel signal subscription "
-                    "restored after %d failed attempt(s).",
+                    "CancelDispatcher: %s subscription restored after %d "
+                    "failed attempt(s).",
+                    loop_name,
                     attempt,
                 )
 
             try:
                 if attempt > 0:
                     logger.info(
-                        "CancelDispatcher: re-subscribing to cancel "
-                        "signal channel (attempt %d).",
+                        "CancelDispatcher: re-subscribing to %s channel "
+                        "(attempt %d).",
+                        loop_name,
                         attempt + 1,
                     )
-                async for session_id in self._bus.session_subscribe_cancel(
-                    on_ready=_on_ready,
-                ):
+                async for identifier in subscribe_factory(on_ready=_on_ready):
                     if attempt > 0:
                         attempt = 0
-                    self._cancel_local(session_id)
+                    handler(identifier)
 
                 attempt += 1
                 logger.warning(
-                    "CancelDispatcher: cancel signal subscription "
-                    "ended unexpectedly without an exception "
-                    "(attempt %d); reconnecting in %.1f seconds.",
+                    "CancelDispatcher: %s subscription ended unexpectedly "
+                    "without an exception (attempt %d); reconnecting in %.1f "
+                    "seconds.",
+                    loop_name,
                     attempt,
                     self._RECONNECT_DELAY_SECS,
                 )
             except asyncio.CancelledError:
                 logger.info(
-                    "CancelDispatcher: subscription loop cancelled; "
-                    "stopping dispatcher.",
+                    "CancelDispatcher: %s loop cancelled; stopping dispatcher.",
+                    loop_name,
                 )
                 raise
             except Exception:  # pylint: disable=broad-except
                 attempt += 1
                 logger.exception(
-                    "CancelDispatcher: cancel signal subscription "
-                    "failed (attempt %d); reconnecting in %.1f seconds.",
+                    "CancelDispatcher: %s subscription failed (attempt %d); "
+                    "reconnecting in %.1f seconds.",
+                    loop_name,
                     attempt,
                     self._RECONNECT_DELAY_SECS,
                 )
 
             await asyncio.sleep(self._RECONNECT_DELAY_SECS)
 
-    def _cancel_local(self, session_id: str) -> None:
-        """Cancel every locally-tracked task for ``session_id``.
-
-        Fans out to:
-
-        - the chat-run task in :class:`ChatRunRegistry`, if registered
-          on this process;
-        - every BG task in :class:`BackgroundTaskManager` whose owner
-          session matches.
-
-        Both lookups are silent no-ops when the local process holds no
-        matching state.
-
-        Args:
-            session_id (`str`):
-                The session whose runs and BG tasks should be cancelled.
-        """
+    def _handle_session_cancel(self, session_id: str) -> None:
+        """Hard-cancel local chat run and session-scoped background tasks."""
         task = self._registry.get(session_id)
         if task is not None and not task.done():
             logger.info(
-                "CancelDispatcher: cancelling local chat run for "
-                "session %s",
+                "CancelDispatcher: cancelling local chat run for session %s",
                 session_id,
             )
             task.cancel()
@@ -199,8 +156,25 @@ class CancelDispatcher:
         bg_cancelled = self._bg_manager.cancel_session_tasks(session_id)
         if bg_cancelled:
             logger.info(
-                "CancelDispatcher: cancelled %d local BG task(s) for "
-                "session %s",
+                "CancelDispatcher: cancelled %d local BG task(s) for session %s",
                 bg_cancelled,
                 session_id,
             )
+
+    def _handle_task_cancel(self, task_id: str) -> None:
+        """Cancel one local background task if it is registered here."""
+        if self._bg_manager.cancel_task(task_id):
+            logger.info(
+                "CancelDispatcher: cancelled local background task %s",
+                task_id,
+            )
+
+    def _handle_session_interrupt(self, session_id: str) -> None:
+        """Gracefully interrupt a local chat run without touching BG tasks."""
+        task = self._registry.get(session_id)
+        if task is not None and not task.done():
+            logger.info(
+                "CancelDispatcher: interrupting local chat run for session %s",
+                session_id,
+            )
+            task.cancel()

@@ -115,22 +115,10 @@ class CreateSessionResponse(BaseModel):
     session_id: str = Field(description="Server-assigned session identifier.")
 
 
-class CancelSessionResponse(BaseModel):
-    """Response body after requesting cancellation of a running session."""
+class InterruptSessionResponse(BaseModel):
+    """Response body after requesting interruption of a session reply."""
 
-    session_id: str = Field(description="The session whose run was targeted.")
-    status: str = Field(
-        description=(
-            "Cancellation request status. "
-            "Currently always ``cancel_requested`` when the session exists."
-        ),
-    )
-    released: bool = Field(
-        description=(
-            "Whether the session's distributed run lock was confirmed "
-            "released before the request returned."
-        ),
-    )
+    session_id: str = Field(description="Echo of the interrupted session id.")
 
 
 class RollbackSessionRequest(BaseModel):

@@ -39,7 +39,7 @@ from ._tts_model import ListTTSModelsResponse, ListTTSModelsRequest
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
-    CancelSessionResponse,
+    InterruptSessionResponse,
     RollbackSessionRequest,
     RollbackSessionResponse,
     UpdateSessionRequest,
@@ -99,7 +99,7 @@ __all__ = [
     # Session
     "CreateSessionRequest",
     "CreateSessionResponse",
-    "CancelSessionResponse",
+    "InterruptSessionResponse",
     "RollbackSessionRequest",
     "RollbackSessionResponse",
     "UpdateSessionRequest",

@@ -1,9 +1,9 @@
 import { client } from './client';
 import type {
-	CancelSessionResponse,
 	AgentEvent,
 	CreateSessionRequest,
 	CreateSessionResponse,
+        InterruptSessionResponse,
         RollbackSessionRequest,
         RollbackSessionResponse,
 	SessionListResponse,
@@ -36,8 +36,8 @@ export const sessionApi = {
 	delete: (sessionId: string, agentId: string) =>
 		client.delete(`/sessions/${sessionId}`, { agent_id: agentId }),
 
-	cancel: (sessionId: string, agentId: string) =>
-		client.post<CancelSessionResponse>(`/sessions/${sessionId}/cancel`, undefined, {
+        interrupt: (sessionId: string, agentId: string) =>
+                client.post<InterruptSessionResponse>(`/sessions/${sessionId}/interrupt`, undefined, {
 			agent_id: agentId,
 		}),
 

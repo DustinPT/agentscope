@@ -27,6 +27,10 @@ type JsonLike =
 	| JsonLike[]
 	| { [key: string]: JsonLike };
 
+export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
+
+const INTERRUPT_TIMEOUT_MS = 10_000;
+
 const REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY = 'checkpoint_replay_entry_id';
 /** Metadata key marking the replay entry already folded into a persisted reply. */
 
@@ -118,8 +122,8 @@ export function useMessages(
 	}, []);
 
 	const [msgs, setMsgs] = useState<Msg[]>([]);
-	const [loading, setLoading] = useState(false);
-	const [streaming, setStreaming] = useState(false);
+        const [loading, setLoading] = useState(false);
+        const [phase, setPhase] = useState<ReplyPhase>('idle');
 	const [error, setError] = useState<Error | null>(null);
 
 	const msgsRef = useRef<Msg[]>([]);
@@ -127,6 +131,14 @@ export function useMessages(
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
 	const pendingEventsRef = useRef<StreamAgentEvent[]>([]);
+        const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+        const clearInterruptTimer = useCallback(() => {
+                if (interruptTimerRef.current !== null) {
+                        clearTimeout(interruptTimerRef.current);
+                        interruptTimerRef.current = null;
+                }
+        }, []);
 
 	const audioManager = useAudioManager();
 
@@ -309,7 +321,7 @@ export function useMessages(
 				const msg = AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
 				msgsRef.current = [...msgsRef.current, msg];
 				currentReplyRef.current = msg;
-				setStreaming(true);
+                                setPhase('streaming');
 			} else if (event.type === EventType.REPLY_END) {
 				const targetReply = resolveReplyForEvent(event);
 				if (targetReply) {
@@ -317,7 +329,8 @@ export function useMessages(
 					mergeReplyMetadata(targetReply, event);
 					reconcileToolCallState(targetReply, event);
 				}
-				setStreaming(false);
+                                clearInterruptTimer();
+                                setPhase('idle');
 				if (
 					'reply_id' in event &&
 					currentReplyRef.current?.id === event.reply_id
@@ -358,6 +371,7 @@ export function useMessages(
 			scheduleUpdate();
 		},
 		[
+                        clearInterruptTimer,
 			mergeReplyMetadata,
 			scheduleUpdate,
 			audioManager,
@@ -373,7 +387,8 @@ export function useMessages(
 		pendingEventsRef.current = [];
 		setMsgs([]);
 		setError(null);
-		setStreaming(false);
+                clearInterruptTimer();
+                setPhase('idle');
 		audioManager?.disposeAll();
 
 		if (!agentId || !sessionId) return;
@@ -452,7 +467,7 @@ export function useMessages(
                                         is_running,
                                 );
 				scheduleUpdate();
-                                setStreaming(is_running);
+                                setPhase(is_running ? 'streaming' : 'idle');
 				optionsRef.current?.onPendingInitialUserMsgConsumed?.();
 
 				historyReplayBoundary = getHistoryReplayBoundary(messages);
@@ -490,6 +505,7 @@ export function useMessages(
 		scheduleUpdate,
 		processEvent,
 		audioManager,
+                clearInterruptTimer,
 		getHistoryReplayBoundary,
 		hasEquivalentUserMsg,
                 normalizeInterruptedHistory,
@@ -527,16 +543,22 @@ export function useMessages(
 	 * Request cancellation of the current backend run while keeping the
 	 * session stream subscribed.
 	 */
-	const cancelCurrentRun = useCallback(async () => {
+        const interrupt = useCallback(async () => {
 		if (!agentId || !sessionId) return;
-		await sessionApi.cancel(sessionId, agentId);
-		audioManager?.stopAllPlayback();
-                const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
-                msgsRef.current = normalizeInterruptedHistory(messages, is_running);
-                currentReplyRef.current = null;
-                scheduleUpdate();
-                setStreaming(is_running);
-        }, [agentId, sessionId, audioManager, normalizeInterruptedHistory, scheduleUpdate]);
+                setPhase((prev) => (prev === 'streaming' ? 'interrupting' : prev));
+                clearInterruptTimer();
+                interruptTimerRef.current = setTimeout(() => {
+                        interruptTimerRef.current = null;
+                        setPhase((prev) => (prev === 'interrupting' ? 'idle' : prev));
+                }, INTERRUPT_TIMEOUT_MS);
+                try {
+                        await sessionApi.interrupt(sessionId, agentId);
+                } catch (e) {
+                        clearInterruptTimer();
+                        setPhase((prev) => (prev === 'interrupting' ? 'idle' : prev));
+                        setError(e as Error);
+                }
+        }, [agentId, sessionId, clearInterruptTimer]);
 
         const reload = useCallback(async () => {
                 if (!agentId || !sessionId) return;
@@ -544,7 +566,7 @@ export function useMessages(
                 msgsRef.current = normalizeInterruptedHistory(messages, is_running);
                 currentReplyRef.current = null;
                 scheduleUpdate();
-                setStreaming(is_running);
+                setPhase(is_running ? 'streaming' : 'idle');
         }, [agentId, sessionId, normalizeInterruptedHistory, scheduleUpdate]);
 
 	/**
@@ -601,16 +623,12 @@ export function useMessages(
 	return {
 		msgs,
 		loading,
-		streaming,
-		canStop:
-			streaming ||
-			isAwaitingToolInteraction(
-				[...msgs].reverse().find((msg) => msg.role === 'assistant') ?? null,
-			),
+                phase,
+                streaming: phase !== 'idle',
 		error,
 		send,
 		onUserConfirm,
-		cancelCurrentRun,
+                interrupt,
                 reload,
 		abort,
 	};

@@ -17,9 +17,9 @@ from ..deps import (
     get_workspace_manager,
 )
 from ._schema import (
-    CancelSessionResponse,
     CreateSessionRequest,
     CreateSessionResponse,
+    InterruptSessionResponse,
     ListMessagesResponse,
     ListSessionsResponse,
     SessionSummaryView,
@@ -402,60 +402,26 @@ async def delete_session(
 
 
 @session_router.post(
-    "/{session_id}/cancel",
-    response_model=CancelSessionResponse,
-    summary="Cancel a running session",
+    "/{session_id}/interrupt",
+    response_model=InterruptSessionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Interrupt the current session reply",
 )
-async def cancel_session(
+async def interrupt_session(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
-    session_service: SessionService = Depends(get_session_service),
-    storage: StorageBase = Depends(get_storage),
-) -> CancelSessionResponse:
-    """Request cancellation of the current run for ``session_id``.
-
-    This endpoint keeps the session record intact and only targets the
-    in-flight execution. The cancellation path is cross-process:
-    whichever worker currently owns the run receives the broadcast and
-    aborts locally via :class:`CancelDispatcher`.
-
-    Args:
-        session_id (`str`): The session whose active run should stop.
-        agent_id (`str`): The agent the session belongs to.
-        user_id (`str`): Injected authenticated user ID.
-        session_service (`SessionService`): Injected session service.
-        storage (`StorageBase`): Injected storage backend, used for
-            ownership validation.
-
-    Returns:
-        `CancelSessionResponse`:
-            Cancellation request status plus whether the run lock was
-            observed released before returning.
-
-    Raises:
-        `HTTPException`: 404 if the session does not exist or does not belong
-            to the authenticated user.
-    """
-    existing = await storage.get_session_meta(user_id, session_id)
-    if existing is not None and existing.agent_id != agent_id:
-        existing = None
-    if existing is None:
+    chat_service: ChatService = Depends(get_chat_service),
+) -> InterruptSessionResponse:
+    """Interrupt the current reply for ``session_id``."""
+    try:
+        await chat_service.interrupt(user_id, session_id, agent_id)
+    except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session '{session_id}' not found.",
-        )
-
-    released = await session_service.cancel_session_run(
-        session_id,
-        user_id=user_id,
-        agent_id=agent_id,
-    )
-    return CancelSessionResponse(
-        session_id=session_id,
-        status="cancel_requested",
-        released=released,
-    )
+            detail=str(exc),
+        ) from exc
+    return InterruptSessionResponse(session_id=session_id)
 
 
 @session_router.patch(

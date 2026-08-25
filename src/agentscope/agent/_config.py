@@ -137,6 +137,23 @@ class ReActConfig(BaseModel):
     won't continue reasoning and wait for outside interaction from the user.
     """
 
+    interruption_message: str = Field(
+        title="Interruption Message",
+        default="I notice the interruption. How can I help you?",
+        description="The quick reply message when interrupted.",
+    )
+    """The interruption message."""
+
+    interruption_raise_cancelled_error: bool = Field(
+        title="Raise CancelledError on Interruption",
+        default=False,
+        description="Whether to re-raise ``asyncio.CancelledError`` after "
+        "handling the interruption. When ``False``, the ``CancelledError`` "
+        "is swallowed once the interruption context has been produced.",
+    )
+    """Whether to re-raise the ``asyncio.CancelledError`` after the
+    interruption has been handled."""
+
     enable_tool_offload: bool = Field(
         title="Enable Tool Offload",
         default=False,

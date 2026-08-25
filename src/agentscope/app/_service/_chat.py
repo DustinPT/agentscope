@@ -61,11 +61,11 @@ from ...event import (
     ExternalExecutionResultEvent,
     ReplyEndEvent,
     ReplyStartEvent,
-    SessionInterruptEvent,
     ThinkingBlockDeltaEvent,
     TextBlockDeltaEvent,
     ToolCallDeltaEvent,
     UserConfirmResultEvent,
+    UserInterruptEvent,
 )
 from ...formatter import FormatterBase
 from ...middleware import MiddlewareBase, TTSMiddleware
@@ -834,7 +834,7 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-        | SessionInterruptEvent
+        | UserInterruptEvent
         | None,
     ) -> Msg | None:
         """Return the first user message from a new-turn input payload."""
@@ -919,6 +919,35 @@ class ChatService:
         await self._message_bus.session_publish_event(
             session_id,
             event.model_dump(mode="json"),
+        )
+
+    async def interrupt(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Interrupt an in-progress or parked reply for one session."""
+        session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session is None:
+            raise LookupError(f"Session '{session_id}' not found.")
+
+        if await self._message_bus.session_is_running(session_id):
+            await self._message_bus.session_publish_interrupt(session_id)
+            return
+
+        await self._message_bus.enqueue_wakeup(
+            user_id=user_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            kind="resume",
+            input=UserInterruptEvent(
+                reply_id=session.state.reply_id,
+            ).model_dump(mode="json"),
         )
 
     def _schedule_session_title_update(
@@ -1439,7 +1468,7 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-        | SessionInterruptEvent
+        | UserInterruptEvent
         | None = None,
     ) -> None:
         """Drive a chat run to completion.
@@ -1475,7 +1504,7 @@ class ChatService:
                 - ``UserConfirmResultEvent`` /
                   ``ExternalExecutionResultEvent``: resume an awaiting
                   tool call (Case B).
-                - ``SessionInterruptEvent``: interrupt an awaiting tool
+                  - ``UserInterruptEvent``: interrupt an awaiting tool
                   interaction and close the current reply without model
                   reasoning (Case C).
         """
@@ -1500,7 +1529,7 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-        | SessionInterruptEvent
+        | UserInterruptEvent
         | None,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error

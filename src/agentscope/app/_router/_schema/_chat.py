@@ -7,7 +7,7 @@ from ....message import Msg
 from ....event import (
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
-    SessionInterruptEvent,
+    UserInterruptEvent,
 )
 
 
@@ -27,7 +27,7 @@ class ChatRequest(BaseModel):
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-        | SessionInterruptEvent
+        | UserInterruptEvent
         | None
     ) = Field(
         description="The input message(s), or agent event, or None.",

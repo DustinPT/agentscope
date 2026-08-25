@@ -157,7 +157,7 @@ export function ChatViewport({
 		// TODO: handle permission_context updates when permission UI is built
 	}, []);
 
-        const { msgs, streaming, canStop, send, onUserConfirm, cancelCurrentRun, reload } = useMessages(
+        const { msgs, phase, send, onUserConfirm, interrupt, reload } = useMessages(
 		agentId,
 		sessionId,
 		{
@@ -536,11 +536,12 @@ export function ChatViewport({
 							activeMessageId={scrollTargetMessageId}
 							onScrollTargetHandled={() => setScrollTargetMessageId(null)}
 							scrollViewportCommand={scrollViewportCommand}
-							sending={streaming}
-							stoppable={canStop}
+                                                    sending={phase !== 'idle'}
+                                                    stoppable={phase !== 'idle'}
+                                                    stopDisabled={phase === 'interrupting'}
 							disabled={selectedModel === null}
                                                         onSend={handleSend}
-							onStop={cancelCurrentRun}
+                                                    onStop={interrupt}
                                                         onRollbackMessage={handleRollbackMessage}
                                                         rollbackingMessageId={rollbackingMessageId}
 							onUserConfirm={onUserConfirm}

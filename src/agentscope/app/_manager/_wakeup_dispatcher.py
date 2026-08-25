@@ -16,6 +16,13 @@ import asyncio
 from typing import TYPE_CHECKING, Self
 
 from ..._logging import logger
+from ...event import (
+    EventType,
+    ExternalExecutionResultEvent,
+    UserConfirmResultEvent,
+    UserInterruptEvent,
+)
+from ...message import Msg
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -194,6 +201,7 @@ class WakeupDispatcher:
                 user_id = payload["user_id"]
                 session_id = payload["session_id"]
                 agent_id = payload["agent_id"]
+                kind = payload.get("kind", "wake")
             except (KeyError, TypeError):
                 logger.warning(
                     "WakeupDispatcher: skipping malformed wake-up entry %r",
@@ -224,12 +232,26 @@ class WakeupDispatcher:
                 continue
 
             try:
+                input_msg = self._deserialize_input(
+                    kind=kind,
+                    payload=payload.get("input"),
+                )
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "WakeupDispatcher: dropping wake-up for session %s due to "
+                    "invalid input payload: %s",
+                    session_id,
+                    exc,
+                )
+                continue
+
+            try:
                 self._registry.spawn(
                     self._chat_service.run(
                         user_id=user_id,
                         session_id=session_id,
                         agent_id=agent_id,
-                        input_msg=None,
+                          input_msg=input_msg,
                     ),
                     session_id=session_id,
                     name=f"wakeup-run:{session_id}",
@@ -242,3 +264,25 @@ class WakeupDispatcher:
                     "a local run is already registered.",
                     session_id,
                 )
+
+    @staticmethod
+    def _deserialize_input(
+        *,
+        kind: str,
+        payload: dict | None,
+    ) -> Msg | UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | None:
+        """Deserialize a wake-up queue payload into the chat-service input."""
+        if kind == "wake":
+            return None
+        if kind != "resume":
+            raise ValueError(f"Unsupported wake-up kind: {kind}")
+        if payload is None:
+            raise ValueError("Resume wake-up payload is missing its input.")
+        event_type = payload.get("type")
+        if event_type == EventType.USER_CONFIRM_RESULT:
+            return UserConfirmResultEvent.model_validate(payload)
+        if event_type == EventType.EXTERNAL_EXECUTION_RESULT:
+            return ExternalExecutionResultEvent.model_validate(payload)
+        if event_type == EventType.USER_INTERRUPT:
+            return UserInterruptEvent.model_validate(payload)
+        return Msg.model_validate(payload)

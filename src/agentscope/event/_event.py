@@ -56,7 +56,7 @@ class EventType(StrEnum):
 
     USER_CONFIRM_RESULT = "USER_CONFIRM_RESULT"
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
-    SESSION_INTERRUPT = "SESSION_INTERRUPT"
+    USER_INTERRUPT = "USER_INTERRUPT"
 
     CUSTOM = "CUSTOM"
 
@@ -445,21 +445,15 @@ class ExternalExecutionResultEvent(EventBase):
     """Results returned by the external executor."""
 
 
-class SessionInterruptEvent(EventBase):
-    """Session interrupt event."""
+class UserInterruptEvent(EventBase):
+    """User-initiated interrupt targeting a parked reply."""
 
     type: Literal[
-        EventType.SESSION_INTERRUPT
-    ] = EventType.SESSION_INTERRUPT
+        EventType.USER_INTERRUPT
+    ] = EventType.USER_INTERRUPT
     """Event type."""
     reply_id: str
     """ID of the reply message associated with this run."""
-    source: str = "session_cancel"
-    """Interrupt source for diagnostics and tracing."""
-    reason: str | None = None
-    """Optional human-readable reason for the interruption."""
-    cascade_root_session_id: str | None = None
-    """Root session id when the interrupt is part of a cascade."""
 
 
 class CustomEvent(EventBase):
@@ -523,6 +517,6 @@ AgentEvent: TypeAlias = (
     | ToolResultEndEvent
     | UserConfirmResultEvent
     | ExternalExecutionResultEvent
-    | SessionInterruptEvent
+    | UserInterruptEvent
     | CustomEvent
 )

@@ -14,6 +14,7 @@ interface ChatContentProps {
 	sessionKey?: string | null;
 	sending: boolean;
 	stoppable?: boolean;
+        stopDisabled?: boolean;
 	disabled: boolean;
 	onSend: (content: ContentBlock[]) => void;
 	onStop?: () => void | Promise<void>;
@@ -51,6 +52,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	sessionKey,
 	sending,
 	stoppable = false,
+        stopDisabled = false,
 	disabled,
 	onSend,
 	onStop,
@@ -241,6 +243,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				onStop={onStop}
 				focusKey={sessionKey}
 				sending={stoppable}
+                                stopDisabled={stopDisabled}
 				disabled={disabled}
 				autoComplete={autoComplete}
 				allowedInputTypes={allowedInputTypes}

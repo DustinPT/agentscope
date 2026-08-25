@@ -55,8 +55,6 @@ from ..message_bus import MessageBus
 from ..storage import StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ..._logging import logger
-from ...event import SessionInterruptEvent
-from ...message import ToolCallState
 from ...state import AgentState
 from ._attachment_store import AttachmentStore
 
@@ -118,22 +116,14 @@ class SessionService:
         self,
         session_id: str,
         *,
-        user_id: str | None = None,
-        agent_id: str | None = None,
         timeout: float = 10.0,
     ) -> bool:
-        """Cancel a session run and optionally trigger interrupt cleanup.
+        """Broadcast an internal hard-cancel and wait for run-lock release.
 
         Args:
             session_id (`str`):
                 The session whose chat run + BG tasks should be
                 cancelled.
-            user_id (`str | None`, optional):
-                Owner user id. When provided together with ``agent_id``,
-                the service also triggers Case C interrupt cleanup for
-                the full recursive closure rooted at ``session_id``.
-            agent_id (`str | None`, optional):
-                Owning agent id of ``session_id``.
             timeout (`float`, defaults to ``10.0``):
                 Maximum seconds to wait for the chat-run lock to
                 release. On timeout the method returns ``False`` so
@@ -147,40 +137,10 @@ class SessionService:
                 ``False`` if the lock was still held when the timeout
                 expired.
         """
-        if user_id is None or agent_id is None:
-            return await self._cancel_single_session_run(
-                session_id,
-                timeout=timeout,
-            )
-
-        targets = await self._interrupt_closure(
-            user_id=user_id,
-            agent_id=agent_id,
-            session_id=session_id,
+        return await self._cancel_single_session_run(
+            session_id,
+            timeout=timeout,
         )
-        if not targets:
-            return await self._cancel_single_session_run(
-                session_id,
-                timeout=timeout,
-            )
-
-        release_results = await asyncio.gather(
-            *(
-                self._cancel_single_session_run(target.id, timeout=timeout)
-                for target in targets
-            ),
-        )
-        await asyncio.gather(
-            *(
-                self._interrupt_waiting_session(
-                    user_id=user_id,
-                    session=target,
-                    cascade_root_session_id=session_id,
-                )
-                for target in targets
-            ),
-        )
-        return all(release_results)
 
     async def _cancel_single_session_run(
         self,
@@ -206,70 +166,6 @@ class SessionService:
                 )
                 return False
             await asyncio.sleep(self._CANCEL_POLL_INTERVAL_SECS)
-
-    @staticmethod
-    def _has_interruptible_tool_calls(session) -> bool:
-        """Return whether the session is parked on waiting tool calls."""
-        if not session.state.context:
-            return False
-        last_msg = session.state.context[-1]
-        return any(
-            tool_call.state
-            in (
-                ToolCallState.ASKING,
-                ToolCallState.SUBMITTED,
-                ToolCallState.PENDING,
-                ToolCallState.ALLOWED,
-            )
-            for tool_call in last_msg.get_content_blocks("tool_call")
-        )
-
-    async def _interrupt_waiting_session(
-        self,
-        *,
-        user_id: str,
-        session,
-        cascade_root_session_id: str,
-    ) -> None:
-        """Trigger Case C for a single session when it is awaiting tools."""
-        if not self._has_interruptible_tool_calls(session):
-            return
-        if self._chat_service is None:
-            logger.warning(
-                "SessionService has no ChatService; skipping interrupt cleanup "
-                "for session %s.",
-                session.id,
-            )
-            return
-
-        interrupt_event = SessionInterruptEvent(
-            reply_id=session.state.reply_id,
-            source="session_cancel",
-            reason="Session interrupted by cancel request.",
-            cascade_root_session_id=cascade_root_session_id,
-        )
-        if self._chat_run_registry is not None:
-            existing = self._chat_run_registry.get(session.id)
-            if existing is None or existing.done():
-                task = self._chat_run_registry.spawn(
-                    self._chat_service.run(
-                        user_id=user_id,
-                        session_id=session.id,
-                        agent_id=session.agent_id,
-                        input_msg=interrupt_event,
-                    ),
-                    session_id=session.id,
-                    name=f"session-interrupt:{session.id}",
-                )
-                await task
-                return
-
-        await self._chat_service.run(
-            user_id=user_id,
-            session_id=session.id,
-            agent_id=session.agent_id,
-            input_msg=interrupt_event,
-        )
 
     # ------------------------------------------------------------------
     # Delete cascades — every higher-level method delegates to
@@ -646,45 +542,6 @@ class SessionService:
                 await self._storage.list_sessions(user_id, member_id),
             )
         return worker_sessions
-
-    async def _interrupt_closure(
-        self,
-        *,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> list:
-        """Return the full recursive interrupt closure for ``session_id``."""
-        root = await self._storage.get_session_meta(user_id, session_id)
-        if root is not None and root.agent_id != agent_id:
-            root = None
-        if root is None:
-            return []
-
-        targets = []
-        queue = [root]
-        seen_session_ids = set()
-        while queue:
-            current = queue.pop(0)
-            if current.id in seen_session_ids:
-                continue
-            seen_session_ids.add(current.id)
-            targets.append(current)
-
-            direct_children = await self._storage.list_child_sessions(
-                user_id,
-                current.id,
-            )
-            queue.extend(direct_children)
-
-            member_sessions = await self._team_worker_sessions(
-                user_id,
-                current.agent_id,
-                current.id,
-            )
-            queue.extend(member_sessions)
-
-        return targets
 
     async def _descendant_sessions(
         self,
