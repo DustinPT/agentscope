@@ -15,6 +15,8 @@ All bus keys live on the :class:`MessageBus` base class (see
 import asyncio
 from typing import TYPE_CHECKING, Self
 
+from .._bus_ops import enqueue_run_trigger
+from ..message_bus import MessageBusKeys
 from ..._logging import logger
 from ...event import (
     EventType,
@@ -50,6 +52,7 @@ class WakeupDispatcher:
     """
 
     _RECONNECT_DELAY_SECS = 1.0
+    _RESUME_RETRY_BACKOFF_SECS = 0.1
 
     def __init__(
         self,
@@ -75,6 +78,7 @@ class WakeupDispatcher:
         self._chat_service = chat_service
         self._registry = chat_run_registry
         self._task: asyncio.Task | None = None
+        self._retry_tasks: set[asyncio.Task] = set()
 
     async def __aenter__(self) -> Self:
         """Start the dispatcher loop and wait until its bus
@@ -98,6 +102,15 @@ class WakeupDispatcher:
 
     async def __aexit__(self, *exc: object) -> None:
         """Cancel the dispatcher loop on context exit."""
+        retries = list(self._retry_tasks)
+        for retry in retries:
+            retry.cancel()
+        for retry in retries:
+            try:
+                await retry
+            except asyncio.CancelledError:
+                pass
+        self._retry_tasks.clear()
         if self._task is None:
             return
         self._task.cancel()
@@ -155,7 +168,8 @@ class WakeupDispatcher:
                         "signal channel (attempt %d).",
                         attempt + 1,
                     )
-                async for _signal in self._bus.subscribe_wakeup_signal(
+                async for _signal in self._bus.subscribe(
+                    MessageBusKeys.wakeup_signal(),
                     on_ready=_on_ready,
                 ):
                     if subscription_restored:
@@ -191,7 +205,13 @@ class WakeupDispatcher:
     async def _drain_and_dispatch(self) -> None:
         """Read up to a batch of wake-up entries and dispatch them."""
         try:
-            entries = await self._bus.dequeue_wakeups(max_count=64)
+            entries = [
+                payload
+                for _entry_id, payload in await self._bus.queue_drain(
+                    MessageBusKeys.wakeup_queue(),
+                    max_count=64,
+                )
+            ]
         except Exception:  # pylint: disable=broad-except
             logger.exception("WakeupDispatcher: dequeue_wakeups failed.")
             return
@@ -209,7 +229,29 @@ class WakeupDispatcher:
                 )
                 continue
 
-            if await self._bus.session_is_running(session_id):
+            try:
+                input_msg = self._deserialize_input(
+                    kind=kind,
+                    payload=payload.get("input"),
+                )
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "WakeupDispatcher: dropping wake-up for session %s due to "
+                    "invalid input payload: %s",
+                    session_id,
+                    exc,
+                )
+                continue
+
+            if await self._bus.is_locked(MessageBusKeys.session_lock(session_id)):
+                if kind != MessageBusKeys.WAKEUP_KIND_WAKE:
+                    self._schedule_retry(
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        kind=kind,
+                        input_msg=input_msg,
+                    )
                 continue
 
             # Orphan guard: the wake-up queue is unaware of session
@@ -232,20 +274,6 @@ class WakeupDispatcher:
                 continue
 
             try:
-                input_msg = self._deserialize_input(
-                    kind=kind,
-                    payload=payload.get("input"),
-                )
-            except (TypeError, ValueError) as exc:
-                logger.warning(
-                    "WakeupDispatcher: dropping wake-up for session %s due to "
-                    "invalid input payload: %s",
-                    session_id,
-                    exc,
-                )
-                continue
-
-            try:
                 self._registry.spawn(
                     self._chat_service.run(
                         user_id=user_id,
@@ -264,6 +292,37 @@ class WakeupDispatcher:
                     "a local run is already registered.",
                     session_id,
                 )
+
+    def _schedule_retry(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        kind: str,
+        input_msg: Msg
+        | UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | UserInterruptEvent
+        | None,
+    ) -> None:
+        async def _retry() -> None:
+            await asyncio.sleep(self._RESUME_RETRY_BACKOFF_SECS)
+            await enqueue_run_trigger(
+                self._bus,
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                kind=kind,
+                inputs=input_msg,
+            )
+
+        task = asyncio.create_task(
+            _retry(),
+            name=f"wakeup-retry:{session_id}",
+        )
+        self._retry_tasks.add(task)
+        task.add_done_callback(self._retry_tasks.discard)
 
     @staticmethod
     def _deserialize_input(

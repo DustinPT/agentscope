@@ -24,6 +24,7 @@ import json
 from copy import deepcopy
 from typing import AsyncGenerator, Callable
 
+from .._bus_ops import deliver_to_inbox
 from .._manager import BackgroundTaskManager
 from ...middleware import MiddlewareBase
 from ...tool import ToolChunk, ToolResponse
@@ -344,14 +345,12 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 tool_name,
                 session_id,
             )
-            await self._message_bus.inbox_push(
-                session_id,
-                hint.model_dump(mode="json"),
-            )
-            await self._message_bus.enqueue_wakeup(
+            await deliver_to_inbox(
+                self._message_bus,
                 user_id=self._user_id,
                 session_id=session_id,
                 agent_id=self._agent_id,
+                payload=hint.model_dump(mode="json"),
             )
 
         asyncio.create_task(_deliver_when_done())

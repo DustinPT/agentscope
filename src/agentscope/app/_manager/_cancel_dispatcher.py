@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """Single per-process dispatcher for cancel and interrupt broadcasts."""
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Self
 
 from ..._logging import logger
+from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -37,7 +38,7 @@ class CancelDispatcher:
                 self._subscription_loop(
                     loop_name="session cancel",
                     ready=ready_cancel,
-                    subscribe_factory=self._bus.session_subscribe_cancel,
+                    subscribe_factory=self._subscribe_session_cancel,
                     handler=self._handle_session_cancel,
                 ),
                 name="cancel-dispatcher:session-cancel",
@@ -46,7 +47,7 @@ class CancelDispatcher:
                 self._subscription_loop(
                     loop_name="task cancel",
                     ready=ready_task,
-                    subscribe_factory=self._bus.task_subscribe_cancel,
+                    subscribe_factory=self._subscribe_task_cancel,
                     handler=self._handle_task_cancel,
                 ),
                 name="cancel-dispatcher:task-cancel",
@@ -55,7 +56,7 @@ class CancelDispatcher:
                 self._subscription_loop(
                     loop_name="session interrupt",
                     ready=ready_interrupt,
-                    subscribe_factory=self._bus.session_subscribe_interrupt,
+                    subscribe_factory=self._subscribe_session_interrupt,
                     handler=self._handle_session_interrupt,
                 ),
                 name="cancel-dispatcher:session-interrupt",
@@ -142,6 +143,45 @@ class CancelDispatcher:
                 )
 
             await asyncio.sleep(self._RECONNECT_DELAY_SECS)
+
+    async def _subscribe_session_cancel(
+        self,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ):
+        async for payload in self._bus.subscribe(
+            MessageBusKeys.session_cancel_channel(),
+            on_ready=on_ready,
+        ):
+            session_id = payload.get("session_id")
+            if isinstance(session_id, str):
+                yield session_id
+
+    async def _subscribe_task_cancel(
+        self,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ):
+        async for payload in self._bus.subscribe(
+            MessageBusKeys.task_cancel_channel(),
+            on_ready=on_ready,
+        ):
+            task_id = payload.get("task_id")
+            if isinstance(task_id, str):
+                yield task_id
+
+    async def _subscribe_session_interrupt(
+        self,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ):
+        async for payload in self._bus.subscribe(
+            MessageBusKeys.session_interrupt_channel(),
+            on_ready=on_ready,
+        ):
+            session_id = payload.get("session_id")
+            if isinstance(session_id, str):
+                yield session_id
 
     def _handle_session_cancel(self, session_id: str) -> None:
         """Hard-cancel local chat run and session-scoped background tasks."""

@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
+from .._bus_ops import deliver_to_inbox
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
 
@@ -303,11 +304,12 @@ class TeamSay(_TeamToolBase):
             payload = hint.model_dump(mode="json")
 
             for sid, aid in recipients:
-                await self._message_bus.inbox_push(sid, payload)
-                await self._message_bus.enqueue_wakeup(
+                await deliver_to_inbox(
+                    self._message_bus,
                     user_id=self._user_id,
                     session_id=sid,
                     agent_id=aid,
+                    payload=payload,
                 )
 
             count = len(recipients)

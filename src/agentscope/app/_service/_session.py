@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ..._logging import logger
@@ -149,13 +149,20 @@ class SessionService:
         timeout: float,
     ) -> bool:
         """Broadcast a single session cancel and wait for its run-lock."""
-        was_running = await self._bus.session_is_running(session_id)
-        await self._bus.session_publish_cancel(session_id)
+        was_running = await self._bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        )
+        await self._bus.publish(
+            MessageBusKeys.session_cancel_channel(),
+            {"session_id": session_id},
+        )
         if not was_running:
             return True
         deadline = asyncio.get_event_loop().time() + timeout
         while True:
-            if not await self._bus.session_is_running(session_id):
+            if not await self._bus.is_locked(
+                MessageBusKeys.session_lock(session_id),
+            ):
                 return True
             if asyncio.get_event_loop().time() >= deadline:
                 logger.warning(
@@ -419,7 +426,9 @@ class SessionService:
             session_id=session_id,
             state=restored_state,
         )
-        await self._bus.session_purge(session_id)
+        await self._bus.log_trim(MessageBusKeys.session_events(session_id))
+        await self._bus.queue_delete(MessageBusKeys.inbox(session_id))
+        await self._bus.registry_drop(MessageBusKeys.bg_tasks(session_id))
 
         updated_session = await self._storage.get_session_meta(
             user_id,
@@ -613,5 +622,10 @@ class SessionService:
         if not session_ids:
             return
         await asyncio.gather(
-            *(self._bus.session_purge(sid) for sid in session_ids),
+            *(
+                self._bus.log_trim(MessageBusKeys.session_events(sid))
+                for sid in session_ids
+            ),
+            *(self._bus.queue_delete(MessageBusKeys.inbox(sid)) for sid in session_ids),
+            *(self._bus.registry_drop(MessageBusKeys.bg_tasks(sid)) for sid in session_ids),
         )

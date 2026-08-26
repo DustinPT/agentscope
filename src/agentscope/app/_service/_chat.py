@@ -20,12 +20,19 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from .._bus_ops import (
+    abandon_inbox_consumer,
+    enqueue_run_trigger,
+    has_pending_inbox_or_release,
+    publish_session_event,
+    register_inbox_consumer,
+)
 from .._reply_state import (
     get_current_reply_msg,
     is_reply_awaiting_tool_interaction,
     set_reply_checkpoint_replay_entry_id,
 )
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     AgentMCPAsset,
     AgentRecord,
@@ -634,7 +641,8 @@ class ChatService:
         )
 
         try:
-            entry_id = await self._message_bus.session_publish_event(
+            entry_id = await publish_session_event(
+                self._message_bus,
                 session_id,
                 failed_event.model_dump(mode="json"),
             )
@@ -721,7 +729,8 @@ class ChatService:
         )
 
         try:
-            entry_id = await self._message_bus.session_publish_event(
+            entry_id = await publish_session_event(
+                self._message_bus,
                 session_id,
                 interrupted_event.model_dump(mode="json"),
             )
@@ -916,7 +925,8 @@ class ChatService:
         )
 
         event = CustomEvent(name="session_updated", value={"name": title})
-        await self._message_bus.session_publish_event(
+        await publish_session_event(
+            self._message_bus,
             session_id,
             event.model_dump(mode="json"),
         )
@@ -936,18 +946,24 @@ class ChatService:
         if session is None:
             raise LookupError(f"Session '{session_id}' not found.")
 
-        if await self._message_bus.session_is_running(session_id):
-            await self._message_bus.session_publish_interrupt(session_id)
+        if await self._message_bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ):
+            await self._message_bus.publish(
+                MessageBusKeys.session_interrupt_channel(),
+                {"session_id": session_id},
+            )
             return
 
-        await self._message_bus.enqueue_wakeup(
+        await enqueue_run_trigger(
+            self._message_bus,
             user_id=user_id,
             session_id=session_id,
             agent_id=agent_id,
-            kind="resume",
-            input=UserInterruptEvent(
+            kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+            inputs=UserInterruptEvent(
                 reply_id=session.state.reply_id,
-            ).model_dump(mode="json"),
+            ),
         )
 
     def _schedule_session_title_update(
@@ -1743,9 +1759,11 @@ class ChatService:
         # 7. Run the agent inside the bus's distributed session lock
         # ----------------------------------------------------------------
         needs_followup_wakeup = False
+        released_inbox_consumer = False
         reply_msg: Msg | None = None
         runtime_input_msg = input_msg
         async with self._message_bus.session_run(session_id):
+            await register_inbox_consumer(self._message_bus, session_id)
             checkpoint_state = _ReplyCheckpointState()
             reply_started = False
 
@@ -1784,7 +1802,8 @@ class ChatService:
                     async for event in agent.reply_stream(
                         inputs=runtime_input_msg,
                     ):
-                        entry_id = await self._message_bus.session_publish_event(
+                        entry_id = await publish_session_event(
+                            self._message_bus,
                             session_id,
                             event.model_dump(mode="json"),
                         )
@@ -1848,7 +1867,8 @@ class ChatService:
                         )
 
                     async for event in agent.reply_stream(inputs=input_msg):
-                        entry_id = await self._message_bus.session_publish_event(
+                        entry_id = await publish_session_event(
+                            self._message_bus,
                             session_id,
                             event.model_dump(mode="json"),
                         )
@@ -1903,7 +1923,8 @@ class ChatService:
                         )
 
                     async for event in agent.reply_stream(inputs=input_msg):
-                        entry_id = await self._message_bus.session_publish_event(
+                        entry_id = await publish_session_event(
+                            self._message_bus,
                             session_id,
                             event.model_dump(mode="json"),
                         )
@@ -1960,19 +1981,30 @@ class ChatService:
                     agent,
                 )
 
-                pending_inbox_entries = await self._message_bus.inbox_length(
-                    session_id,
-                )
-                needs_followup_wakeup = (
-                    pending_inbox_entries > 0 and not parked_on_awaiting_tool
-                )
-                if needs_followup_wakeup:
-                    logger.info(
-                        "ChatService: session %s finished with %d pending inbox "
-                        "entries; scheduling a follow-up wakeup.",
-                        session_id,
-                        pending_inbox_entries,
+                if parked_on_awaiting_tool:
+                    async with self._message_bus.acquire_lock(
+                        MessageBusKeys.inbox_lock(session_id),
+                        ttl_secs=MessageBusKeys.INBOX_LOCK_TTL_SECS,
+                    ):
+                        await self._message_bus.registry_del(
+                            MessageBusKeys.inbox_consumer(session_id),
+                            MessageBusKeys.INBOX_CONSUMER_FIELD,
+                        )
+                    released_inbox_consumer = True
+                else:
+                    needs_followup_wakeup = (
+                        await has_pending_inbox_or_release(
+                            self._message_bus,
+                            session_id,
+                        )
                     )
+                    released_inbox_consumer = not needs_followup_wakeup
+                    if needs_followup_wakeup:
+                        logger.info(
+                            "ChatService: session %s finished with pending inbox "
+                            "entries; scheduling a follow-up wakeup.",
+                            session_id,
+                        )
             except asyncio.CancelledError:
                 try:
                     reply_msg = await asyncio.shield(
@@ -2008,11 +2040,20 @@ class ChatService:
                     exc=exc,
                 )
                 raise
+            finally:
+                if not released_inbox_consumer:
+                    await abandon_inbox_consumer(
+                        self._message_bus,
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                    )
 
         # ``session_run.__aexit__`` trims the replay log before
         # releasing the lock — see :meth:`MessageBus.session_run`.
         if needs_followup_wakeup:
-            await self._message_bus.enqueue_wakeup(
+            await enqueue_run_trigger(
+                self._message_bus,
                 user_id=user_id,
                 session_id=session_id,
                 agent_id=agent_id,

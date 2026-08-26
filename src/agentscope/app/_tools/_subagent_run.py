@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
+from .._bus_ops import deliver_to_inbox, publish_session_event
 from ...event import CustomEvent
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ParamsBase, ToolBase, ToolChunk
@@ -383,7 +384,8 @@ Important:
             )
             child_session_id = child_session.id
             child_session_name = child_session.config.name
-            await self._message_bus.session_publish_event(
+            await publish_session_event(
+                self._message_bus,
                 self._session_id,
                 CustomEvent(
                     name="subagent_sessions_updated",
@@ -498,14 +500,12 @@ Important:
                 ensure_ascii=False,
             ),
         )
-        await self._message_bus.inbox_push(
-            child_session_id,
-            hint.model_dump(mode="json"),
-        )
-        await self._message_bus.enqueue_wakeup(
+        await deliver_to_inbox(
+            self._message_bus,
             user_id=self._user_id,
             session_id=child_session_id,
             agent_id=agent_id,
+            payload=hint.model_dump(mode="json"),
         )
 
         payload = {

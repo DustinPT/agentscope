@@ -10,7 +10,8 @@ from typing import Self
 
 from ..._logging import logger
 from ...message import HintBlock
-from ..message_bus import MessageBus
+from .._bus_ops import deliver_to_inbox
+from ..message_bus import MessageBus, MessageBusKeys
 from ..middleware._subagent_result_middleware import (
     _build_error_hint_content,
     is_msg_awaiting_tool_interaction,
@@ -24,7 +25,7 @@ class SubAgentReaper:
     """Periodically scan active child invocations and synthesize failures."""
 
     _SCAN_INTERVAL_SECS = 10.0
-    _WAIT_GRACE_TIMEOUT_SECS = 60.0
+    _WAIT_GRACE_TIMEOUT_SECS = 300.0
 
     def __init__(
         self,
@@ -83,9 +84,9 @@ class SubAgentReaper:
                 task.id,
             )
             return
-        if await self._bus.session_is_running(task.child_session_id):
-            return
-        if await self._bus.has_pending_wakeup(task.child_session_id):
+        if await self._bus.is_locked(
+            MessageBusKeys.session_lock(task.child_session_id),
+        ):
             return
 
         reference_time = task.last_progress_at or task.launch_requested_at
@@ -221,11 +222,12 @@ class SubAgentReaper:
                 ensure_ascii=False,
             ),
         )
-        await self._bus.inbox_push(parent_session.id, hint.model_dump(mode="json"))
-        await self._bus.enqueue_wakeup(
+        await deliver_to_inbox(
+            self._bus,
             user_id=user_id,
             session_id=parent_session.id,
             agent_id=parent_session.agent_id,
+            payload=hint.model_dump(mode="json"),
         )
         await self._persist_reaped_state(
             user_id=user_id,

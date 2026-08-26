@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
+from .._bus_ops import deliver_to_inbox
 from .._types import SubAgentTemplate
 from ..storage import AgentData, AgentRecord, SessionConfig
 from ...message import HintBlock, TextBlock, ToolResultState
@@ -425,14 +426,12 @@ optional):
                     ensure_ascii=False,
                 ),
             )
-            await self._message_bus.inbox_push(
-                worker_session.id,
-                hint.model_dump(mode="json"),
-            )
-            await self._message_bus.enqueue_wakeup(
+            await deliver_to_inbox(
+                self._message_bus,
                 user_id=self._user_id,
                 session_id=worker_session.id,
                 agent_id=worker_agent.id,
+                payload=hint.model_dump(mode="json"),
             )
 
             return ToolChunk(

@@ -32,7 +32,7 @@ from ._schema import (
     TeamMemberView,
     UpdateSessionRequest,
 )
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from .._service import ChatService, SessionService
 from ..storage import (
     AgentRecord,
@@ -114,7 +114,9 @@ async def _build_child_sessions(
             SubAgentSessionView(
                 session=full_child,
                 agent=agent,
-                is_running=await message_bus.session_is_running(child.id),
+                is_running=await message_bus.is_locked(
+                    MessageBusKeys.session_lock(child.id),
+                ),
                 children=await _build_child_sessions(
                     storage,
                     message_bus,
@@ -144,7 +146,9 @@ async def _build_session_view(
             )
     return SessionView(
         session=session,
-        is_running=await message_bus.session_is_running(session.id),
+        is_running=await message_bus.is_locked(
+            MessageBusKeys.session_lock(session.id),
+        ),
         team=team_detail,
         children=await _build_child_sessions(
             storage,
@@ -240,7 +244,9 @@ async def list_sessions(
         views.append(
             SessionSummaryView(
                 session=session,
-                is_running=await message_bus.session_is_running(session.id),
+                is_running=await message_bus.is_locked(
+                    MessageBusKeys.session_lock(session.id),
+                ),
             ),
         )
     return ListSessionsResponse(sessions=views, total=len(views))
@@ -567,7 +573,9 @@ async def list_messages(
             messages,
             request=request,
         ),
-        is_running=await message_bus.session_is_running(session_id),
+        is_running=await message_bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ),
     )
 
 
@@ -690,7 +698,7 @@ async def _iter_session_sse_frames(
     queue: asyncio.Queue[dict | None] = asyncio.Queue()
     startup: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     seen_entry_ids: set[str] = set()
-    events_key = message_bus._SESSION_EVENTS_KEY.format(sid=session_id)
+    events_key = MessageBusKeys.session_events(session_id)
 
     async def _feeder() -> None:
         """Forward raw live payloads to ``queue`` after subscription."""
@@ -724,8 +732,8 @@ async def _iter_session_sse_frames(
         # Replay after the live subscription is ready so anything
         # published during reconnect/refresh is captured either by the
         # replay read below or by the live queue.
-        for entry_id, event in await message_bus.session_read_events(
-            session_id,
+        for entry_id, event in await message_bus.log_read(
+            MessageBusKeys.session_events(session_id),
             since=since,
         ):
             seen_entry_ids.add(entry_id)

@@ -45,6 +45,8 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self
 
+from ._keys import MessageBusKeys
+
 
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     """Abstract base class for live message transport.
@@ -161,20 +163,6 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         Args:
             key (`str`):
                 Queue identifier.
-        """
-
-    @abstractmethod
-    async def queue_length(self, key: str) -> int:
-        """Return the current number of entries in the queue at ``key``.
-
-        Args:
-            key (`str`):
-                Queue identifier.
-
-        Returns:
-            `int`:
-                Current number of pending entries. Returns ``0`` when
-                the queue does not exist.
         """
 
     # ------------------------------------------------------------------
@@ -378,6 +366,48 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` if some process holds the lock right now.
         """
 
+    # ------------------------------------------------------------------
+    # Mode F — registry map (hash-keyed namespace)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        """Set ``field`` in the registry namespace ``namespace``."""
+
+    @abstractmethod
+    async def registry_del(self, namespace: str, field: str) -> None:
+        """Remove ``field`` from the registry namespace ``namespace``."""
+
+    @abstractmethod
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        """Return whether ``field`` exists in ``namespace``."""
+
+    @abstractmethod
+    async def registry_getall(
+        self,
+        namespace: str,
+    ) -> dict[str, str]:
+        """Return all field-value pairs from ``namespace``."""
+
+    @abstractmethod
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        """Return one field value from ``namespace`` if present."""
+
+    @abstractmethod
+    async def registry_drop(self, namespace: str) -> None:
+        """Delete the entire registry namespace ``namespace``."""
+
     # ==================================================================
     # Domain helpers — concrete on the base class so all backends
     # share the same key conventions and serialisation rules.
@@ -432,8 +462,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             `None`: while the session lock is held.
         """
         async with self.acquire_lock(
-            self._SESSION_LOCK_KEY.format(sid=session_id),
-            ttl_secs=self._SESSION_RUN_TTL_SECS,
+            MessageBusKeys.session_lock(session_id),
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
         ):
             try:
                 yield
@@ -443,7 +473,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 # complete Msg to storage before releasing the lock,
                 # so the log is no longer needed by any subscriber.
                 await self.log_trim(
-                    self._SESSION_EVENTS_KEY.format(sid=session_id),
+                    MessageBusKeys.session_events(session_id),
                 )
 
     async def session_is_running(self, session_id: str) -> bool:
@@ -458,7 +488,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` if a chat run holds the session lock right now.
         """
         return await self.is_locked(
-            self._SESSION_LOCK_KEY.format(sid=session_id),
+            MessageBusKeys.session_lock(session_id),
         )
 
     async def session_publish_event(
@@ -487,11 +517,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             `str`:
                 The replay-log entry id assigned by the backend.
         """
-        key = self._SESSION_EVENTS_KEY.format(sid=session_id)
+        key = MessageBusKeys.session_events(session_id)
         entry_id = await self.log_append(
             key,
             event,
-            max_len=self._SESSION_REPLAY_MAX_LEN,
+            max_len=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         )
         await self.publish(key, {**event, "_entry_id": entry_id})
         return entry_id
@@ -518,7 +548,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``(entry_id, event_payload)`` pairs in append order.
         """
         return await self.log_read(
-            self._SESSION_EVENTS_KEY.format(sid=session_id),
+            MessageBusKeys.session_events(session_id),
             since=since,
             max_count=max_count,
         )
@@ -546,7 +576,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Event payloads, with the internal ``_entry_id``
                 field stripped (callers don't need to see it).
         """
-        key = self._SESSION_EVENTS_KEY.format(sid=session_id)
+        key = MessageBusKeys.session_events(session_id)
         async for payload in self.subscribe(key, on_ready=on_ready):
             yield {k: v for k, v in payload.items() if k != "_entry_id"}
 
@@ -568,7 +598,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 The session whose run should be cancelled.
         """
         await self.publish(
-            self._SESSION_CANCEL_KEY,
+            MessageBusKeys.session_cancel_channel(),
             {"session_id": session_id},
         )
 
@@ -594,7 +624,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 The session id from each incoming cancel payload.
         """
         async for payload in self.subscribe(
-            self._SESSION_CANCEL_KEY,
+            MessageBusKeys.session_cancel_channel(),
             on_ready=on_ready,
         ):
             sid = payload.get("session_id")
@@ -604,7 +634,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     async def task_publish_cancel(self, task_id: str) -> None:
         """Broadcast a cancel request for one background task."""
         await self.publish(
-            self._TASK_CANCEL_KEY,
+            MessageBusKeys.task_cancel_channel(),
             {"task_id": task_id},
         )
 
@@ -615,7 +645,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> AsyncGenerator[str, None]:
         """Subscribe to the task-cancel broadcast channel."""
         async for payload in self.subscribe(
-            self._TASK_CANCEL_KEY,
+            MessageBusKeys.task_cancel_channel(),
             on_ready=on_ready,
         ):
             task_id = payload.get("task_id")
@@ -625,7 +655,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     async def session_publish_interrupt(self, session_id: str) -> None:
         """Broadcast a graceful interrupt request for ``session_id``."""
         await self.publish(
-            self._SESSION_INTERRUPT_KEY,
+            MessageBusKeys.session_interrupt_channel(),
             {"session_id": session_id},
         )
 
@@ -636,7 +666,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     ) -> AsyncGenerator[str, None]:
         """Subscribe to the interrupt-broadcast channel."""
         async for payload in self.subscribe(
-            self._SESSION_INTERRUPT_KEY,
+            MessageBusKeys.session_interrupt_channel(),
             on_ready=on_ready,
         ):
             sid = payload.get("session_id")
@@ -662,8 +692,9 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             session_id (`str`):
                 The session whose bus state should be removed.
         """
-        await self.log_trim(self._SESSION_EVENTS_KEY.format(sid=session_id))
-        await self.queue_delete(self._INBOX_KEY.format(sid=session_id))
+        await self.log_trim(MessageBusKeys.session_events(session_id))
+        await self.queue_delete(MessageBusKeys.inbox(session_id))
+        await self.registry_drop(MessageBusKeys.bg_tasks(session_id))
 
     # Inbox -----------------------------------------------------------
 
@@ -694,7 +725,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 :meth:`queue_push`.
         """
         return await self.queue_push(
-            self._INBOX_KEY.format(sid=session_id),
+            MessageBusKeys.inbox(session_id),
             msg,
             ttl_secs=ttl_secs,
         )
@@ -717,112 +748,6 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``(entry_id, msg_payload)`` pairs in arrival order.
         """
         return await self.queue_drain(
-            self._INBOX_KEY.format(sid=session_id),
+            MessageBusKeys.inbox(session_id),
             max_count=max_count,
         )
-
-    async def inbox_length(self, session_id: str) -> int:
-        """Return the current number of pending inbox entries."""
-        return await self.queue_length(self._INBOX_KEY.format(sid=session_id))
-
-    # Wakeup ----------------------------------------------------------
-
-    _WAKEUP_QUEUE_KEY = "agentscope:wakeups"
-    """Shared wake-up queue (durable Redis Stream)."""
-
-    _WAKEUP_SIGNAL_KEY = "agentscope:wakeup_signal"
-    """Shared Pub/Sub channel that nudges dispatchers to drain the
-    wake-up queue."""
-
-    async def enqueue_wakeup(
-        self,
-        user_id: str,
-        session_id: str,
-        agent_id: str,
-        *,
-        kind: str = "wake",
-        input: dict | None = None,
-    ) -> None:
-        """Enqueue a wake-up request and signal dispatchers.
-
-        Producers (e.g. ``TeamSay``, ``AgentCreate``, the scheduler
-        trigger, or the BG-tool completion watcher) call this after
-        depositing a message in the recipient's inbox. The shared
-        :class:`WakeupDispatcher` (one per process) drains the queue
-        on each signal and starts a chat run for any session that
-        is not currently active.
-
-        Args:
-            user_id (`str`):
-                The owning user id.
-            session_id (`str`):
-                The session to wake.
-            agent_id (`str`):
-                The agent id that owns the session.
-            kind (`str`, optional):
-                Wake-up trigger kind. ``"wake"`` starts an idle run with
-                ``input_msg=None``; ``"resume"`` restarts a parked session with
-                the serialized ``input`` payload.
-            input (`dict | None`, optional):
-                Serialized input payload for ``resume`` triggers.
-        """
-        await self.queue_push(
-            self._WAKEUP_QUEUE_KEY,
-            {
-                "user_id": user_id,
-                "session_id": session_id,
-                "agent_id": agent_id,
-                "kind": kind,
-                "input": input,
-            },
-        )
-        await self.publish(self._WAKEUP_SIGNAL_KEY, {})
-
-    async def dequeue_wakeups(
-        self,
-        max_count: int = 64,
-    ) -> list[dict]:
-        """Drain pending wake-up entries.
-
-        Args:
-            max_count (`int`, defaults to ``64``):
-                Maximum entries to drain per call.
-
-        Returns:
-            `list[dict]`:
-                  Entries shaped ``{"user_id", "session_id", "agent_id",
-                  "kind", "input"}`` in enqueue order.
-        """
-        entries = await self.queue_drain(
-            self._WAKEUP_QUEUE_KEY,
-            max_count=max_count,
-        )
-        return [payload for _entry_id, payload in entries]
-
-    @abstractmethod
-    async def has_pending_wakeup(self, session_id: str) -> bool:
-        """Return whether the session still has an enqueued wake-up."""
-
-    async def subscribe_wakeup_signal(
-        self,
-        *,
-        on_ready: Callable[[], None] | None = None,
-    ) -> AsyncGenerator[dict, None]:
-        """Subscribe to the shared wake-up signal channel.
-
-        Each yielded item indicates "drain the queue now"; the
-        payload itself carries no business data.
-
-        Args:
-            on_ready (`Callable[[], None] | None`, optional):
-                Forwarded to the underlying :meth:`subscribe`.
-
-        Yields:
-            `dict`:
-                The empty / opaque signal payload.
-        """
-        async for payload in self.subscribe(
-            self._WAKEUP_SIGNAL_KEY,
-            on_ready=on_ready,
-        ):
-            yield payload

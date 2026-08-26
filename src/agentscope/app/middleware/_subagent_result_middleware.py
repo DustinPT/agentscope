@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 from typing import Any, AsyncGenerator, Callable
 
+from .._bus_ops import deliver_to_inbox
 from .._reply_state import get_current_reply_msg, is_reply_awaiting_tool_interaction
 from ..message_bus import MessageBus
 from ..storage import SessionRecord, StorageBase, SubAgentTaskRecord
@@ -373,14 +374,12 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 ensure_ascii=False,
             ),
         )
-        await self._bus.inbox_push(
-            task.parent_session_id,
-            hint.model_dump(mode="json"),
-        )
-        await self._bus.enqueue_wakeup(
+        await deliver_to_inbox(
+            self._bus,
             user_id=self._user_id,
             session_id=task.parent_session_id,
             agent_id=parent_session.agent_id,
+            payload=hint.model_dump(mode="json"),
         )
         await self._persist_terminal_task(
             task,

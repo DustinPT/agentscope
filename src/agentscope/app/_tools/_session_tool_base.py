@@ -12,6 +12,7 @@ from typing import Any, TYPE_CHECKING
 
 from starlette.datastructures import UploadFile
 
+from ..message_bus import MessageBusKeys
 from ...event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
@@ -251,7 +252,9 @@ class _SessionToolBase(ToolBase):
         task_name: str,
     ) -> None:
         """Start one chat run after checking the session lock."""
-        if await self._message_bus.session_is_running(session_id):
+        if await self._message_bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ):
             raise RuntimeError(f"Session '{session_id}' already has a running chat.")
         self._chat_run_registry.spawn(
             self._chat_service.run(
@@ -361,7 +364,9 @@ class _SessionToolBase(ToolBase):
     ) -> tuple[bool, "SessionRecord | None"]:
         """Interrupt a managed session via the unified chat-service path."""
         _ = reason
-        was_running = await self._message_bus.session_is_running(session_id)
+        was_running = await self._message_bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        )
         await self._chat_service.interrupt(
             user_id=self._user_id,
             session_id=session_id,
@@ -372,7 +377,9 @@ class _SessionToolBase(ToolBase):
         if was_running:
             deadline = asyncio.get_running_loop().time() + timeout
             while True:
-                if not await self._message_bus.session_is_running(session_id):
+                if not await self._message_bus.is_locked(
+                    MessageBusKeys.session_lock(session_id),
+                ):
                     break
                 if asyncio.get_running_loop().time() >= deadline:
                     released = False

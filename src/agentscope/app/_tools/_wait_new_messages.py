@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import Field
 
+from ..message_bus import MessageBusKeys
 from ...message import Msg, ToolResultState
 from ...state import AgentState
 from ...state._state import WaitNewMessagesCursor
@@ -205,7 +206,9 @@ class WaitNewMessages(_SessionToolBase):
             if new_messages:
                 observed_activity = True
 
-            is_running = await self._message_bus.session_is_running(session_id)
+            is_running = await self._message_bus.is_locked(
+                MessageBusKeys.session_lock(session_id),
+            )
             if is_running:
                 observed_running = True
             stop_reason, reply_id, tool_calls = self._resolve_session_stop_reason(

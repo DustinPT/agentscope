@@ -42,8 +42,6 @@ class RedisMessageBus(MessageBus):
     """
 
     _PUBSUB_HEALTH_CHECK_INTERVAL_SECS = 15.0
-    _WAKEUP_PENDING_COUNT_KEY = "agentscope:wakeup_pending:{sid}"
-    """Per-session queued wake-up counter key."""
 
     def __init__(
         self,
@@ -308,65 +306,6 @@ class RedisMessageBus(MessageBus):
         """
         await self._client.delete(key)
 
-    async def queue_length(self, key: str) -> int:
-        """Return the current entry count of a drain queue."""
-        return await self._client.xlen(key)
-
-    async def enqueue_wakeup(
-        self,
-        user_id: str,
-        session_id: str,
-        agent_id: str,
-    ) -> None:
-        """Enqueue a wake-up request and track its pending state."""
-        await self.queue_push(
-            self._WAKEUP_QUEUE_KEY,
-            {
-                "user_id": user_id,
-                "session_id": session_id,
-                "agent_id": agent_id,
-            },
-        )
-        await self._increment_pending_wakeup(session_id)
-        await self.publish(self._WAKEUP_SIGNAL_KEY, {})
-
-    async def dequeue_wakeups(
-        self,
-        max_count: int = 64,
-    ) -> list[dict]:
-        """Drain wake-up entries and update the per-session pending index."""
-        entries = await self.queue_drain(
-            self._WAKEUP_QUEUE_KEY,
-            max_count=max_count,
-        )
-        payloads: list[dict] = []
-        for _entry_id, payload in entries:
-            session_id = payload.get("session_id")
-            if isinstance(session_id, str) and session_id:
-                await self._decrement_pending_wakeup(session_id)
-            payloads.append(payload)
-        return payloads
-
-    async def has_pending_wakeup(self, session_id: str) -> bool:
-        """Return whether the session still has an enqueued wake-up."""
-        value = await self._client.get(
-            self._WAKEUP_PENDING_COUNT_KEY.format(sid=session_id),
-        )
-        return int(value or 0) > 0
-
-    async def _increment_pending_wakeup(self, session_id: str) -> None:
-        """Increase the queued wake-up counter for one session."""
-        await self._client.incr(
-            self._WAKEUP_PENDING_COUNT_KEY.format(sid=session_id),
-        )
-
-    async def _decrement_pending_wakeup(self, session_id: str) -> None:
-        """Decrease the queued wake-up counter for one session."""
-        key = self._WAKEUP_PENDING_COUNT_KEY.format(sid=session_id)
-        remaining = await self._client.decr(key)
-        if remaining <= 0:
-            await self._client.delete(key)
-
     # ------------------------------------------------------------------
     # Mode C — replay log
     # ------------------------------------------------------------------
@@ -469,6 +408,50 @@ class RedisMessageBus(MessageBus):
             return
         # XTRIM MINID drops entries with id < before_id.
         await self._client.xtrim(key, minid=before_id)
+
+    # ------------------------------------------------------------------
+    # Mode F — registry map (hash-keyed namespace)
+    # ------------------------------------------------------------------
+
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        """Set one field in a Redis Hash namespace."""
+        await self._client.hset(namespace, field, value)
+        if ttl_secs is not None:
+            await self._client.expire(namespace, ttl_secs)
+
+    async def registry_del(self, namespace: str, field: str) -> None:
+        """Remove one field from a Redis Hash namespace."""
+        await self._client.hdel(namespace, field)
+
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        """Return whether one field exists in a Redis Hash namespace."""
+        return bool(await self._client.hexists(namespace, field))
+
+    async def registry_getall(
+        self,
+        namespace: str,
+    ) -> dict[str, str]:
+        """Return all field-value pairs from a Redis Hash namespace."""
+        return await self._client.hgetall(namespace) or {}
+
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        """Return one field value from a Redis Hash namespace."""
+        return await self._client.hget(namespace, field)
+
+    async def registry_drop(self, namespace: str) -> None:
+        """Delete a Redis Hash namespace."""
+        await self._client.delete(namespace)
 
     # ------------------------------------------------------------------
     # Mode D — transient broadcast
