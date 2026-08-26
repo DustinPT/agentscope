@@ -2,6 +2,7 @@
 """Middleware system for AgentScope agents."""
 
 from ._base import MiddlewareBase
+from ._budget import ReplyBudgetControlMiddleware
 from ._longterm_memory import (
     AgenticMemoryMiddleware,
     Mem0Middleware,
@@ -12,6 +13,7 @@ from ._tts_middleware import TTSMiddleware
 
 __all__ = [
     "MiddlewareBase",
+    "ReplyBudgetControlMiddleware",
     "AgenticMemoryMiddleware",
     "Mem0Middleware",
     "ReMeMiddleware",

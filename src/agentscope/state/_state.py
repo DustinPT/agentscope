@@ -2,7 +2,7 @@
 """The agent state class."""
 import hashlib
 import uuid
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -373,6 +373,12 @@ class AgentState(BaseModel):
     # =================================================================
     tasks_context: TaskContext = Field(default_factory=TaskContext)
     """The task context that records the agent tasks."""
+
+    # =================================================================
+    # The middleware context
+    # =================================================================
+    middle_context: dict[str, Any] = Field(default_factory=dict)
+    """The context that allows middlewares to store state across replies."""
 
     def append_context(
         self,

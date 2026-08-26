@@ -63,6 +63,7 @@ from ..model import (
 from ..message import (
     Msg,
     AssistantMsg,
+    HintBlock,
     SystemMsg,
     UserMsg,
     TextBlock,
@@ -277,6 +278,9 @@ class Agent:
         self._reasoning_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_reasoning")
         ]
+        self._check_permission_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_check_permission")
+        ]
         self._acting_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_acting")
         ]
@@ -369,6 +373,7 @@ class Agent:
     async def compress_context(
         self,
         context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Compress the agent's context if the token count exceeds the
         threshold and stream display-only events for the current reply.
@@ -378,6 +383,9 @@ class Agent:
                 If provided, compress the context with the given context
                 config. Otherwise, use the default context config in the
                 agent.
+            instructions (`HintBlock | None`, optional):
+                Optional hints or instructions injected into the compression
+                context to guide the summarization behavior.
 
         Yields:
             `AgentEvent`:
@@ -389,6 +397,7 @@ class Agent:
         if not self._compress_context_middlewares:
             async for event in self._compress_context_impl(
                 context_config=context_config,
+                instructions=instructions,
             ):
                 yield event
         else:
@@ -396,23 +405,28 @@ class Agent:
             async def execute_chain(
                 index: int = 0,
                 context_config: ContextConfig | None = context_config,
+                instructions: HintBlock | None = instructions,
             ) -> AsyncGenerator[AgentEvent, None]:
                 """Execute the compress_context middleware chain."""
                 if index >= len(self._compress_context_middlewares):
                     async for event in self._compress_context_impl(
                         context_config=context_config,
+                        instructions=instructions,
                     ):
                         yield event
                 else:
                     mw = self._compress_context_middlewares[index]
-                    input_kwargs = {"context_config": context_config}
+                    input_kwargs = {
+                        "context_config": context_config,
+                        "instructions": instructions,
+                    }
 
                     async def next_handler(
                         **kwargs: Any,
                     ) -> AsyncGenerator[AgentEvent, None]:
                         async for event in execute_chain(
                             index + 1,
-                            **kwargs,
+                            **{**input_kwargs, **kwargs},
                         ):
                             yield event
 
@@ -429,6 +443,7 @@ class Agent:
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Compress the agent's context if the token count exceeds the
         threshold and stream display-only events for the reply stream.
@@ -438,6 +453,9 @@ class Agent:
                 If provided, compress the context with the given context
                 config. Otherwise, use the default context config in the
                 agent.
+            instructions (`HintBlock | None`, optional):
+                Optional hints or instructions injected into the compression
+                context to guide the summarization behavior.
 
         Yields:
             `AgentEvent`:
@@ -518,9 +536,19 @@ class Agent:
         if self.state.summary:
             msgs_system.append(UserMsg("user", self.state.summary))
 
+        instruction_msgs: list[Msg] = []
+        if instructions is not None:
+            instruction_msgs.append(
+                AssistantMsg(
+                    name=self.name,
+                    content=[instructions],
+                ),
+            )
+
         messages = (
             msgs_system
             + msgs_to_compress
+            + instruction_msgs
             + [
                 UserMsg(name="user", content=cfg.compression_prompt),
             ]
@@ -1754,6 +1782,90 @@ class Agent:
         async for evt in self._execute_tool_call(tool_call):
             await queue.put(evt)
 
+    async def _check_permission(
+        self,
+        tool_call: ToolCallBlock,
+        tool: ToolResponse | ToolChunk | Any,
+        tool_input: dict[str, Any],
+    ) -> PermissionDecision:
+        """Run permission checking through the middleware onion.
+
+        The middleware chain receives copies of the tool call and tool input;
+        changes to these copies do not alter the eventual tool invocation. A
+        call already allowed by user confirmation still traverses the
+        middleware chain, but skips re-evaluation by the built-in engine.
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The validated tool call metadata.
+            tool (`ToolBase`):
+                The resolved tool instance.
+            tool_input (`dict[str, Any]`):
+                The parsed and schema-validated tool input.
+
+        Returns:
+            `PermissionDecision`:
+                The decision that the agent should consume.
+        """
+        if not self._check_permission_middlewares:
+            return await self._check_permission_impl(
+                tool_call,
+                tool,
+                tool_input,
+            )
+
+        tool_call = deepcopy(tool_call)
+        tool_input = deepcopy(tool_input)
+
+        async def execute_chain(
+            index: int = 0,
+            tool_call: ToolCallBlock = tool_call,
+            tool: Any = tool,
+            tool_input: dict[str, Any] = tool_input,
+        ) -> PermissionDecision:
+            """Execute the check_permission middleware chain."""
+            if index >= len(self._check_permission_middlewares):
+                return await self._check_permission_impl(
+                    tool_call,
+                    tool,
+                    tool_input,
+                )
+
+            mw = self._check_permission_middlewares[index]
+            input_kwargs = {
+                "tool_call": tool_call,
+                "tool": tool,
+                "tool_input": tool_input,
+            }
+
+            async def next_handler(**kwargs: Any) -> PermissionDecision:
+                return await execute_chain(
+                    index + 1,
+                    **{**input_kwargs, **kwargs},
+                )
+
+            return await mw.on_check_permission(
+                agent=self,
+                input_kwargs=input_kwargs,
+                next_handler=next_handler,
+            )
+
+        return await execute_chain()
+
+    async def _check_permission_impl(
+        self,
+        tool_call: ToolCallBlock,
+        tool: Any,
+        tool_input: dict[str, Any],
+    ) -> PermissionDecision:
+        """Resolve permission for one tool call without middleware."""
+        if tool_call.state == ToolCallState.ALLOWED:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="Already allowed by user confirmation.",
+            )
+        return await self._engine.check_permission(tool, tool_input)
+
     async def _execute_tool_call(
         self,
         tool_call: ToolCallBlock,
@@ -1833,17 +1945,11 @@ class Agent:
         # ===================================================================
         # Step 2: Check permission by toolkit and permission engine
         # ===================================================================
-        if tool_call.state == ToolCallState.ALLOWED:
-            # Already allowed by user confirmation, skip permission checking
-            decision = PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message="Already allowed by user confirmation.",
-            )
-        else:
-            decision = await self._engine.check_permission(
-                tool,
-                parsed_input,
-            )
+        decision = await self._check_permission(
+            tool_call,
+            tool,
+            parsed_input,
+        )
 
         # ===================================================================
         # Step 3: Handle the permission and execute the tool call if allowed
