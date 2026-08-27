@@ -1,6 +1,7 @@
 name: gpt-4o-mini
 label: GPT-4o Mini
 status: active
+supports_message_name: true
 
 input_types:
   - text/plain

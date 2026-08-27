@@ -86,6 +86,10 @@ class FormatterBase(BaseModel):
             for pattern in self.supported_tool_result_media_types
         )
 
+    def supports_message_name(self) -> bool:
+        """Whether the formatter can preserve ``Msg.name`` natively."""
+        return False
+
     @staticmethod
     def _build_source_digest(
         source: URLSource | Base64Source,
@@ -323,14 +327,62 @@ class FormatterBase(BaseModel):
 
         return block.model_copy(update={"output": adapted_output}), promoted_blocks
 
-    def adapt_messages_for_model(self, msgs: list[Msg]) -> list[Msg]:
-        """Adapt messages to the media capabilities declared by the model."""
+
+    @staticmethod
+    def _build_sender_xml_prefix(user_name: str) -> str:
+        """Build the opening sender XML tag."""
+        return f'<user_message user_name="{user_name}">'
+
+    @staticmethod
+    def _build_sender_xml_suffix() -> str:
+        """Build the closing sender XML tag."""
+        return "</user_message>"
+
+    def _wrap_user_content_with_sender(
+        self,
+        content: str | list[TextBlock | DataBlock],
+        user_name: str,
+    ) -> list[TextBlock | DataBlock]:
+        """Wrap user-visible content with sender XML markers."""
+        prefix = self._build_sender_xml_prefix(user_name)
+        suffix = self._build_sender_xml_suffix()
+
+        if isinstance(content, str):
+            return [TextBlock(text=f"{prefix}{content}{suffix}")]
+
+        blocks = deepcopy(content)
+        if not blocks:
+            return [TextBlock(text=f"{prefix}{suffix}")]
+
+        if isinstance(blocks[0], TextBlock):
+            blocks[0] = blocks[0].model_copy(
+                update={"text": f"{prefix}{blocks[0].text}"},
+            )
+        else:
+            blocks.insert(0, TextBlock(text=prefix))
+
+        if isinstance(blocks[-1], TextBlock):
+            blocks[-1] = blocks[-1].model_copy(
+                update={"text": f"{blocks[-1].text}{suffix}"},
+            )
+        else:
+            blocks.append(TextBlock(text=suffix))
+
+        return blocks
+
+    def adapt_messages_for_model(
+        self,
+        msgs: list[Msg],
+        *,
+        group_conversation: bool = False,
+        degrade_sender_identity: bool = False,
+    ) -> list[Msg]:
         self.assert_list_of_msgs(msgs)
 
         adapted_messages: list[Msg] = []
 
         for msg in deepcopy(msgs):
-            adapted_content = []
+            adapted_content: list = []
             promoted_blocks = []
 
             for block in msg.get_content_blocks():
@@ -341,7 +393,44 @@ class FormatterBase(BaseModel):
                     continue
 
                 if isinstance(block, HintBlock):
-                    adapted_content.append(self._adapt_hint_block(block))
+                    adapted_hint = self._adapt_hint_block(block)
+                    sender_name = adapted_hint.metadata.get("user_name")
+                    if group_conversation and sender_name:
+                        if adapted_content:
+                            adapted_messages.append(
+                                msg.model_copy(
+                                    update={"content": adapted_content},
+                                ),
+                            )
+                            adapted_content = []
+
+                        hint_content = adapted_hint.hint
+                        if degrade_sender_identity:
+                            adapted_messages.append(
+                                UserMsg(
+                                    name="",
+                                    content=self._wrap_user_content_with_sender(
+                                        hint_content,
+                                        sender_name,
+                                    ),
+                                    metadata=deepcopy(msg.metadata),
+                                    created_at=msg.created_at,
+                                    finished_at=msg.finished_at,
+                                ),
+                            )
+                        else:
+                            adapted_messages.append(
+                                UserMsg(
+                                    name=sender_name,
+                                    content=hint_content,
+                                    metadata=deepcopy(msg.metadata),
+                                    created_at=msg.created_at,
+                                    finished_at=msg.finished_at,
+                                ),
+                            )
+                        continue
+
+                    adapted_content.append(adapted_hint)
                     continue
 
                 if isinstance(block, ToolResultBlock):
@@ -354,9 +443,28 @@ class FormatterBase(BaseModel):
 
                 adapted_content.append(block)
 
-            adapted_messages.append(
-                msg.model_copy(update={"content": adapted_content}),
-            )
+            if adapted_content:
+                if (
+                    group_conversation
+                    and degrade_sender_identity
+                    and msg.role == "user"
+                    and msg.name
+                ):
+                    adapted_messages.append(
+                        msg.model_copy(
+                            update={
+                                "name": "",
+                                "content": self._wrap_user_content_with_sender(
+                                    adapted_content,
+                                    msg.name,
+                                ),
+                            },
+                        ),
+                    )
+                else:
+                    adapted_messages.append(
+                        msg.model_copy(update={"content": adapted_content}),
+                    )
             if promoted_blocks:
                 adapted_messages.append(
                     UserMsg(

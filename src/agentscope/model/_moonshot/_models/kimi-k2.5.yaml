@@ -1,6 +1,7 @@
 name: kimi-k2.5
 label: Kimi K2.5
 status: active
+supports_message_name: true
 
 input_types:
   - text/plain

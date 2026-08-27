@@ -7,15 +7,16 @@ from typing import Any, Self
 
 from ._model import (
     AgentRecord,
+    ChannelRecord,
     CredentialRecord,
-    UserRecord,
     ScheduleRecord,
-    SubAgentTaskRecord,
-    SessionRecord,
-    SessionWithState,
     SessionConfig,
+    SessionRecord,
     SessionSource,
+    SessionWithState,
+    SubAgentTaskRecord,
     TeamRecord,
+    UserRecord,
 )
 from ...credential import CredentialBase
 from ...message import Msg
@@ -214,6 +215,10 @@ class StorageBase(ABC):
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
         source_schedule_id: str | None = None,
+        source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
+        source_channel_id: str | None = None,
+        conversation_kind: str | None = None,
         parent_session_id: str | None = None,
     ) -> SessionWithState:
         """Create or update a session for a (user, agent) pair.
@@ -234,6 +239,14 @@ class StorageBase(ABC):
             source_schedule_id (`str | None`, optional): The schedule that
                 created this session. When set, the session is indexed under
                 the schedule for execution history queries.
+            source_chat_id (`str | None`, optional): The platform chat this
+                session maps to when created by a channel.
+            source_chat_name (`str | None`, optional): That chat's title, as
+                supplied by the channel when available.
+            source_channel_id (`str | None`, optional): The owning channel
+                id when the session came from a channel.
+            conversation_kind (`str | None`, optional): The audience shape
+                of the session, e.g. ``group`` or ``private``.
             parent_session_id (`str | None`, optional): Parent session id
                 when this session is spawned as a child session.
 
@@ -452,6 +465,23 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
+    async def list_sessions_by_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> list[SessionRecord]:
+        """Return all sessions derived from a given channel.
+
+        Args:
+            user_id (`str`): The owner user id.
+            channel_id (`str`): The channel id.
+
+        Returns:
+            `list[SessionRecord]`: Sessions the channel spawned, ordered by
+            creation time (newest first).
+        """
+
+    @abstractmethod
     async def upsert_schedule(
         self,
         user_id: str,
@@ -523,6 +553,48 @@ class StorageBase(ABC):
         Returns:
             `list[ScheduleRecord]`: All schedule records in the store.
         """
+
+    # ------------------------------------------------------------------
+    # Channel persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_channel(
+        self,
+        record: ChannelRecord,
+        platform_bot_id: str,
+    ) -> str:
+        """Persist a channel record and refresh its indexes."""
+
+    @abstractmethod
+    async def get_channel(
+        self,
+        channel_id: str,
+    ) -> ChannelRecord | None:
+        """Fetch a channel record by its global id."""
+
+    @abstractmethod
+    async def list_channels(self, user_id: str) -> list[ChannelRecord]:
+        """Return all channel records owned by the given user."""
+
+    @abstractmethod
+    async def list_all_channels(self) -> list[ChannelRecord]:
+        """Return every channel record across all users."""
+
+    @abstractmethod
+    async def delete_channel(
+        self,
+        channel_id: str,
+        platform_bot_id: str,
+    ) -> bool:
+        """Delete a channel record and clean up all indexes."""
+
+    @abstractmethod
+    async def get_channel_id_by_platform_bot_id(
+        self,
+        platform_bot_id: str,
+    ) -> str | None:
+        """Return the channel id bound to a platform bot, if any."""
 
     # ------------------------------------------------------------------
     # Message persistence

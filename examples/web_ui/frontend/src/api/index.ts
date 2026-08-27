@@ -5,5 +5,6 @@ export { credentialApi } from './credential';
 export { chatApi } from './chat';
 export { workspaceApi } from './workspace';
 export { scheduleApi } from './schedule';
+export { channelApi } from './channel';
 export { embeddingModelApi, modelApi, ttsModelApi } from './model';
 export { userApi } from './user';

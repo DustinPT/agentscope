@@ -1,6 +1,7 @@
 name: o4-mini
 label: o4-mini
 status: active
+supports_message_name: true
 
 input_types:
   - text/plain

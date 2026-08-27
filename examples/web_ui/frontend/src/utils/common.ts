@@ -101,3 +101,22 @@ export const formatTime = (seconds: number): string => {
 	}
 	return `${Math.floor(total / 3600)}h`;
 };
+
+/**
+ * A deterministic, readable colour pair for a fallback avatar.
+ *
+ * @param seed Stable identity, such as a channel type name.
+ * @returns Inline styles for avatar background and foreground colours.
+ */
+export const avatarTint = (seed: string): { backgroundColor: string; color: string } => {
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < seed.length; i++) {
+                hash ^= seed.charCodeAt(i);
+                hash = Math.imul(hash, 0x01000193);
+        }
+        const hue = Math.abs(hash) % 360;
+        return {
+                backgroundColor: `oklch(0.94 0.03 ${hue})`,
+                color: `oklch(0.41 0.075 ${hue})`,
+        };
+};

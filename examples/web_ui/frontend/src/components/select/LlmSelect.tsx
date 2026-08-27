@@ -21,6 +21,7 @@ import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils';
 
 interface Props {
+        className?: string;
 	value?: ChatModelConfig | null;
 	/**
 	 * Called when the user selects a model, or — when `allowClear` is true —
@@ -41,6 +42,7 @@ interface Props {
 }
 
 export function LlmSelect({
+        className,
 	value,
 	onChange,
 	onAddCredential,
@@ -76,7 +78,11 @@ export function LlmSelect({
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button variant="outline" size="sm" className="justify-between gap-1">
+                                <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className={cn('justify-between gap-1', className)}
+                                >
 					<span className="truncate">{displayLabel}</span>
 					<ChevronDown className="size-3.5 opacity-50" />
 				</Button>

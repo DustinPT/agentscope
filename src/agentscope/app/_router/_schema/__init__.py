@@ -2,6 +2,15 @@
 """Schema models for the agent service."""
 
 from ._chat import ChatRequest, ChatTriggerResponse
+from ._channel import (
+    ChannelActionResponse,
+    ChannelChatId,
+    ChannelChatIdsResponse,
+    ChannelResponse,
+    ChannelSessionsResponse,
+    CreateChannelRequest,
+    UpdateChannelRequest,
+)
 from ._embedding_model import (
     ListEmbeddingModelsRequest,
     ListEmbeddingModelsResponse,
@@ -74,6 +83,13 @@ __all__ = [
     "AgentComposeResponse",
     "AgentSkillListResponse",
     "ListSchedulesResponse",
+    "ChannelActionResponse",
+    "ChannelChatId",
+    "ChannelChatIdsResponse",
+    "ChannelResponse",
+    "ChannelSessionsResponse",
+    "CreateChannelRequest",
+    "UpdateChannelRequest",
     # Chat
     "ChatRequest",
     "ChatTriggerResponse",

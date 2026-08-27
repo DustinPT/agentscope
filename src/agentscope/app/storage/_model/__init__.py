@@ -2,6 +2,13 @@
 """Storage models for persisted resources."""
 
 from ._agent import AgentRecord, AgentData, AgentMCPAsset, AgentSkillAsset
+from ._channel import (
+    ChannelBinding,
+    ChannelRecord,
+    RoutingConfig,
+    SessionScope,
+    SessionSettings,
+)
 from ._credential import CredentialRecord
 from ._schedule import ScheduleData, ScheduleRecord, ScheduleSource
 from ._session import (
@@ -23,12 +30,17 @@ __all__ = [
     "AgentMCPAsset",
     "AgentRecord",
     "AgentSkillAsset",
+    "ChannelBinding",
+    "ChannelRecord",
     "CredentialRecord",
+    "RoutingConfig",
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
     "SessionConfig",
     "SessionRecord",
+    "SessionScope",
+    "SessionSettings",
     "SessionWithState",
     "SessionStateRecord",
     "SessionSource",

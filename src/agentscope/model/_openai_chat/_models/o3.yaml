@@ -1,6 +1,7 @@
 name: o3
 label: o3
 status: active
+supports_message_name: true
 
 input_types:
   - text/plain

@@ -15,6 +15,7 @@ class SessionSource(str, Enum):
 
     USER = "user"
     SCHEDULE = "schedule"
+    CHANNEL = "channel"
     SUBAGENT = "subagent"
 
 
@@ -113,6 +114,23 @@ class SessionRecord(_RecordBase):
 
     source_schedule_id: str | None = None
     """The source schedule Id."""
+
+    source_chat_id: str | None = None
+    """For channel-created sessions, the platform chat this session maps
+    to."""
+
+    source_chat_name: str | None = None
+    """For channel-created sessions, that chat's title when available."""
+
+    source_channel_id: str | None = None
+    """For channel-created sessions, the owning channel id."""
+
+    conversation_kind: str | None = None
+    """The audience shape of this session, e.g. ``group`` or ``private``.
+
+    This is intentionally source-agnostic so the same capability can be
+    reused by other multi-party session types beyond external channels.
+    """
 
     team_id: str | None = None
     """The team this session participates in, if any.

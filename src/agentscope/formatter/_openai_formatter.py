@@ -28,6 +28,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
     """Base class for OpenAI formatters, providing shared data block
     formatting logic."""
 
+    def supports_message_name(self) -> bool:
+        """OpenAI chat-completions style APIs preserve message names."""
+        return True
+
     @property
     def supports_thinking_input(self) -> bool:
         """Return ``True`` when the model accepts historical thinking."""

@@ -32,6 +32,7 @@ from .._reply_state import (
     is_reply_awaiting_tool_interaction,
     set_reply_checkpoint_replay_entry_id,
 )
+from ..channel import ChatKind
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     AgentMCPAsset,
@@ -177,6 +178,7 @@ class ChatService:
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
+        channel_clients=None,
     ) -> None:
         """Initialize chat service.
 
@@ -222,6 +224,9 @@ class ChatService:
             custom_agent_cls (`type[Agent] | None`, optional):
                 Custom :class:`Agent` subclass for assembling agents.
                 Falls back to :class:`Agent` when ``None``.
+            channel_clients:
+                Factory for unconnected channel instances. Stored for
+                channel-originated session integration.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
@@ -247,6 +252,7 @@ class ChatService:
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
+        self._channel_clients = channel_clients
 
     def _resolve_managed_assets(
         self,
@@ -1620,6 +1626,20 @@ class ChatService:
             workdir=workspace.workdir,
         )
 
+        channel = (
+            await self._channel_clients.get(
+                session_record.source_channel_id,
+            )
+            if session_record.source_channel_id
+            and self._channel_clients is not None
+            else None
+        )
+        channel_tools = (
+            await channel.list_tools(workspace)
+            if channel is not None
+            else []
+        )
+
         # ----------------------------------------------------------------
         # 2. Toolkit (workspace tools + planning + TaskStop + schedule +
         # team + extras + skills + mcps).
@@ -1638,6 +1658,7 @@ class ChatService:
             agent_asset_store=self._agent_asset_store,
             extra_factory=self._extra_agent_tools,
             sub_agent_templates=self._sub_agent_templates,
+            channel_tools=channel_tools,
         )
 
         # ----------------------------------------------------------------
@@ -1714,11 +1735,55 @@ class ChatService:
         # ----------------------------------------------------------------
         # 5. Assemble the Agent.
         # ----------------------------------------------------------------
+        system_prompt = agent_record.data.system_prompt
+        attachment = f"You're within a session (id={session_id})."
+        if channel is not None:
+            tools = ", ".join(tool.name for tool in channel_tools)
+            chat_id = session_record.source_chat_id or ""
+            kind = (
+                ChatKind(session_record.conversation_kind)
+                if session_record.conversation_kind is not None
+                else await channel.chat_kind(chat_id)
+            )
+            name = (
+                session_record.source_chat_name
+                or await channel.chat_name(chat_id)
+            )
+            where = f' named "{name}"' if name else ""
+            attachment += (
+                f" This session is bound to a chat{where} (id "
+                f"{chat_id!r}) on the {channel.display_name} platform: "
+                "the messages, images and files people send there are "
+                "relayed to you here, and your replies are delivered "
+                "back to that same chat."
+            )
+            if kind is ChatKind.GROUP:
+                attachment += (
+                    " It is a group chat, so messages may come from "
+                    "several different people; each incoming user turn "
+                    "is labelled with its sender."
+                )
+            elif kind is ChatKind.PRIVATE:
+                attachment += (
+                    " It is a one-to-one private chat with a single user."
+                )
+            if tools:
+                attachment += (
+                    f" You also have these {channel.display_name} tools "
+                    f"available: {tools}. Pass this chat's id as their "
+                    "target to act on this chat."
+                )
+        system_prompt = (
+            f"{system_prompt}\n\n"
+            f"<system-notification>{attachment}</system-notification>"
+        )
+
         agent_state = session_record.state
         agent_state.session_id = session_id
+        agent_state.conversation_kind = session_record.conversation_kind
         agent = self._agent_cls(
             name=agent_record.data.name,
-            system_prompt=agent_record.data.system_prompt,
+            system_prompt=system_prompt,
             model=model,
             toolkit=toolkit,
             model_config=ModelConfig(fallback_model=fallback_model),
@@ -1763,6 +1828,18 @@ class ChatService:
         reply_msg: Msg | None = None
         runtime_input_msg = input_msg
         async with self._message_bus.session_run(session_id):
+            if (
+                session_record.source == SessionSource.CHANNEL
+                and session_record.source_channel_id
+                and session_record.source_chat_id
+                and self._channel_clients is not None
+            ):
+                await self._channel_clients.deliver(
+                    session_id=session_id,
+                    channel_id=session_record.source_channel_id,
+                    chat_id=session_record.source_chat_id,
+                    agent_id=agent_id,
+                )
             await register_inbox_consumer(self._message_bus, session_id)
             checkpoint_state = _ReplyCheckpointState()
             reply_started = False

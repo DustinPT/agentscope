@@ -27,6 +27,7 @@ dependencies = [
     "filetype",
     "json5",
     "json_repair",
+    "lark-oapi>=1.4.0",
     "mcp<2.0.0",
     "httpx",
     "numpy",

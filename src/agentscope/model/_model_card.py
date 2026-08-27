@@ -89,6 +89,15 @@ class ModelCard(BaseModel):
     )
     """Extra runtime init kwargs derived from the model card."""
 
+    supports_message_name: bool = Field(
+        default=False,
+        description=(
+            "Whether the underlying model API natively supports preserving "
+            "the sender name of a chat message."
+        ),
+    )
+    """Whether the underlying model API natively supports ``Msg.name``."""
+
     @classmethod
     def from_yaml(
         cls,
@@ -178,4 +187,5 @@ class ModelCard(BaseModel):
             parameter_schema=final_schema,
             parameters_overrides=config.get("parameter_overrides", {}),
             runtime_init_kwargs=config.get("runtime_init_kwargs", {}),
+            supports_message_name=config.get("supports_message_name", False),
         )

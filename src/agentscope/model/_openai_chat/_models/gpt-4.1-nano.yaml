@@ -1,6 +1,7 @@
 name: gpt-4.1-nano
 label: GPT-4.1 Nano
 status: active
+supports_message_name: true
 
 input_types:
   - text/plain

@@ -2,7 +2,7 @@
 """The content blocks of messages."""
 import uuid
 from enum import StrEnum
-from typing import Literal, List, TypeAlias
+from typing import Any, Literal, List, TypeAlias
 from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
 
 from ..permission import PermissionRule
@@ -99,6 +99,13 @@ class HintBlock(BaseModel):
     """The sender or origin of this hint. For team messages this is the
     sender's display name (e.g. ``"alice"``); for system notifications
     it may be ``"system"`` or ``None``."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Structured metadata for the hint.
+
+    When ``metadata.user_name`` is set, the hint should be treated as a
+    user-originated message whose sender identity must be preserved for
+    group-chat formatting and downgrade handling.
+    """
 
 
 class ToolCallState(StrEnum):

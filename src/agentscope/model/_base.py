@@ -148,6 +148,7 @@ class ChatModelBase:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 32768,
+        supports_message_name: bool = False,
     ) -> None:
         """Initialize the chat model base.
 
@@ -168,6 +169,9 @@ class ChatModelBase:
                 Seconds to sleep between retry attempts.
             context_size (`int`, defaults to `32768`):
                 The model context size used for context compression.
+            supports_message_name (`bool`, defaults to `False`):
+                Whether the underlying model API natively preserves
+                ``Msg.name``.
         """
         self.credential = credential
         self.model = model
@@ -176,21 +180,56 @@ class ChatModelBase:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.context_size = context_size
+        self.supports_message_name = supports_message_name
 
     def _adapt_messages_for_formatter(
         self,
         messages: list[Msg],
+        *,
+        conversation_kind: str | None = None,
     ) -> list[Msg]:
         """Adapt messages to formatter-consumable media capabilities."""
         formatter = getattr(self, "formatter", None)
         if formatter is None:
             return deepcopy(messages)
 
+        group_conversation = self._is_group_conversation(conversation_kind)
+        degrade_sender_identity = (
+            group_conversation
+            and not (
+                self._model_supports_message_name()
+                and self._formatter_supports_message_name()
+            )
+        )
         adapt = getattr(formatter, "adapt_messages_for_model", None)
         if callable(adapt):
-            return adapt(messages)
+            return adapt(
+                messages,
+                group_conversation=group_conversation,
+                degrade_sender_identity=degrade_sender_identity,
+            )
 
         return deepcopy(messages)
+
+    @staticmethod
+    def _is_group_conversation(conversation_kind: str | None) -> bool:
+        """Whether the current run belongs to a multi-party conversation."""
+        return conversation_kind == "group"
+
+    def _model_supports_message_name(self) -> bool:
+        """Whether the current model instance preserves ``Msg.name``."""
+        return self.supports_message_name
+
+    def _formatter_supports_message_name(self) -> bool:
+        """Whether the active formatter preserves ``Msg.name`` natively."""
+        formatter = getattr(self, "formatter", None)
+        if formatter is None:
+            return False
+
+        supports = getattr(formatter, "supports_message_name", None)
+        if callable(supports):
+            return bool(supports())
+        return False
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -306,6 +345,7 @@ class ChatModelBase:
 
         return {
             "context_size": card.context_size,
+            "supports_message_name": card.supports_message_name,
             **card.runtime_init_kwargs,
         }
 
@@ -362,6 +402,7 @@ class ChatModelBase:
         messages: list[Msg],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
+        conversation_kind: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the model with retry logic.
@@ -390,6 +431,7 @@ class ChatModelBase:
                     messages=messages,
                     tools=tools,
                     tool_choice=tool_choice,
+                    conversation_kind=conversation_kind,
                     **kwargs,
                 )
             except Exception as e:
@@ -426,6 +468,7 @@ class ChatModelBase:
         messages: list[Msg],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
+        conversation_kind: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the underlying API. Subclasses must implement this method.
@@ -500,6 +543,7 @@ class ChatModelBase:
         self,
         messages: list[Msg],
         tools: list[dict] | None,
+        conversation_kind: str | None = None,
     ) -> int:
         """A quick and unified method to estimate the token count of the
         model input by dividing the total input size in bytes by 4.
@@ -521,7 +565,10 @@ class ChatModelBase:
             `int`:
                 The number of tokens in the model.
         """
-        messages = self._adapt_messages_for_formatter(messages)
+        messages = self._adapt_messages_for_formatter(
+            messages,
+            conversation_kind=conversation_kind,
+        )
         cnt = 0
 
         acc_texts = []
@@ -592,6 +639,7 @@ class ChatModelBase:
         self,
         messages: list[Msg],
         structured_model: Type[BaseModel] | dict,
+        conversation_kind: str | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
         """Generate required structured output by the given model.
@@ -624,6 +672,7 @@ class ChatModelBase:
                     self.model,
                     messages=messages,
                     structured_model=structured_model,
+                    conversation_kind=conversation_kind,
                     **kwargs,
                 )
             except Exception as e:
@@ -659,6 +708,7 @@ class ChatModelBase:
         messages: list[Msg],
         structured_model: Type[BaseModel] | dict,
         tool_choice: ToolChoice | None = None,
+        conversation_kind: str | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
         """This function constructs a 'generate_structured_output' tool to
@@ -735,6 +785,7 @@ class ChatModelBase:
                 },
             ],
             tool_choice=tool_choice,
+            conversation_kind=conversation_kind,
             **kwargs,
         )
 

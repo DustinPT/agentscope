@@ -572,6 +572,7 @@ class Agent:
         estimated_compression_tokens = await self.model.count_tokens(
             messages,
             compression_tool_schema,
+            conversation_kind=self.state.conversation_kind,
         )
         if estimated_compression_tokens > self.model.context_size:
             logger.warning(
@@ -616,6 +617,7 @@ class Agent:
             res = await self.model.generate_structured_output(
                 messages=messages,
                 structured_model=cfg.summary_schema,
+                conversation_kind=self.state.conversation_kind,
             )
 
         except Exception as e:
@@ -641,6 +643,7 @@ class Agent:
                         await self.model.count_tokens(
                             messages,
                             compression_tool_schema,
+                            conversation_kind=self.state.conversation_kind,
                         )
                     )
                     # Considering trigger_ratio <= 0.9, at least reserve 10%
@@ -655,6 +658,7 @@ class Agent:
                     res = await self.model.generate_structured_output(
                         messages=messages,
                         structured_model=cfg.summary_schema,
+                        conversation_kind=self.state.conversation_kind,
                     )
                     structured_error = None
                 except Exception as retry_error:
@@ -731,6 +735,7 @@ class Agent:
             messages=fallback_messages,
             tools=[],
             tool_choice=None,
+            conversation_kind=self.state.conversation_kind,
         )
         completed_response = await self._collect_completed_chat_response(
             response,
@@ -2317,6 +2322,7 @@ class Agent:
             reserved_tokens = await self.model.count_tokens(
                 system_msg + self.state.context[msg_index:],
                 tools,
+                conversation_kind=self.state.conversation_kind,
             )
             # If reserved tokens exceed the limit
             if reserved_tokens >= to_reserved_tokens:
@@ -2346,6 +2352,7 @@ class Agent:
             reserved_tokens = await self.model.count_tokens(
                 try_reserved,
                 tools,
+                conversation_kind=self.state.conversation_kind,
             )
             if reserved_tokens > to_reserved_tokens:
                 break
@@ -2608,6 +2615,7 @@ class Agent:
         return {
             "messages": messages,
             "tools": tools,
+            "conversation_kind": self.state.conversation_kind,
         }
 
     async def _call_model(
@@ -2615,6 +2623,7 @@ class Agent:
         messages: list[Msg],
         tools: list[dict],
         tool_choice: ToolChoice | None = None,
+        conversation_kind: str | None = None,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Perform model inference with retry logic and middleware support.
 
@@ -2658,6 +2667,7 @@ class Agent:
                             messages=messages,
                             tools=tools,
                             tool_choice=tool_choice,
+                            conversation_kind=conversation_kind,
                         )
                     else:
                         # pylint: disable=cell-var-from-loop
@@ -2667,6 +2677,7 @@ class Agent:
                             messages: list[Msg] = messages,
                             tools: list[dict] = tools,
                             tool_choice: ToolChoice = tool_choice,
+                            conversation_kind: str | None = conversation_kind,
                         ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
                             """Execute the model chain."""
                             if index >= len(self._model_call_middlewares):
@@ -2674,6 +2685,7 @@ class Agent:
                                     messages=messages,
                                     tools=tools,
                                     tool_choice=tool_choice,
+                                    conversation_kind=conversation_kind,
                                 )
                             else:
                                 mw = self._model_call_middlewares[index]
@@ -2682,6 +2694,7 @@ class Agent:
                                     "messages": messages,
                                     "tools": tools,
                                     "tool_choice": tool_choice,
+                                    "conversation_kind": conversation_kind,
                                 }
 
                                 async def next_handler(

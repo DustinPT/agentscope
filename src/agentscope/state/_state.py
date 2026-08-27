@@ -13,6 +13,7 @@ from ..message import (
     Msg,
     TextBlock,
     ToolCallBlock,
+    ToolCallState,
     ToolResultBlock,
 )
 from ..permission import PermissionContext
@@ -343,6 +344,9 @@ class AgentState(BaseModel):
     """The session id of the agent. Normally, each session will maintain one
     independent agent state for each agent."""
 
+    conversation_kind: str | None = None
+    """The audience shape of the session, e.g. ``group`` or ``private``."""
+
     summary: str | list[TextBlock | DataBlock] = ""
     """The compressed summary of the context, which will be prepended to the
     context when feed into the LLM."""
@@ -410,3 +414,29 @@ class AgentState(BaseModel):
                 content=blocks,
             ),
         )
+
+    def has_awaiting_tool_calls(self, name: str) -> bool:
+        """Whether the tail assistant message has pending tool calls."""
+        return bool(self.get_awaiting_tool_calls(name))
+
+    def get_awaiting_tool_calls(self, name: str) -> list[ToolCallBlock]:
+        """Get the tail assistant message's awaiting tool calls."""
+        if not self.context:
+            return []
+
+        last_msg = self.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != name:
+            return []
+
+        result_ids = {
+            block.id for block in last_msg.get_content_blocks("tool_result")
+        }
+        return [
+            tool_call
+            for tool_call in last_msg.get_content_blocks("tool_call")
+            if tool_call.state == ToolCallState.ASKING
+            or (
+                tool_call.state == ToolCallState.SUBMITTED
+                and tool_call.id not in result_ids
+            )
+        ]

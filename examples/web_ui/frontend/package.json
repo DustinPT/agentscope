@@ -33,6 +33,7 @@
 		"react-dom": "^19.2.6",
 		"react-i18next": "^17.0.8",
 		"react-markdown": "^10.1.0",
+		"react-resizable-panels": "^4.12.3",
 		"react-router-dom": "^7.15.1",
 		"remark-gfm": "^4.0.1",
 		"shadcn": "^4.7.0",

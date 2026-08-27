@@ -2,6 +2,7 @@
 """Shared FastAPI dependencies for the agentscope app."""
 from fastapi import Header, HTTPException, Request, status
 
+from .channel import ChannelClients, ChannelTypeRegistry
 from .workspace_manager import WorkspaceManagerBase
 from ._manager import (
     BackgroundTaskManager,
@@ -11,6 +12,7 @@ from ._manager import (
 from ._service import (
     AgentAssetStore,
     AttachmentStore,
+    ChannelService,
     ChatService,
     SessionService,
 )
@@ -182,3 +184,22 @@ async def get_extra_agent_tools(
         :func:`~agentscope.app.create_app`, or ``None`` if not configured.
     """
     return request.app.state.extra_agent_tools
+
+
+async def get_channel_service(request: Request) -> ChannelService:
+    """Return the application-wide channel CRUD service."""
+    return request.app.state.channel_service
+
+
+async def get_channel_clients(
+    request: Request,
+) -> ChannelClients:
+    """Return the factory for unconnected channel instances."""
+    return request.app.state.channel_clients
+
+
+async def get_channel_type_registry(
+    request: Request,
+) -> ChannelTypeRegistry:
+    """Return the registry of channel types allowed by this service."""
+    return request.app.state.channel_type_registry

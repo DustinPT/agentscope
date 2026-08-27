@@ -8,6 +8,7 @@ import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
 import { useTranslation } from '@/i18n/useI18n';
 import { ChatPage } from '@/pages/chat';
+import { ChannelPage } from '@/pages/channel';
 import { CredentialPage } from '@/pages/credential';
 import { SchedulePage } from '@/pages/schedule';
 import { ModelDefaultsPage, SettingsConnectionPage, SettingsHomePage } from '@/pages/settings';
@@ -35,6 +36,7 @@ const router = createBrowserRouter([
 			{ path: '/chat/:agentId/:sessionId', element: <ChatPage /> },
 			{ path: '/chat/:agentId/:sessionId/:memberId', element: <ChatPage /> },
 			{ path: '/schedule', element: <SchedulePage /> },
+                        { path: '/channel', element: <ChannelPage /> },
 			{ path: '/credential', element: <CredentialPage /> },
                         { path: '/settings', element: <SettingsHomePage /> },
                         { path: '/settings/connection', element: <SettingsConnectionPage /> },

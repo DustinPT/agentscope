@@ -2,6 +2,7 @@
 """Service layer for the AgentScope app."""
 from ._agent_asset_store import AgentAssetStore
 from ._attachment_store import AttachmentStore
+from ._channel import ChannelService
 from ._chat import ChatService
 from ._embedding import get_embedding_model
 from ._model import get_model
@@ -17,6 +18,7 @@ from ._workspace_seed import (
 __all__ = [
     "AgentAssetStore",
     "AttachmentStore",
+    "ChannelService",
     "ChatService",
     "SessionService",
     "get_embedding_model",

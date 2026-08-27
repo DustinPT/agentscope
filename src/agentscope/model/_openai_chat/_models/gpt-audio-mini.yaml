@@ -1,6 +1,7 @@
 name: gpt-audio-mini
 label: GPT Audio Mini
 status: active
+supports_message_name: true
 
 input_types:
   - text/plain

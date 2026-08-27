@@ -86,6 +86,7 @@ class OpenCodeZenChatModel(ChatModelBase):
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 200000,
+        supports_message_name: bool = False,
         formatter_input_media_types: list[str] | None = None,
         formatter_tool_result_media_types: list[str] | None = None,
         formatter_input_types: list[str] | None = None,
@@ -102,6 +103,7 @@ class OpenCodeZenChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            supports_message_name=supports_message_name,
         )
         if api_style not in _SUPPORTED_API_STYLES:
             raise ValueError(
@@ -171,6 +173,7 @@ class OpenCodeZenChatModel(ChatModelBase):
                 max_retries=self.max_retries,
                 retry_delay=self.retry_delay,
                 context_size=self.context_size,
+                supports_message_name=self.supports_message_name,
                 formatter_input_media_types=self.formatter_input_media_types,
                 formatter_tool_result_media_types=(
                     self.formatter_tool_result_media_types
@@ -192,6 +195,7 @@ class OpenCodeZenChatModel(ChatModelBase):
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
             context_size=self.context_size,
+            supports_message_name=self.supports_message_name,
             formatter_input_media_types=self.formatter_input_media_types,
             formatter_tool_result_media_types=(
                 self.formatter_tool_result_media_types
@@ -232,6 +236,7 @@ class OpenCodeZenChatModel(ChatModelBase):
         messages: list[Msg],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
+        conversation_kind: str | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the OpenCode Zen model via the mapped OpenAI-compatible API."""
@@ -241,6 +246,7 @@ class OpenCodeZenChatModel(ChatModelBase):
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
+            conversation_kind=conversation_kind,
             **self._build_generate_kwargs(generate_kwargs),
         )
 

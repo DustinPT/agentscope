@@ -35,6 +35,10 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         ),
     )
 
+    def supports_message_name(self) -> bool:
+        """Responses API currently does not preserve message names natively."""
+        return False
+
     def _format_response_data_block(
         self,
         block: DataBlock,

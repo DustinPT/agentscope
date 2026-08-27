@@ -2,12 +2,14 @@
 """AgentScope app factory."""
 from typing import Type, TYPE_CHECKING, Any
 
+from .channel import ChannelBase, ChannelTypeRegistry
 from ._lifespan import lifespan
 from ._service import AgentAssetStore, AttachmentStore
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
     attachment_router,
+    channel_router,
     chat_router,
     credential_router,
     embedding_model_router,
@@ -46,6 +48,7 @@ def create_app(
     extra_agent_tools: AgentToolFactory | None = None,
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
+    channels: list[Type[ChannelBase]] | None = None,
     title: str = "AgentScope",
     version: str = __version__,
 ) -> FastAPI:
@@ -134,6 +137,9 @@ def create_app(
             A custom :class:`~agentscope.agent.Agent` subclass to use
             when assembling agents.  When ``None`` (default), the
             built-in :class:`~agentscope.agent.Agent` is used.
+        channels (`list[Type[ChannelBase]] | None`, optional):
+            Channel adapter classes this service allows. When ``None``,
+            the channel feature stays disabled.
         title (`str`, defaults to ``"AgentScope"``):
             OpenAPI title shown in the docs UI.
         version (`str`, defaults to the package version):
@@ -162,6 +168,7 @@ def create_app(
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
+    app.state.channel_type_registry = ChannelTypeRegistry(channels or [])
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state
@@ -182,6 +189,7 @@ def create_app(
     for router in (
         agent_router,
         attachment_router,
+        channel_router,
         chat_router,
         credential_router,
         schedule_router,

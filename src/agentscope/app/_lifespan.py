@@ -11,7 +11,7 @@ from ._manager import (
     SubAgentReaper,
     WakeupDispatcher,
 )
-from ._service import ChatService, SessionService
+from ._service import ChannelService, ChatService, SessionService
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -62,6 +62,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.scheduler_manager = scheduler
 
+        channel_type_registry = app.state.channel_type_registry
+        channel_clients = None
+        if channel_type_registry:
+            from .channel import (
+                ChannelClients,
+                ChannelGateway,
+                ChannelLifecycleDispatcher,
+            )
+
+            channel_clients = await stack.enter_async_context(
+                ChannelClients(
+                    storage=storage,
+                    message_bus=message_bus,
+                    type_registry=channel_type_registry,
+                ),
+            )
+            app.state.channel_service = ChannelService(
+                storage=storage,
+                message_bus=message_bus,
+                type_registry=channel_type_registry,
+            )
+            await stack.enter_async_context(
+                ChannelLifecycleDispatcher(
+                    storage=storage,
+                    message_bus=message_bus,
+                    type_registry=channel_type_registry,
+                    gateway=ChannelGateway(
+                        storage=storage,
+                        message_bus=message_bus,
+                        workspace_manager=workspace_manager,
+                    ),
+                ).lifespan(),
+            )
+        app.state.channel_clients = channel_clients
+
         chat_service = ChatService(
             storage=storage,
             workspace_manager=workspace_manager,
@@ -75,6 +110,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             extra_agent_tools=app.state.extra_agent_tools,
             custom_subagent_templates=app.state.custom_subagent_templates,
             custom_agent_cls=app.state.custom_agent_cls,
+            channel_clients=channel_clients,
         )
         app.state.chat_service = chat_service
 

@@ -1,6 +1,7 @@
 name: gpt-5.4
 label: GPT-5.4
 status: active
+supports_message_name: true
 
 input_types:
   - text/plain

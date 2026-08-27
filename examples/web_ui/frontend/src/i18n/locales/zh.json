@@ -4,6 +4,7 @@
 		"agent": "Agent",
 		"cancel": "取消",
 		"chat": "聊天",
+                "channel": "频道",
 		"close": "关闭",
 		"confirm": "确认",
 		"create": "创建",
@@ -301,7 +302,7 @@
 					"label": "编辑",
 					"description": "对文件进行增删和编辑，包含 Edit、Write。"
 				},
-				"schedule": {
+        "schedule": {
 					"label": "定时任务",
 					"description": "管理 CRON 计划任务，包含 schedule_tools 中的全部工具。"
 				},
@@ -549,7 +550,109 @@
                 "ttsParameters": "TTS 参数",
                 "ttsParametersDescription": "调整语音合成模型参数。",
                 "noTts": "关闭 TTS"
-	},
+        },
+        "channel": {
+                "title": "频道",
+                "subtitle": "接入飞书等外部平台，让智能体在群聊里工作",
+                "status": "状态",
+                "connected": "已连接",
+                "enable": "启用",
+                "disable": "停用",
+                "deleteEntity": "频道",
+                "routing": "路由",
+                "routingDesc": "将入站消息匹配到某个智能体和会话粒度。最后一条规则匹配其余所有消息。",
+                "sectionActive": "已接入",
+                "sectionAdd": "添加频道",
+                "rules": "{{count}} 条规则",
+                "empty": {
+                        "title": "暂无频道",
+                        "description": "创建一个频道，将智能体连接到飞书等外部平台。"
+                },
+                "create": {
+                        "title": "创建频道",
+                        "titleFor": "接入 {{name}}",
+                        "description": "将智能体连接到外部消息平台。",
+                        "channelType": "平台",
+                        "nameLabel": "名称",
+                        "namePlaceholder": "如：客服值班",
+                        "nameDesc": "便于区分同平台的多个频道",
+                        "modelDesc": "新会话创建时的初始模型",
+                        "permissionMode": "权限模式",
+                        "permissionModeDesc": "新会话创建时的初始权限模式"
+                },
+                "fields": {
+                        "app_id": {
+                                "title": "应用 ID",
+                                "description": "飞书应用 ID"
+                        },
+                        "app_secret": {
+                                "title": "应用密钥",
+                                "description": "飞书应用密钥"
+                        },
+                        "bot_token": {
+                                "title": "机器人令牌"
+                        },
+                        "application_id": {
+                                "title": "应用 ID"
+                        },
+                        "only_at_reply": {
+                                "title": "仅在被提及时回复",
+                                "description": "在群聊中，仅当机器人被 @ 提及时回复"
+                        },
+                        "show_tool_process": {
+                                "title": "显示工具过程",
+                                "description": "在回复中显示工具调用和返回结果"
+                        },
+                        "show_thinking": {
+                                "title": "显示思考过程",
+                                "description": "在回复中显示模型的推理过程"
+                        }
+                },
+                "edit": {
+                        "title": "编辑频道",
+                        "description": "修改路由、模型与回复设置。平台与凭据不可修改。"
+                },
+                "sessionScope": {
+                        "per_chat": "按聊天",
+                        "per_chat_user": "按聊天+用户"
+                },
+                "sessions": {
+                        "title": "派生会话",
+                        "empty": "还没有会话",
+                        "openInChat": "在对话中打开"
+                },
+                "detail": {
+                        "config": "配置",
+                        "configDesc": "新会话创建时应用的初始配置",
+                        "configItem": "配置项",
+                        "configValue": "值",
+                        "condition": "条件",
+                        "created": "创建时间",
+                        "deleteChannel": "删除频道",
+                        "routingDesc": "入站消息如何匹配到智能体与会话粒度",
+                        "sessionsDesc": "该频道派生出的会话",
+                        "selectHint": "选择一个频道查看详情"
+                },
+                "state": {
+                        "stopped": "已停止",
+                        "connecting": "连接中",
+                        "retrying": "重连中",
+                        "connected": "已连接",
+                        "failed": "连接失败"
+                },
+                "binding": {
+                        "rule": "匹配规则",
+                        "matchKey": "匹配字段",
+                        "matchValue": "匹配值",
+                        "matchValuePlaceholder": "如某个 chat_id",
+                        "routeTo": "路由到",
+                        "scope": "会话粒度",
+                        "fallback": "兜底规则",
+                        "fallbackDesc": "未命中上面任何规则的消息，都路由到这里",
+                        "catchAll": "其余所有消息",
+                        "addRule": "添加规则"
+                }
+        },
         "settings": {
                 "home": {
                         "title": "设置",

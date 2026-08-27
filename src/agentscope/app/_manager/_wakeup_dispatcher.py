@@ -333,7 +333,11 @@ class WakeupDispatcher:
         """Deserialize a wake-up queue payload into the chat-service input."""
         if kind == "wake":
             return None
-        if kind != "resume":
+        if kind == MessageBusKeys.WAKEUP_KIND_MESSAGE:
+            if payload is None:
+                raise ValueError("Message wake-up payload is missing its input.")
+            return Msg.model_validate(payload)
+        if kind != MessageBusKeys.WAKEUP_KIND_RESUME:
             raise ValueError(f"Unsupported wake-up kind: {kind}")
         if payload is None:
             raise ValueError("Resume wake-up payload is missing its input.")

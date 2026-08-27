@@ -124,6 +124,7 @@ class DashScopeChatModel(ChatModelBase):
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 131072,
+        supports_message_name: bool = False,
         formatter: FormatterBase | None = None,
         formatter_input_media_types: list[str] | None = None,
         formatter_tool_result_media_types: list[str] | None = None,
@@ -172,6 +173,7 @@ class DashScopeChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            supports_message_name=supports_message_name,
         )
         if formatter is None:
             formatter_kwargs: dict[str, Any] = {}
@@ -228,6 +230,7 @@ class DashScopeChatModel(ChatModelBase):
         messages: list[Msg],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
+        conversation_kind: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the DashScope chat completions API via OpenAI-compatible
@@ -256,7 +259,10 @@ class DashScopeChatModel(ChatModelBase):
             },
         )
 
-        adapted_messages = self._adapt_messages_for_formatter(messages)
+        adapted_messages = self._adapt_messages_for_formatter(
+            messages,
+            conversation_kind=conversation_kind,
+        )
         formatted_messages = await self.formatter.format(adapted_messages)
 
         request_kwargs: dict[str, Any] = {

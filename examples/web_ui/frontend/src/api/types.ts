@@ -170,7 +170,7 @@ export interface AgentSchemaResponse {
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-export type SessionSource = 'user' | 'schedule' | 'subagent';
+export type SessionSource = 'user' | 'schedule' | 'channel' | 'subagent';
 
 export interface SessionConfig {
 	name: string;
@@ -191,6 +191,9 @@ export interface SessionRecord extends RecordBase {
 	agent_id: string;
 	source: SessionSource;
 	source_schedule_id: string | null;
+        source_chat_id: string | null;
+        source_chat_name: string | null;
+        source_channel_id: string | null;
 	/**
 	 * The team this session participates in, if any. Set when the
 	 * session is the leader of a team (the session that called
@@ -592,6 +595,82 @@ export interface UpdateScheduleRequest {
 export interface ScheduleListResponse {
 	schedules: ScheduleRecord[];
 	total: number;
+}
+
+// ─── Channel ──────────────────────────────────────────────────────────────────
+
+export type SessionScope = 'per_chat' | 'per_chat_user';
+
+export interface ChannelBinding {
+        match_key: string;
+        match_value: string;
+        agent_id: string;
+        session_scope: SessionScope;
+}
+
+export interface RoutingConfig {
+        bindings: ChannelBinding[];
+}
+
+export interface SessionSettings {
+        chat_model_config: ChatModelConfig;
+        fallback_chat_model_config?: ChatModelConfig | null;
+        permission_mode: PermissionMode;
+}
+
+export interface ChannelRecord extends RecordBase {
+        channel_type: string;
+        name: string | null;
+        user_id: string;
+        platform_bot_id: string;
+        enabled: boolean;
+        platform_config: Record<string, unknown>;
+        routing: RoutingConfig;
+        session: SessionSettings;
+}
+
+export interface CreateChannelRequest {
+        channel_type: string;
+        name?: string | null;
+        credentials: Record<string, unknown>;
+        platform_config?: Record<string, unknown>;
+        routing: RoutingConfig;
+        session: SessionSettings;
+        enabled?: boolean;
+}
+
+export interface UpdateChannelRequest {
+        name?: string | null;
+        platform_config?: Record<string, unknown>;
+        routing?: RoutingConfig;
+        session?: SessionSettings;
+        enabled?: boolean;
+}
+
+export interface ChannelTypeSchema {
+        channel_type: string;
+        display_name: string;
+        description?: string;
+        icon_url?: string;
+        credentials_schema: Record<string, unknown>;
+        config_schema: Record<string, unknown>;
+        platform_bot_id_field?: string;
+}
+
+export type ChannelState = 'stopped' | 'connecting' | 'retrying' | 'connected' | 'failed';
+
+export interface ChannelStatus {
+        state: ChannelState;
+        last_error: string;
+}
+
+export interface ChannelSessionsResponse {
+        sessions: SessionRecord[];
+        total: number;
+}
+
+export interface ChannelChatIdsResponse {
+        chats: { chat_id: string; name: string; source: string }[];
 }
 
 // ─── Model ────────────────────────────────────────────────────────────────────

@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Toolkit assembly for an (agent, session) pair.
-
-The single entry point :func:`get_toolkit` gathers every tool source —
-workspace builtins, skills, MCPs, planning tools (Task*), schedule
-control (Schedule*), team participation tools, and caller-supplied extras
-— into one :class:`Toolkit`.
-"""
+"""Toolkit assembly for an (agent, session) pair."""
 from typing import Any, TYPE_CHECKING
 
 from .._manager import (
@@ -34,6 +28,7 @@ from ...tool import (
     TaskCreate,
     TaskGet,
     TaskList,
+    ToolBase,
     TaskUpdate,
     Toolkit,
 )
@@ -59,6 +54,7 @@ async def get_toolkit(
     agent_asset_store: "AgentAssetStore | None" = None,
     extra_factory: AgentToolFactory | None = None,
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
+    channel_tools: list[ToolBase] | None = None,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -256,6 +252,9 @@ optional):
             agent_record.id,
             session_record.id,
         )
+
+    if channel_tools:
+        tools += channel_tools
 
     return Toolkit(
         tools=tools,
