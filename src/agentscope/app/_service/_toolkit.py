@@ -24,6 +24,7 @@ from .._tools import (
 from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
 from .._manager import ChatRunRegistry
+from ...middleware import MiddlewareBase
 from ...tool import (
     TaskCreate,
     TaskGet,
@@ -46,6 +47,7 @@ async def get_toolkit(
     scheduler_manager: SchedulerManager,
     background_task_manager: BackgroundTaskManager,
     message_bus: MessageBus,
+    middlewares: list[MiddlewareBase],
     chat_service: "ChatService",
     chat_run_registry: ChatRunRegistry,
     user_id: str,
@@ -77,6 +79,8 @@ async def get_toolkit(
     5. Sub-agent execution (`SubAgentRun`) when enabled by agent config
        (independent of the ``team`` builtin-tool-group switch)
     6. Caller-supplied extras (``extra_factory``)
+    7. Channel platform tools — the caller resolves them (once, shared
+       with the system-prompt attachment) and passes ``channel_tools``.
 
     Plus the workspace's skills and MCPs, which become the toolkit's
     ``skills_or_loaders`` and ``mcps`` parameters.
@@ -100,6 +104,9 @@ async def get_toolkit(
             Application message bus; passed to team tools so they can
             push HintBlocks + wakeups when delivering inter-session
             messages.
+        middlewares (`list[MiddlewareBase]`):
+            The agent middlewares that may provide tools to the agent via the
+            `list_tools` interface.
         user_id (`str`):
             Caller user id.
         agent_record (`AgentRecord`):
@@ -252,7 +259,13 @@ optional):
             agent_record.id,
             session_record.id,
         )
+    
+    # Tools from middleware
+    for mw in middlewares:
+        tools.extend(await mw.list_tools())
 
+    # Channel platform tools, resolved once by the caller (also feeds
+    # the channel section of the system prompt).
     if channel_tools:
         tools += channel_tools
 

@@ -1641,28 +1641,7 @@ class ChatService:
         )
 
         # ----------------------------------------------------------------
-        # 2. Toolkit (workspace tools + planning + TaskStop + schedule +
-        # team + extras + skills + mcps).
-        # ----------------------------------------------------------------
-        toolkit = await get_toolkit(
-            storage=self._storage,
-            workspace=workspace,
-            scheduler_manager=self._scheduler_manager,
-            background_task_manager=self._background_task_manager,
-            message_bus=self._message_bus,
-            chat_service=self,
-            chat_run_registry=self._chat_run_registry,
-            user_id=user_id,
-            agent_record=agent_record,
-            session_record=session_record,
-            agent_asset_store=self._agent_asset_store,
-            extra_factory=self._extra_agent_tools,
-            sub_agent_templates=self._sub_agent_templates,
-            channel_tools=channel_tools,
-        )
-
-        # ----------------------------------------------------------------
-        # 3. Middlewares — framework-supplied first, then caller extras.
+        # 2. Middlewares — framework-supplied first, then caller extras.
         # Background-tool completions deliver their results via
         # ``message_bus.inbox_push + enqueue_wakeup``, so the dispatcher
         # (any process) wakes an idle session — no in-process retrigger
@@ -1713,6 +1692,28 @@ class ChatService:
             middlewares.extend(
                 await self._extra_agent_middlewares(*factory_args),
             )
+        
+        # ----------------------------------------------------------------
+        # 3. Toolkit (workspace tools + planning + TaskStop + schedule +
+        # team + extras + skills + mcps).
+        # ----------------------------------------------------------------
+        toolkit = await get_toolkit(
+            storage=self._storage,
+            workspace=workspace,
+            scheduler_manager=self._scheduler_manager,
+            background_task_manager=self._background_task_manager,
+            message_bus=self._message_bus,
+            middlewares=middlewares,
+            chat_service=self,
+            chat_run_registry=self._chat_run_registry,
+            user_id=user_id,
+            agent_record=agent_record,
+            session_record=session_record,
+            agent_asset_store=self._agent_asset_store,
+            extra_factory=self._extra_agent_tools,
+            sub_agent_templates=self._sub_agent_templates,
+            channel_tools=channel_tools,
+        )
 
         # ----------------------------------------------------------------
         # 4. Model + fallback (resolved from session's config).
