@@ -1767,6 +1767,16 @@ class ChatService:
                 attachment += (
                     " It is a one-to-one private chat with a single user."
                 )
+                target_user_id = session_record.source_chat_user_id
+                target_user_name = session_record.source_chat_user_name
+                if target_user_id:
+                    attachment += (
+                        f" The target user's id is {target_user_id!r}."
+                    )
+                    if target_user_name:
+                        attachment += (
+                            f' The target user\'s name is "{target_user_name}".'
+                        )
             if tools:
                 attachment += (
                     f" You also have these {channel.display_name} tools "

@@ -217,6 +217,8 @@ class StorageBase(ABC):
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
+        source_chat_user_id: str | None = None,
+        source_chat_user_name: str | None = None,
         source_channel_id: str | None = None,
         conversation_kind: str | None = None,
         parent_session_id: str | None = None,
@@ -243,6 +245,10 @@ class StorageBase(ABC):
                 session maps to when created by a channel.
             source_chat_name (`str | None`, optional): That chat's title, as
                 supplied by the channel when available.
+            source_chat_user_id (`str | None`, optional): For one-to-one
+                channel sessions, the target platform user id.
+            source_chat_user_name (`str | None`, optional): For one-to-one
+                channel sessions, the target user name when available.
             source_channel_id (`str | None`, optional): The owning channel
                 id when the session came from a channel.
             conversation_kind (`str | None`, optional): The audience shape

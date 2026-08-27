@@ -298,6 +298,14 @@ class ChannelGateway:
             agent_id=agent_id,
             session_id=session_id,
         )
+        private_target_user_id = (
+            event.channel_user_id if chat_kind is ChatKind.PRIVATE else None
+        )
+        private_target_user_name = (
+            event.channel_user_name or None
+            if chat_kind is ChatKind.PRIVATE
+            else None
+        )
         if existing is not None:
             return
 
@@ -333,6 +341,8 @@ class ChannelGateway:
             source=SessionSource.CHANNEL,
             source_chat_id=event.chat_id,
             source_chat_name=event.chat_name or None,
+            source_chat_user_id=private_target_user_id,
+            source_chat_user_name=private_target_user_name,
             source_channel_id=record.id,
             conversation_kind=chat_kind.value if chat_kind is not None else None,
         )

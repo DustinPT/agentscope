@@ -649,6 +649,8 @@ class RedisStorage(StorageBase):
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
+        source_chat_user_id: str | None = None,
+        source_chat_user_name: str | None = None,
         source_channel_id: str | None = None,
         conversation_kind: str | None = None,
         parent_session_id: str | None = None,
@@ -664,6 +666,16 @@ class RedisStorage(StorageBase):
                 record = existing.model_copy(deep=True)
                 old_parent_session_id = record.parent_session_id
                 record.config = config
+                if source_schedule_id is not None:
+                    record.source_schedule_id = source_schedule_id
+                if source_chat_id is not None:
+                    record.source_chat_id = source_chat_id
+                if source_chat_name is not None:
+                    record.source_chat_name = source_chat_name
+                if source_channel_id is not None:
+                    record.source_channel_id = source_channel_id
+                if conversation_kind is not None:
+                    record.conversation_kind = conversation_kind
                 if parent_session_id is not None:
                     record.parent_session_id = parent_session_id
                 record.updated_at = datetime.now()
@@ -715,6 +727,8 @@ class RedisStorage(StorageBase):
             source_schedule_id=source_schedule_id,
             source_chat_id=source_chat_id,
             source_chat_name=source_chat_name,
+            source_chat_user_id=source_chat_user_id,
+            source_chat_user_name=source_chat_user_name,
             source_channel_id=source_channel_id,
             conversation_kind=conversation_kind,
             parent_session_id=parent_session_id,

@@ -122,6 +122,12 @@ class SessionRecord(_RecordBase):
     source_chat_name: str | None = None
     """For channel-created sessions, that chat's title when available."""
 
+    source_chat_user_id: str | None = None
+    """For one-to-one channel sessions, the target platform user id."""
+
+    source_chat_user_name: str | None = None
+    """For one-to-one channel sessions, the target user name when known."""
+
     source_channel_id: str | None = None
     """For channel-created sessions, the owning channel id."""
 
