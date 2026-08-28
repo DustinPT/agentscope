@@ -298,12 +298,29 @@ class ChatService:
         checkpoint_state.char_count += self._checkpoint_char_delta(event)
 
     @classmethod
-    def _build_rollback_snapshot(cls, state) -> dict[str, Any]:
+    def _build_rollback_snapshot(
+        cls,
+        state,
+        *,
+        prior_context_messages: list[Msg] | None = None,
+    ) -> dict[str, Any]:
         """Build a JSON-safe rollback snapshot from the current agent state."""
         state_dump = state.model_dump(mode="json")
+        context = cls._sanitize_snapshot_context_messages(
+            deepcopy(state_dump.get("context", [])),
+        )
+        if prior_context_messages:
+            context.extend(
+                cls._sanitize_snapshot_context_messages(
+                    [
+                        message.model_dump(mode="json")
+                        for message in prior_context_messages
+                    ],
+                )
+            )
         return {
             "summary": deepcopy(state_dump.get("summary", "")),
-            "context": deepcopy(state_dump.get("context", [])),
+            "context": context,
             "tasks_context": deepcopy(state_dump.get("tasks_context", {})),
             "tool_context": deepcopy(state_dump.get("tool_context", {})),
             "permission_context": deepcopy(
@@ -312,13 +329,38 @@ class ChatService:
         }
 
     @classmethod
-    def attach_rollback_snapshot(cls, msg: Msg, state) -> Msg:
+    def _sanitize_snapshot_context_messages(
+        cls,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Drop private metadata from messages stored inside snapshots."""
+        for message in messages:
+            metadata = message.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            for key in cls._PRIVATE_MESSAGE_METADATA_KEYS:
+                metadata.pop(key, None)
+            if not metadata:
+                message.pop("metadata", None)
+        return messages
+
+    @classmethod
+    def attach_rollback_snapshot(
+        cls,
+        msg: Msg,
+        state,
+        *,
+        prior_context_messages: list[Msg] | None = None,
+    ) -> Msg:
         """Attach a pre-send rollback snapshot to a user message."""
         if msg.role != "user":
             return msg
         metadata = dict(msg.metadata or {})
         metadata[cls._ROLLBACK_SNAPSHOT_METADATA_KEY] = (
-            cls._build_rollback_snapshot(state)
+            cls._build_rollback_snapshot(
+                state,
+                prior_context_messages=prior_context_messages,
+            )
         )
         return msg.model_copy(update={"metadata": metadata}, deep=True)
 
@@ -1871,15 +1913,18 @@ class ChatService:
                                 self.attach_rollback_snapshot(
                                     msg,
                                     agent.state,
+                                    prior_context_messages=persisted_input_msgs,
                                 ),
                                 workspace=workspace,
                                 session_id=session_id,
                             )
-                            persisted_input_msgs.append(stored_msg)
                             await self._storage.upsert_message(
                                 user_id,
                                 session_id,
                                 stored_msg,
+                            )
+                            persisted_input_msgs.append(
+                                self.sanitize_public_message(stored_msg),
                             )
                         runtime_input_msg = (
                             persisted_input_msgs[0]
