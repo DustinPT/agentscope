@@ -12,10 +12,12 @@ lifecycle (write-back, dream consolidation and search) plus only the
 indexing/file jobs required by those paths.
 
 ReMe records memory by **listening to the conversation through the
-``on_reply`` hook** — after every reply the new exchange is written back
-via ReMe's ``auto_memory`` job, in *all* modes. The agent never writes
-memory itself; there is no manual add tool. The ``mode`` parameter only
-controls **retrieval**:
+``on_reply`` hook** — once a reply fully finishes, the trailing exchange
+is written back via ReMe's ``auto_memory`` job, in *all* modes. If the
+reply parks waiting for user confirmation or an external tool result,
+write-back is deferred until the resumed reply completes. The agent never
+writes memory itself; there is no manual add tool. The ``mode`` parameter
+only controls **retrieval**:
 
 - ``"static_control"`` — search ReMe when a reply starts and inject the
   retrieved memories into context before a later reasoning step (plus the
@@ -320,7 +322,8 @@ class ReMeMiddleware(MiddlewareBase):
         # Kick off retrieval (static_control / both only) concurrently with
         # the reply. It runs in the background while the agent ingests input
         # and starts reasoning; ``on_reasoning`` injects the result once the
-        # task finishes. Write the new exchange back afterwards in every mode.
+        # task finishes. Completed exchanges are written back afterwards in
+        # every mode.
         inputs = input_kwargs.get("inputs")
         query_text = _extract_query_text(inputs)
 
@@ -333,18 +336,6 @@ class ReMeMiddleware(MiddlewareBase):
             self._retrieval_tasks[session_id] = asyncio.create_task(
                 self._search(query_text),
             )
-
-        # Snapshot the context BEFORE the turn so the write-back persists
-        # only this turn's *increment*. ReMe's ``auto_memory`` consumes the
-        # incremental exchange, whereas ``agent.state.context`` is the full
-        # accumulated history — so we diff by message id (below) rather than
-        # sending the whole context, which would re-feed every prior turn.
-        # Taking the increment (not just the final message) still captures
-        # every step of the turn — user input, each assistant step, and
-        # every tool call / tool result — which the agent records on
-        # ``state.context`` via ``_save_to_context`` but does not all yield
-        # on the stream (only the final answer is yielded).
-        pre_ids = {m.id for m in agent.state.context if isinstance(m, Msg)}
 
         try:
             async for item in next_handler(**input_kwargs):
@@ -361,22 +352,12 @@ class ReMeMiddleware(MiddlewareBase):
                     await task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
-            # This turn's new messages only: everything now present that
-            # was not before, minus any memory hint we injected (matched by
-            # its reserved name, since injection happens in ``on_reasoning``).
-            increment = [
-                m
-                for m in agent.state.context
-                if isinstance(m, Msg)
-                and m.id not in pre_ids
-                and getattr(m, "name", None) != _MEMORY_MSG_NAME
-            ]
-            # Only persist a real exchange: a genuine user turn plus at
-            # least one non-empty assistant message produced this turn.
-            if query_text and any(
-                m.role == "assistant" and m.get_text_content()
-                for m in increment
-            ):
+            # Only write memory after a reply truly finishes. If the reply
+            # parked waiting for user confirmation or an external execution
+            # result, skip write-back and wait for the resumed reply to
+            # complete in a later turn.
+            increment = self._collect_completed_exchange(agent)
+            if increment:
                 await self._write_back(increment, session_id)
 
     # ------------------------------------------------------------------
@@ -493,10 +474,10 @@ class ReMeMiddleware(MiddlewareBase):
     ) -> None:
         """Persist a completed conversation increment to ReMe.
 
-        ``messages`` is the full slice this turn appended to the agent's
-        context — the user input, every assistant step, and every tool
-        call / tool result — so ReMe's ``auto_memory`` extraction sees the
-        whole exchange, not just the final answer.
+        ``messages`` is the trailing completed exchange extracted from the
+        current context: the final contiguous assistant reply followed by
+        the contiguous user messages it answers. Tool calls / tool results
+        embedded in that assistant message are preserved automatically.
 
         ``session_id`` is passed in per call (read live from the agent),
         never stored, so a shared middleware keeps conversations isolated.
@@ -525,6 +506,62 @@ class ReMeMiddleware(MiddlewareBase):
     # ==================================================================
     # Helpers
     # ==================================================================
+    @staticmethod
+    def _is_reply_completed(agent: "Agent") -> bool:
+        """Return whether the current reply finished without parking.
+
+        A parked reply ends the stream early while waiting for either user
+        confirmation (``ASKING``) or an external execution result
+        (``SUBMITTED``). Those partial replies should not be written into
+        long-term memory yet.
+        """
+        return not agent.state.has_awaiting_tool_calls(agent.name)
+
+    @classmethod
+    def _collect_completed_exchange(cls, agent: "Agent") -> list[Msg]:
+        """Collect the trailing completed assistant/user exchange.
+
+        The current context is the whole conversation history, so extracting
+        the increment by message id is brittle once a reply can pause and
+        resume across turns. Instead, walk backward from the tail and keep
+        the latest contiguous assistant reply plus the contiguous user
+        messages immediately before it. Synthetic memory-hint messages are
+        skipped and never written back.
+        """
+        if not cls._is_reply_completed(agent):
+            return []
+
+        collected: list[Msg] = []
+        phase: Literal["assistant", "user"] = "assistant"
+
+        for msg in reversed(agent.state.context):
+            if not isinstance(msg, Msg):
+                continue
+            if getattr(msg, "name", None) == _MEMORY_MSG_NAME:
+                continue
+
+            if phase == "assistant":
+                if msg.role != "assistant":
+                    if not collected:
+                        return []
+                    phase = "user"
+                else:
+                    collected.append(msg)
+                    continue
+
+            if phase == "user":
+                if msg.role != "user":
+                    break
+                collected.append(msg)
+
+        collected.reverse()
+        has_user = any(msg.role == "user" for msg in collected)
+        has_assistant_text = any(
+            msg.role == "assistant" and msg.get_text_content()
+            for msg in collected
+        )
+        return collected if has_user and has_assistant_text else []
+
     @staticmethod
     def _build_memory_message(memories: list[str]) -> Msg:
         """Format retrieved ``memories`` as a synthetic hint message.
