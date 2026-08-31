@@ -471,6 +471,7 @@ class ReMeMiddleware(MiddlewareBase):
         self,
         messages: list[Msg],
         session_id: str | None,
+        memory_hint: str | None = None,
     ) -> None:
         """Persist a completed conversation increment to ReMe.
 
@@ -484,6 +485,11 @@ class ReMeMiddleware(MiddlewareBase):
         Skipped (with a warning) when no ``session_id`` is available;
         failures are logged rather than propagated so a write never blocks
         the reply.
+
+        ``memory_hint`` is an optional extra instruction forwarded to ReMe's
+        ``auto_memory`` job. It is used as a soft hint for memory extraction,
+        helping the downstream writer focus on specific facts, decisions, or
+        themes that should be emphasized when summarizing the conversation.
         """
         if not session_id:
             logger.warning(
@@ -495,6 +501,7 @@ class ReMeMiddleware(MiddlewareBase):
                 _AUTO_MEMORY_JOB,
                 messages=[m.model_dump(mode="json") for m in messages],
                 session_id=session_id,
+                memory_hint=memory_hint,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
