@@ -76,6 +76,7 @@ _MEMORY_SECTION_INTRO = (
     "The following memories about the user may be relevant. "
     "Use them only if they are pertinent to the current request."
 )
+_MAIN_SESSION_CHAT_CONTEXT_KEY = "main_session_chat_context"
 
 # Appended to the system prompt to advertise the search tool to the LLM.
 _TOOL_INSTRUCTIONS = (
@@ -308,6 +309,122 @@ class ReMeMiddleware(MiddlewareBase):
         """
         return getattr(getattr(agent, "state", None), "session_id", None)
 
+    @staticmethod
+    def _main_session_chat_context(agent: "Agent") -> dict[str, Any] | None:
+        """Read the normalized main-session chat context from agent state."""
+        middle_context = getattr(getattr(agent, "state", None), "middle_context", {})
+        if not isinstance(middle_context, dict):
+            return None
+        raw = middle_context.get(_MAIN_SESSION_CHAT_CONTEXT_KEY)
+        return raw if isinstance(raw, dict) else None
+
+    @classmethod
+    def _build_memory_hint(cls, agent: "Agent") -> str | None:
+        """Build a multi-user-aware write-back hint for ReMe extraction."""
+        context = cls._main_session_chat_context(agent)
+        if not context:
+            return None
+
+        source_system_id = context.get("source_system_id") or "unknown"
+        source_system_label = context.get("source_system_label") or source_system_id
+        conversation_kind = context.get("conversation_kind") or "unknown"
+        target_user_id = context.get("target_user_id")
+        target_user_name = context.get("target_user_name")
+        chat_name = context.get("chat_name")
+
+        lines = [
+            "Apply the following extraction policy to this conversation.",
+            "This note is a hint for memory extraction strategy. Do not copy it verbatim into the memory note.",
+            "Prefer durable, future-useful facts; skip trivial small talk.",
+            f"- Source system identifier: {source_system_id!r}.",
+            f"- Source system label: {source_system_label}.",
+            f"- Conversation kind: {conversation_kind!r}.",
+            (
+                "- For any user-specific memory, preserve a stable identity "
+                "anchor in the memory body itself, including at least the "
+                "source system identifier and the source user id."
+            ),
+            (
+                "- Never merge facts from different users into one generic "
+                "user memory or one unattributed bullet."
+            ),
+            (
+                "- If a fact cannot be reliably attributed to a specific user, "
+                "do not write it as a user memory. Either record it as "
+                "shared conversation context/group context, or omit it."
+            ),
+            (
+                "- Keep source identifiers in the memory content itself, not "
+                "only in the filename or description."
+            ),
+        ]
+
+        if conversation_kind == "private" and target_user_id:
+            lines.append(
+                f"- The target user's source user id is {target_user_id!r}.",
+            )
+            if target_user_name:
+                lines.append(
+                    f'- The target user\'s display name is "{target_user_name}".',
+                )
+            lines.append(
+                "- In this private conversation, user facts should normally be "
+                "bound to this target user unless the conversation clearly "
+                "references someone else.",
+            )
+            lines.append(
+                "- When recording user-specific memory, make the identity "
+                "explicit in the content, for example by stating which "
+                "source system and source user id the fact belongs to.",
+            )
+        elif conversation_kind == "group":
+            lines.extend(
+                [
+                    "- This is a group conversation. Messages may come from "
+                    "different people and each user turn is labelled with "
+                    "its sender.",
+                    "- Extract user memories per sender. Distinguish speakers "
+                    "strictly by their sender identity and bind each fact to "
+                    "the correct source user id.",
+                    "- If multiple users appear in one conversation, keep "
+                    "their facts in clearly separated sections or bullets "
+                    "with explicit identity anchors.",
+                    "- Facts about the group, channel, or shared project may "
+                    "be recorded as shared context, but do not rewrite them "
+                    "as if they belong to one specific user.",
+                ],
+            )
+            if chat_name:
+                lines.append(
+                    f'- The current group/chat name is "{chat_name}".',
+                )
+
+        return "\n".join(lines)
+
+    @classmethod
+    def _build_tool_instructions(cls, _agent: "Agent") -> str:
+        """Build dynamic memory-search instructions for the LLM."""
+        lines = [
+            _TOOL_INSTRUCTIONS,
+            "",
+            "Memory lookup rules:",
+            (
+                "- When searching for user-specific memory, include the source "
+                "system identifier and the relevant source user id in your query."
+            ),
+            (
+                "- Search results may contain memories about multiple users. "
+                "Before using a result, verify that it belongs to the intended "
+                "user in the current conversation."
+            ),
+            (
+                "- Rely on the injected session background and sender labels to "
+                "decide which user's memory you are querying."
+            )
+        ]
+
+        return "\n".join(lines)
+
     # ------------------------------------------------------------------
     # Hook: on_reply
     # ------------------------------------------------------------------
@@ -358,7 +475,11 @@ class ReMeMiddleware(MiddlewareBase):
             # complete in a later turn.
             increment = self._collect_completed_exchange(agent)
             if increment:
-                await self._write_back(increment, session_id)
+                await self._write_back(
+                    increment,
+                    session_id,
+                    memory_hint=self._build_memory_hint(agent),
+                )
 
     # ------------------------------------------------------------------
     # Hook: on_reasoning (inject retrieved memories once ready)
@@ -419,7 +540,7 @@ class ReMeMiddleware(MiddlewareBase):
         """
         if self._parameters.mode == "static_control":
             return current_prompt
-        return f"{current_prompt}\n\n{_TOOL_INSTRUCTIONS}"
+        return f"{current_prompt}\n\n{self._build_tool_instructions(agent)}"
 
     async def list_tools(self) -> list["ToolBase"]:
         """List memory tools provided by this middleware.

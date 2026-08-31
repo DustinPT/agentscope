@@ -98,6 +98,9 @@ class _ReplyCheckpointState:
         self.char_count = 0
 
 
+_MAIN_SESSION_CHAT_CONTEXT_KEY = "main_session_chat_context"
+
+
 class _AttachmentModelCallMiddleware(MiddlewareBase):
     """Expand attachment references just before the model call."""
 
@@ -1236,6 +1239,131 @@ class ChatService:
             workdir=workdir,
         )
 
+    async def _build_main_session_chat_context(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        session_record,
+        channel,
+        channel_tools: list,
+    ) -> dict[str, Any] | None:
+        """Build normalized chat-background context for a main session."""
+        if session_record.parent_session_id is not None:
+            return None
+
+        if session_record.source == SessionSource.USER:
+            return {
+                "is_main_session": True,
+                "session_id": session_id,
+                "source": session_record.source.value,
+                "source_system_id": "web_ui",
+                "source_system_label": "web_ui",
+                "conversation_kind": ChatKind.PRIVATE.value,
+                "target_user_id": session_record.source_chat_user_id or user_id,
+                "target_user_name": None,
+                "chat_id": None,
+                "chat_name": None,
+                "channel_display_name": None,
+                "channel_tool_names": [],
+            }
+
+        if session_record.source != SessionSource.CHANNEL or channel is None:
+            return None
+
+        chat_id = session_record.source_chat_id or ""
+        kind = (
+            ChatKind(session_record.conversation_kind)
+            if session_record.conversation_kind is not None
+            else await channel.chat_kind(chat_id)
+        )
+        chat_name = session_record.source_chat_name or await channel.chat_name(
+            chat_id,
+        )
+        return {
+            "is_main_session": True,
+            "session_id": session_id,
+            "source": session_record.source.value,
+            "source_system_id": session_record.source_channel_id
+            or channel.display_name,
+            "source_system_label": channel.display_name,
+            "conversation_kind": kind.value if kind is not None else None,
+            "target_user_id": session_record.source_chat_user_id,
+            "target_user_name": session_record.source_chat_user_name,
+            "chat_id": chat_id,
+            "chat_name": chat_name or None,
+            "channel_display_name": channel.display_name,
+            "channel_tool_names": [tool.name for tool in channel_tools],
+        }
+
+    @staticmethod
+    def _build_main_session_attachment(
+        context: dict[str, Any],
+    ) -> str:
+        """Render the main-session background attachment for the model."""
+        session_id = context["session_id"]
+        source_system_id = context["source_system_id"]
+        source_system_label = context.get("source_system_label")
+        conversation_kind = context.get("conversation_kind")
+        target_user_id = context.get("target_user_id")
+        target_user_name = context.get("target_user_name")
+        chat_id = context.get("chat_id")
+        chat_name = context.get("chat_name")
+        tools = ", ".join(context.get("channel_tool_names") or [])
+
+        attachment = (
+            f"You're within a session (id={session_id}). "
+            f"The source system identifier is {source_system_id!r}."
+        )
+        if context["source"] == SessionSource.USER.value:
+            attachment += " This session originates from the web_ui application."
+        elif source_system_label:
+            attachment += (
+                f" This session originates from the {source_system_label} "
+                "platform."
+            )
+
+        if context["source"] == SessionSource.CHANNEL.value and chat_id:
+            where = f' named "{chat_name}"' if chat_name else ""
+            channel_display_name = context.get("channel_display_name") or (
+                source_system_label or "channel"
+            )
+            attachment += (
+                f" It is bound to a chat{where} (id {chat_id!r}) on the "
+                f"{channel_display_name} platform: the messages, images and "
+                "files people send there are relayed to you here, and your "
+                "replies are delivered back to that same chat."
+            )
+
+        if conversation_kind == ChatKind.GROUP.value:
+            attachment += (
+                " This is a group chat. Messages may come from several "
+                "different people, and each incoming user turn is labelled "
+                "with its sender."
+            )
+        elif conversation_kind == ChatKind.PRIVATE.value:
+            attachment += (
+                " This is a one-to-one private chat with a single user."
+            )
+            if target_user_id:
+                attachment += f" The target user's id is {target_user_id!r}."
+                if target_user_name:
+                    attachment += (
+                        f' The target user\'s name is "{target_user_name}".'
+                    )
+
+        if tools:
+            channel_display_name = context.get("channel_display_name") or (
+                source_system_label or "channel"
+            )
+            attachment += (
+                f" You also have these {channel_display_name} tools "
+                f"available: {tools}. Pass this chat's id as their target "
+                "to act on this chat."
+            )
+
+        return attachment
+
     @staticmethod
     def _build_fallback_export_system_message(
         *,
@@ -1794,62 +1922,32 @@ class ChatService:
         # ----------------------------------------------------------------
         # 5. Assemble the Agent.
         # ----------------------------------------------------------------
-        system_prompt = agent_record.data.system_prompt
-        attachment = f"You're within a session (id={session_id})."
-        if channel is not None:
-            tools = ", ".join(tool.name for tool in channel_tools)
-            chat_id = session_record.source_chat_id or ""
-            kind = (
-                ChatKind(session_record.conversation_kind)
-                if session_record.conversation_kind is not None
-                else await channel.chat_kind(chat_id)
-            )
-            name = (
-                session_record.source_chat_name
-                or await channel.chat_name(chat_id)
-            )
-            where = f' named "{name}"' if name else ""
-            attachment += (
-                f" This session is bound to a chat{where} (id "
-                f"{chat_id!r}) on the {channel.display_name} platform: "
-                "the messages, images and files people send there are "
-                "relayed to you here, and your replies are delivered "
-                "back to that same chat."
-            )
-            if kind is ChatKind.GROUP:
-                attachment += (
-                    " It is a group chat, so messages may come from "
-                    "several different people; each incoming user turn "
-                    "is labelled with its sender."
-                )
-            elif kind is ChatKind.PRIVATE:
-                attachment += (
-                    " It is a one-to-one private chat with a single user."
-                )
-                target_user_id = session_record.source_chat_user_id
-                target_user_name = session_record.source_chat_user_name
-                if target_user_id:
-                    attachment += (
-                        f" The target user's id is {target_user_id!r}."
-                    )
-                    if target_user_name:
-                        attachment += (
-                            f' The target user\'s name is "{target_user_name}".'
-                        )
-            if tools:
-                attachment += (
-                    f" You also have these {channel.display_name} tools "
-                    f"available: {tools}. Pass this chat's id as their "
-                    "target to act on this chat."
-                )
-        system_prompt = (
-            f"{system_prompt}\n\n"
-            f"<system-notification>{attachment}</system-notification>"
-        )
-
         agent_state = session_record.state
         agent_state.session_id = session_id
         agent_state.conversation_kind = session_record.conversation_kind
+        main_session_chat_context = await self._build_main_session_chat_context(
+            user_id=user_id,
+            session_id=session_id,
+            session_record=session_record,
+            channel=channel,
+            channel_tools=channel_tools,
+        )
+        if main_session_chat_context is None:
+            agent_state.middle_context.pop(_MAIN_SESSION_CHAT_CONTEXT_KEY, None)
+        else:
+            agent_state.middle_context[_MAIN_SESSION_CHAT_CONTEXT_KEY] = (
+                main_session_chat_context
+            )
+
+        system_prompt = agent_record.data.system_prompt
+        if main_session_chat_context is not None:
+            attachment = self._build_main_session_attachment(
+                main_session_chat_context,
+            )
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                f"<system-notification>{attachment}</system-notification>"
+            )
         agent = self._agent_cls(
             name=agent_record.data.name,
             system_prompt=system_prompt,

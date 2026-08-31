@@ -38,6 +38,7 @@ from ..storage import (
     AgentRecord,
     ChatModelConfig,
     SessionConfig,
+    SessionSource,
     SessionWithState,
     StorageBase,
     TeamRecord,
@@ -362,6 +363,9 @@ async def create_session(
             **({"name": body.name} if body.name is not None else {}),
         ),
         state=state,
+        source=SessionSource.USER,
+        source_chat_user_id=user_id,
+        conversation_kind="private",
     )
     return CreateSessionResponse(session_id=session_record.id)
 
