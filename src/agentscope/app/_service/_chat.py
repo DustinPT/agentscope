@@ -238,6 +238,7 @@ class ChatService:
         self._chat_run_registry = chat_run_registry
         self._extra_agent_middlewares = extra_agent_middlewares
         self._middlewares_take_workspace = False
+        self._middlewares_take_session = False
         if extra_agent_middlewares is not None:
             try:
                 inspect.signature(extra_agent_middlewares).bind(
@@ -245,10 +246,21 @@ class ChatService:
                     "",
                     "",
                     None,
+                    None,
                 )
                 self._middlewares_take_workspace = True
+                self._middlewares_take_session = True
             except (TypeError, ValueError):
-                pass
+                try:
+                    inspect.signature(extra_agent_middlewares).bind(
+                        "",
+                        "",
+                        "",
+                        None,
+                    )
+                    self._middlewares_take_workspace = True
+                except (TypeError, ValueError):
+                    pass
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
@@ -1322,6 +1334,8 @@ class ChatService:
             )
             if self._middlewares_take_workspace:
                 factory_args += (workspace,)
+            if self._middlewares_take_session:
+                factory_args += (runtime_session,)
             middlewares.extend(
                 await self._extra_agent_middlewares(*factory_args),
             )
@@ -1731,6 +1745,8 @@ class ChatService:
             factory_args: tuple = (user_id, agent_id, session_id)
             if self._middlewares_take_workspace:
                 factory_args += (workspace,)
+            if self._middlewares_take_session:
+                factory_args += (session_record,)
             middlewares.extend(
                 await self._extra_agent_middlewares(*factory_args),
             )
