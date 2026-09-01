@@ -38,11 +38,6 @@ from ._base import ChatKind, ChannelEvent, ChannelConfirmationResultEvent
 from ._decision import resume_after_decision
 from ._routing import resolve
 
-# How long a media-only message waits for its accompanying text message.
-_MEDIA_BUFFER_TTL_SECS = 300
-# Max buffered attachments carried into one text message.
-_MEDIA_BUFFER_MAX = 9
-
 
 class ChannelGateway:
     """Route inbound channel events into runs; resume on card clicks."""
@@ -178,8 +173,7 @@ class ChannelGateway:
     # -- Message path --
 
     async def _handle_message(self, event: ChannelEvent) -> None:
-        """Aggregate buffered media, then inject a hint into a live run
-        or start a fresh user turn on an idle session.
+        """Route one inbound message into inbox or a user turn.
 
         Args:
             event (`ChannelEvent`): The normalised inbound message.
@@ -199,12 +193,10 @@ class ChannelGateway:
                 "1",
             )
 
-        content = await self._aggregate_media(event)
-        if content is None:
-            return  # media buffered; nothing to run until a text message
-
+        content = self._message_content(event)
         chat_kind = self._event_chat_kind(event)
         should_reply_now = self._should_reply_now(event)
+        is_media_only = self._is_media_only(content)
 
         # A reply already in flight → inject the input as a hint so the
         # live run folds it in.
@@ -215,7 +207,7 @@ class ChannelGateway:
                 session_id=session_id,
                 agent_id=agent_id,
                 payload=self._build_inbox_payload(event, content),
-                wake=should_reply_now,
+                wake=should_reply_now and not is_media_only,
             )
             return
 
@@ -270,6 +262,21 @@ class ChannelGateway:
             )
             return
 
+        if is_media_only:
+            await enqueue_run_trigger(
+                self._bus,
+                user_id=record.user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                inputs=UserMsg(
+                    name=event.channel_user_id,
+                    content=content,
+                ),
+                generate_reply=False,
+            )
+            return
+
         # Deliver as a genuine user turn; the run's output is streamed
         # back by the dispatcher's forward loop, not collected here.
         await enqueue_run_trigger(
@@ -285,34 +292,17 @@ class ChannelGateway:
             generate_reply=True,
         )
 
-    async def _aggregate_media(
-        self,
+    @staticmethod
+    def _message_content(
         event: ChannelEvent,
-    ) -> list[TextBlock | DataBlock] | None:
-        """Merge buffered attachments with this message: media-only
-        buffers and returns ``None``; the next text drains and combines.
+    ) -> list[TextBlock | DataBlock]:
+        """Return the message blocks as-is for immediate delivery."""
+        return event.content
 
-        Args:
-            event (`ChannelEvent`): The inbound message.
-        """
-        key = MessageBusKeys.channel_media_buffer(
-            event.channel_id,
-            event.chat_id,
-            event.channel_user_id,
-        )
-        has_text = any(isinstance(b, TextBlock) for b in event.content)
-        if not has_text:
-            for block in event.content:
-                if isinstance(block, DataBlock):
-                    await self._bus.queue_push(
-                        key,
-                        block.model_dump(mode="json"),
-                        ttl_secs=_MEDIA_BUFFER_TTL_SECS,
-                    )
-            return None
-        entries = await self._bus.queue_drain(key, max_count=_MEDIA_BUFFER_MAX)
-        buffered = [DataBlock.model_validate(p) for _id, p in entries]
-        return [*buffered, *event.content]
+    @staticmethod
+    def _is_media_only(content: list[TextBlock | DataBlock]) -> bool:
+        """Return whether the message contains no text blocks."""
+        return not any(isinstance(block, TextBlock) for block in content)
 
     # -- Session creation (deterministic id, idempotent) --
 
