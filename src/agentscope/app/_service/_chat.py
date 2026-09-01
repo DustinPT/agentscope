@@ -1676,6 +1676,8 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None = None,
+        *,
+        generate_reply: bool = True,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -1713,9 +1715,20 @@ class ChatService:
                   - ``UserInterruptEvent``: interrupt an awaiting tool
                   interaction and close the current reply without model
                   reasoning (Case C).
+              generate_reply (`bool`, defaults to ``True``):
+                  Whether a ``Msg`` / ``list[Msg]`` input should start a new
+                  assistant reply after being persisted. When ``False``, the
+                  user message is still persisted and appended to the agent
+                  context, but no reply is generated.
         """
         try:
-            await self._run_impl(user_id, session_id, agent_id, input_msg)
+              await self._run_impl(
+                  user_id,
+                  session_id,
+                  agent_id,
+                  input_msg,
+                  generate_reply=generate_reply,
+              )
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "
@@ -1737,6 +1750,8 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        *,
+        generate_reply: bool = True,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -1996,7 +2011,8 @@ class ChatService:
         runtime_input_msg = input_msg
         async with self._message_bus.session_run(session_id):
             if (
-                session_record.source == SessionSource.CHANNEL
+                generate_reply
+                and session_record.source == SessionSource.CHANNEL
                 and session_record.source_channel_id
                 and session_record.source_chat_id
                 and self._channel_clients is not None
@@ -2046,37 +2062,43 @@ class ChatService:
                             else persisted_input_msgs
                         )
 
-                    async for event in agent.reply_stream(
-                        inputs=runtime_input_msg,
+                    if not generate_reply and isinstance(
+                        runtime_input_msg,
+                        (Msg, list),
                     ):
-                        entry_id = await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            event.model_dump(mode="json"),
-                        )
-                        checkpoint_state.latest_replay_entry_id = entry_id
-                        if isinstance(event, ReplyStartEvent):
-                            reply_started = True
-                            reply_msg = AssistantMsg(
-                                id=event.reply_id,
-                                name=event.name,
-                                content=[],
+                        await agent.observe(runtime_input_msg)
+                    else:
+                        async for event in agent.reply_stream(
+                            inputs=runtime_input_msg,
+                        ):
+                            entry_id = await publish_session_event(
+                                self._message_bus,
+                                session_id,
+                                event.model_dump(mode="json"),
                             )
-                        elif reply_msg is not None:
-                            reply_msg.append_event(event)
-                            self._record_checkpoint_event(
-                                checkpoint_state,
-                                event,
-                            )
-                            await self._maybe_checkpoint_reply(
-                                user_id=user_id,
-                                session_id=session_id,
-                                agent_id=agent_id,
-                                workspace=workspace,
-                                reply_msg=reply_msg,
-                                agent=agent,
-                                checkpoint_state=checkpoint_state,
-                            )
+                            checkpoint_state.latest_replay_entry_id = entry_id
+                            if isinstance(event, ReplyStartEvent):
+                                reply_started = True
+                                reply_msg = AssistantMsg(
+                                    id=event.reply_id,
+                                    name=event.name,
+                                    content=[],
+                                )
+                            elif reply_msg is not None:
+                                reply_msg.append_event(event)
+                                self._record_checkpoint_event(
+                                    checkpoint_state,
+                                    event,
+                                )
+                                await self._maybe_checkpoint_reply(
+                                    user_id=user_id,
+                                    session_id=session_id,
+                                    agent_id=agent_id,
+                                    workspace=workspace,
+                                    reply_msg=reply_msg,
+                                    agent=agent,
+                                    checkpoint_state=checkpoint_state,
+                                )
 
                 elif isinstance(
                     input_msg,

@@ -409,11 +409,13 @@ class FeishuChannel(ChannelBase):
                 ChatKind.GROUP if chat_type == "group" else ChatKind.PRIVATE
             )
 
-        # @-gate up front so unmentioned group media is dropped too — it
-        # used to skip the check, get downloaded, and buffer into the
-        # sender's next @-mention.
-        if self._gated_out(message, chat_type):
-            return None
+        mentioned_self = self._mentioned_self(message, chat_type)
+        meta["mentioned_self"] = mentioned_self
+        meta["should_reply_now"] = (
+            chat_type != "group"
+            or not self._config.only_at_reply
+            or mentioned_self
+        )
 
         msg_type = message.message_type
         content: list[TextBlock | DataBlock] = []
@@ -429,7 +431,11 @@ class FeishuChannel(ChannelBase):
             text = (
                 json.loads(message.content or "{}").get("text") or ""
             ).strip()
-            if chat_type == "group" and self._config.only_at_reply:
+            if (
+                chat_type == "group"
+                and self._config.only_at_reply
+                and mentioned_self
+            ):
                 for mention in message.mentions or []:
                     text = text.replace(mention.key or "", "").strip()
             content = [TextBlock(text=text)] if text else []
@@ -522,35 +528,33 @@ class FeishuChannel(ChannelBase):
             )
         return name
 
-    def _gated_out(self, message: "EventMessage", chat_type: str) -> bool:
-        """Whether a group message is dropped by ``only_at_reply`` — kept
-        only when the bot itself is @mentioned (mentions of other members
-        do not count).
+    def _mentioned_self(self, message: "EventMessage", chat_type: str) -> bool:
+        """Whether the inbound message @mentions this bot in a group chat.
 
         Args:
             message (`EventMessage`): The inbound message.
             chat_type (`str`): ``"group"`` / ``"p2p"`` / etc.
 
         Returns:
-            `bool`: ``True`` to ignore the message.
+            `bool`: ``True`` when the bot itself is @mentioned.
         """
         if chat_type != "group" or not self._config.only_at_reply:
-            return False
+            return True
         mentions = message.mentions or []
         if self._bot_open_id:
-            return not any(
+            return any(
                 getattr(getattr(m, "id", None), "open_id", "")
                 == self._bot_open_id
                 for m in mentions
             )
-        # Bot identity unknown (info fetch failed / lacked open_id): we
-        # cannot verify the @ was for us, so fail closed rather than let
-        # every group message through.
+        # Bot identity unknown (info fetch failed / lacked open_id): we cannot
+        # verify the @ was for us, so keep only the no-immediate-reply path.
         logger.warning(
-            "Feishu '%s' bot id unknown; dropping unverified group message",
+            "Feishu '%s' bot id unknown; treating group message as not "
+            "mentioning the bot",
             self._channel_id,
         )
-        return True
+        return False
 
     async def _parse_post(
         self,

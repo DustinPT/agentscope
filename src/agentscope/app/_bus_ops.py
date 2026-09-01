@@ -49,6 +49,7 @@ async def enqueue_run_trigger(
     | UserInterruptEvent
     | Msg
     | None = None,
+    generate_reply: bool = True,
 ) -> None:
     """Enqueue a typed run trigger and signal dispatchers."""
     await bus.queue_push(
@@ -59,6 +60,7 @@ async def enqueue_run_trigger(
             "agent_id": agent_id,
             "kind": kind,
             "input": inputs.model_dump(mode="json") if inputs else None,
+            "generate_reply": generate_reply,
         },
     )
     await bus.publish(MessageBusKeys.wakeup_signal(), {})
@@ -71,8 +73,9 @@ async def deliver_to_inbox(
     session_id: str,
     agent_id: str,
     payload: dict,
+    wake: bool = True,
 ) -> None:
-    """Push to session inbox and wake only when no consumer is active."""
+    """Push to session inbox and optionally wake when no consumer is active."""
     async with bus.acquire_lock(
         MessageBusKeys.inbox_lock(session_id),
         ttl_secs=MessageBusKeys.INBOX_LOCK_TTL_SECS,
@@ -83,7 +86,7 @@ async def deliver_to_inbox(
             MessageBusKeys.INBOX_CONSUMER_FIELD,
         )
 
-    if consumer is None:
+    if wake and consumer is None:
         await enqueue_run_trigger(
             bus,
             user_id=user_id,

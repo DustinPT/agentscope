@@ -222,6 +222,7 @@ class WakeupDispatcher:
                 session_id = payload["session_id"]
                 agent_id = payload["agent_id"]
                 kind = payload.get("kind", "wake")
+                generate_reply = bool(payload.get("generate_reply", True))
             except (KeyError, TypeError):
                 logger.warning(
                     "WakeupDispatcher: skipping malformed wake-up entry %r",
@@ -251,6 +252,7 @@ class WakeupDispatcher:
                         agent_id=agent_id,
                         kind=kind,
                         input_msg=input_msg,
+                        generate_reply=generate_reply,
                     )
                 continue
 
@@ -279,7 +281,8 @@ class WakeupDispatcher:
                         user_id=user_id,
                         session_id=session_id,
                         agent_id=agent_id,
-                          input_msg=input_msg,
+                        input_msg=input_msg,
+                        generate_reply=generate_reply,
                     ),
                     session_id=session_id,
                     name=f"wakeup-run:{session_id}",
@@ -305,6 +308,7 @@ class WakeupDispatcher:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        generate_reply: bool,
     ) -> None:
         async def _retry() -> None:
             await asyncio.sleep(self._RESUME_RETRY_BACKOFF_SECS)
@@ -315,6 +319,7 @@ class WakeupDispatcher:
                 agent_id=agent_id,
                 kind=kind,
                 inputs=input_msg,
+                generate_reply=generate_reply,
             )
 
         task = asyncio.create_task(

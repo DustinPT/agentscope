@@ -17,12 +17,13 @@ the reply back — so scheduled / background runs reach the channel too,
 not just inbound messages.
 """
 import json
+from typing import Any
 
 from ..._logging import logger
-from ...message import DataBlock, HintBlock, TextBlock, UserMsg
+from ...message import DataBlock, HintBlock, TextBlock, ToolCallState, UserMsg
 from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
-from .._bus_ops import enqueue_run_trigger
+from .._bus_ops import deliver_to_inbox, enqueue_run_trigger
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
     ChannelRecord,
@@ -202,23 +203,19 @@ class ChannelGateway:
         if content is None:
             return  # media buffered; nothing to run until a text message
 
-        # A reply already in flight → inject the input as a hint so the
-        # live run folds it in. Otherwise start a fresh user turn.
         chat_kind = self._event_chat_kind(event)
+        should_reply_now = self._should_reply_now(event)
+
+        # A reply already in flight → inject the input as a hint so the
+        # live run folds it in.
         if await self._bus.is_locked(MessageBusKeys.session_lock(session_id)):
-            await self._bus.queue_push(
-                MessageBusKeys.inbox(session_id),
-                HintBlock(
-                    hint=content,
-                    source=json.dumps(
-                        {
-                            "label": "channel",
-                            "sublabel": event.channel_user_id,
-                        },
-                        ensure_ascii=False,
-                    ),
-                    metadata={"user_name": event.channel_user_id},
-                ).model_dump(mode="json"),
+            await deliver_to_inbox(
+                self._bus,
+                user_id=record.user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                payload=self._build_inbox_payload(event, content),
+                wake=should_reply_now,
             )
             return
 
@@ -230,6 +227,49 @@ class ChannelGateway:
             scope,
             chat_kind,
         )
+
+        session = await self._storage.get_session(
+            user_id=record.user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+        if session is None:
+            logger.error(
+                "No session record for channel message %s/%s",
+                event.channel_id,
+                session_id,
+            )
+            return
+
+        # Parked replies can only continue from resume events. Keep channel
+        # messages in the inbox and let InboxMiddleware drain them when the
+        # parked reply eventually resumes.
+        if self._is_session_parked(session):
+            await deliver_to_inbox(
+                self._bus,
+                user_id=record.user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                payload=self._build_inbox_payload(event, content),
+                wake=False,
+            )
+            return
+
+        if not should_reply_now:
+            await enqueue_run_trigger(
+                self._bus,
+                user_id=record.user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                inputs=UserMsg(
+                    name=event.channel_user_id,
+                    content=content,
+                ),
+                generate_reply=False,
+            )
+            return
+
         # Deliver as a genuine user turn; the run's output is streamed
         # back by the dispatcher's forward loop, not collected here.
         await enqueue_run_trigger(
@@ -242,6 +282,7 @@ class ChannelGateway:
                 name=event.channel_user_id,
                 content=content,
             ),
+            generate_reply=True,
         )
 
     async def _aggregate_media(
@@ -356,6 +397,46 @@ class ChannelGateway:
             "p2p": ChatKind.PRIVATE,
             "private": ChatKind.PRIVATE,
         }.get(chat_type)
+
+    @staticmethod
+    def _should_reply_now(event: ChannelEvent) -> bool:
+        """Return whether this inbound message should start a run now."""
+        value = event.metadata.get("should_reply_now")
+        return True if value is None else bool(value)
+
+    @staticmethod
+    def _build_inbox_payload(
+        event: ChannelEvent,
+        content: list[TextBlock | DataBlock],
+    ) -> dict[str, Any]:
+        """Serialize one inbound channel message into a HintBlock payload."""
+        return HintBlock(
+            hint=content,
+            source=json.dumps(
+                {
+                    "label": "channel",
+                    "sublabel": event.channel_user_id,
+                },
+                ensure_ascii=False,
+            ),
+            metadata={"user_name": event.channel_user_id},
+        ).model_dump(mode="json")
+
+    @staticmethod
+    def _is_session_parked(session: Any) -> bool:
+        """Return whether the persisted session state is awaiting outside input."""
+        context = getattr(getattr(session, "state", None), "context", None) or []
+        if not context:
+            return False
+
+        last_msg = context[-1]
+        if getattr(last_msg, "role", None) != "assistant":
+            return False
+
+        return any(
+            tool_call.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+            for tool_call in last_msg.get_content_blocks("tool_call")
+        )
 
     @staticmethod
     def _session_name(
