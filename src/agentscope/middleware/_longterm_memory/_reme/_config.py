@@ -14,11 +14,36 @@ background work to an AgentScope process.
 """
 from __future__ import annotations
 
+import datetime
 import os
+from pathlib import Path
 from typing import Any
 
 
 _MAX_FILE_BYTES = 10 * 1024 * 1024
+
+
+def _system_timezone() -> str | None:
+    """Resolve the current system timezone as an IANA name when possible."""
+    tz_name = os.getenv("TZ", "").strip()
+    if tz_name:
+        return tz_name
+
+    tzinfo = datetime.datetime.now().astimezone().tzinfo
+    key = getattr(tzinfo, "key", None)
+    if isinstance(key, str) and key:
+        return key
+
+    localtime = Path("/etc/localtime")
+    try:
+        resolved = localtime.resolve(strict=True)
+    except OSError:
+        return None
+
+    parts = resolved.as_posix().split("/zoneinfo/", 1)
+    if len(parts) == 2 and parts[1]:
+        return parts[1]
+    return None
 
 
 def _object_schema(
@@ -370,6 +395,7 @@ def _build_reme_app_config(
         "workspace_dir": workspace_dir,
         "enable_logo": False,
         "log_to_console": False,
+        "timezone": _system_timezone(),
         "service": {"backend": "http"},
         "jobs": _memory_jobs(),
         "components": _memory_components(embedding_dimensions),

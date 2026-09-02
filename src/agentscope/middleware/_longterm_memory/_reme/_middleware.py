@@ -96,10 +96,11 @@ class ReMeMiddleware(MiddlewareBase):
     instantiates a :class:`reme.ReMe` application whose LLM-backed jobs use
     the ``chat_model`` configured at construction. The app is built and
     owned by the middleware — pass ``workspace_dir`` and optionally a
-    ``Parameters`` with ``chat_model`` / ``embedding_model``; it is created
-    lazily on first use. When ``chat_model`` is omitted, the AgentScope config
-    supplies the LLM from ReMe's ``LLM_*`` environment variables. Providing
-    an ``embedding_model`` enables the vector store; otherwise search stays
+    ``Parameters`` with ``chat_model`` / ``embedding_model``. Service code
+    can start it eagerly through :meth:`start`; otherwise it is created on
+    first use. When ``chat_model`` is omitted, the AgentScope config supplies
+    the LLM from ReMe's ``LLM_*`` environment variables. Providing an
+    ``embedding_model`` enables the vector store; otherwise search stays
     keyword-only.
 
     The model is fixed at construction (never taken from an agent), so the
@@ -112,8 +113,9 @@ class ReMeMiddleware(MiddlewareBase):
     search.
 
     AgentScope middleware has no framework-managed lifecycle, so the app
-    is built once and started lazily on first use (idempotent). Call
-    :meth:`close` for explicit teardown of the embedded app.
+    is built once and started idempotently either through :meth:`start`
+    or on first use. Call :meth:`close` for explicit teardown of the
+    embedded app.
 
     Example::
 
@@ -210,9 +212,9 @@ class ReMeMiddleware(MiddlewareBase):
                 vector store (otherwise search is keyword-only).
         """
         # Embedded ReMe application state. The app is built lazily and
-        # started once (idempotent guards), since middleware has no
-        # framework-managed lifecycle. The middleware always owns the app
-        # it builds, so :meth:`close` tears it down.
+        # started once with idempotent guards, either via :meth:`start`
+        # or on first use. The middleware always owns the app it builds,
+        # so :meth:`close` tears it down.
         self._app: Any | None = None
         self._started = False
         self._workspace_dir = workspace_dir
@@ -285,6 +287,15 @@ class ReMeMiddleware(MiddlewareBase):
                 )
             await self._app.start()
             self._started = True
+
+    async def start(self) -> None:
+        """Start the embedded ReMe app eagerly.
+
+        This allows service code with an application lifecycle to bring up
+        background watchers and cron jobs during process startup instead of
+        waiting for the first memory read/write request.
+        """
+        await self._ensure_started()
 
     async def close(self) -> None:
         """Close the embedded ReMe app.
