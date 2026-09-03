@@ -80,15 +80,15 @@ def _dream_steps() -> list[dict[str, Any]]:
     """Build ReMe's daily-to-digest memory consolidation pipeline."""
     return [
         {
-            "backend": "dream_extract_step",
+            "backend": "dream_extract_json_step",
             "file_catalog": "dream",
             "topic_session_id": "interests",
             "scan_days": 2,
             "max_units": 5,
         },
-        {"backend": "dream_integrate_step"},
+        {"backend": "dream_integrate_json_step"},
         {
-            "backend": "dream_topics_step",
+            "backend": "dream_topics_json_step",
             "topic_count": 3,
             "topic_diversity_days": 7,
         },

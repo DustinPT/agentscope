@@ -79,7 +79,7 @@ tools = [
 ]
 # ------------ Long-term memory ------------
 memory-mem0 = ["mem0ai>=2.0.0"]
-memory-reme = ["reme-ai>=0.4.0.6"]
+memory-reme = ["reme-ai"]
 memory = [
     "agentscope[memory-mem0]",
     "agentscope[memory-reme]",
@@ -130,6 +130,9 @@ include-package-data = true
 "*" = ["py.typed", "_models/*.yaml", "_cosyvoice_models/*.yaml"]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
 "agentscope.workspace._srt" = ["*.json"]
+
+[tool.uv.sources]
+reme-ai = { path = "../ReMe", editable = true }
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]
