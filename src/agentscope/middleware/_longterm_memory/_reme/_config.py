@@ -76,6 +76,92 @@ def _job(
     }
 
 
+def _dream_identity_rules() -> list[str]:
+    """Return the shared identity-anchor rules for dream steps."""
+    return [
+        "Preserve stable user identity anchors.",
+        (
+            "- On the first clear mention of a specific user, prefer the "
+            "anchor format '<display name> (<source system>, user "
+            "<source user id>)>', for example "
+            "'Alex Smith (Feishu (Lark), user ou_1234567890abcdef)'."
+        ),
+        (
+            "- When a sentence mentions a specific user or uses a user as "
+            "its subject, include that user's source system and source "
+            "user id at least once in the same complete sentence."
+        ),
+        (
+            "- Keep long source system names and source user ids exactly "
+            "as they appear in the source material; do not truncate, "
+            "abbreviate, or partially omit them."
+        ),
+        (
+            "- After one unambiguous identity anchor is established in a "
+            "sentence or tightly connected neighboring sentence, you may "
+            "use simple references such as 'the user', 'he', or 'she' only "
+            "when the referent remains clear."
+        ),
+        (
+            "- Never drop source system or source user id when doing so "
+            "would make the user identity ambiguous."
+        ),
+        (
+            "- Never merge facts from different users into one generic "
+            "user topic, one generic user memory, or one unattributed "
+            "bullet."
+        ),
+        (
+            "- If a fact cannot be reliably attributed to a specific user, "
+            "record it as shared conversation context only if that is still "
+            "useful; otherwise omit it."
+        ),
+    ]
+
+
+def _dream_extract_hint() -> str:
+    """Guide dream extract to preserve identity in emitted units/topics."""
+    return "\n".join(
+        [
+            "Identity-anchor rules for extract:",
+            "- Apply these rules when writing unit summaries and topic candidates.",
+            *_dream_identity_rules(),
+        ],
+    )
+
+
+def _dream_integrate_hint() -> str:
+    """Guide dream integrate to preserve identity in digest output."""
+    return "\n".join(
+        [
+            "Identity-anchor rules for integrate:",
+            (
+                "- Apply these rules when writing digest body text, landing "
+                "notes, and source sentences."
+            ),
+            *_dream_identity_rules(),
+        ],
+    )
+
+
+def _dream_topics_hint() -> str:
+    """Guide dream topic selection to preserve identity in final interests."""
+    return "\n".join(
+        [
+            "Identity-anchor rules for topic selection:",
+            (
+                "- Apply these rules when selecting or rewriting final topic "
+                "titles, reasons, and evidence."
+            ),
+            (
+                "- Keep titles concise, but do not compress away identity "
+                "anchors when omission would make the user ambiguous."
+            ),
+            *_dream_identity_rules(),
+        ],
+    )
+
+
 def _dream_steps() -> list[dict[str, Any]]:
     """Build ReMe's daily-to-digest memory consolidation pipeline."""
     return [
@@ -85,12 +171,17 @@ def _dream_steps() -> list[dict[str, Any]]:
             "topic_session_id": "interests",
             "scan_days": 2,
             "max_units": 5,
+            "hint": _dream_extract_hint(),
         },
-        {"backend": "dream_integrate_json_step"},
+        {
+            "backend": "dream_integrate_json_step",
+            "hint": _dream_integrate_hint(),
+        },
         {
             "backend": "dream_topics_json_step",
             "topic_count": 3,
             "topic_diversity_days": 7,
+            "hint": _dream_topics_hint(),
         },
         {
             "backend": "dream_finish_step",

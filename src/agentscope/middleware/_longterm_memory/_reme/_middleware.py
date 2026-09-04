@@ -345,15 +345,29 @@ class ReMeMiddleware(MiddlewareBase):
 
         lines = [
             "Apply the following extraction policy to this conversation.",
-            "This note is a hint for memory extraction strategy. Do not copy it verbatim into the memory note.",
             "Prefer durable, future-useful facts; skip trivial small talk.",
-            f"- Source system identifier: {source_system_id!r}.",
-            f"- Source system label: {source_system_label}.",
+            f"- Source system identifier: {source_system_label}.",
             f"- Conversation kind: {conversation_kind!r}.",
+            (
+                "- On the first clear mention of a specific user, prefer the "
+                "anchor format '<display name> (<source system>, user "
+                "<source user id>)>'."
+            ),
             (
                 "- For any user-specific memory, preserve a stable identity "
                 "anchor in the memory body itself, including at least the "
                 "source system identifier and the source user id."
+            ),
+            (
+                "- For any user-specific daily note, preserve the identity "
+                "anchor in the frontmatter description as well, so the "
+                "description alone still makes clear which user the note is "
+                "about."
+            ),
+            (
+                "- Keep long source system names and source user ids exactly "
+                "as they appear in the source material; do not truncate, "
+                "abbreviate, or partially omit them."
             ),
             (
                 "- Never merge facts from different users into one generic "
@@ -377,6 +391,15 @@ class ReMeMiddleware(MiddlewareBase):
             if target_user_name:
                 lines.append(
                     f'- The target user\'s display name is "{target_user_name}".',
+                )
+                lines.append(
+                    "- Prefer a first identity anchor such as "
+                    f'"{target_user_name} ({source_system_label}, user '
+                    f'{target_user_id})" when it fits the sentence.'
+                )
+                lines.append(
+                    "- When the frontmatter description refers to this user, "
+                    "prefer the same first-mention anchor format there as well."
                 )
             lines.append(
                 "- In this private conversation, user facts should normally be "

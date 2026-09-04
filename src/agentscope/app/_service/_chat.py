@@ -1302,7 +1302,6 @@ class ChatService:
     ) -> str:
         """Render the main-session background attachment for the model."""
         session_id = context["session_id"]
-        source_system_id = context["source_system_id"]
         source_system_label = context.get("source_system_label")
         conversation_kind = context.get("conversation_kind")
         target_user_id = context.get("target_user_id")
@@ -1313,7 +1312,7 @@ class ChatService:
 
         attachment = (
             f"You're within a session (id={session_id}). "
-            f"The source system identifier is {source_system_id!r}."
+            f"The source system identifier is {source_system_label!r}."
         )
         if context["source"] == SessionSource.USER.value:
             attachment += " This session originates from the web_ui application."
@@ -1325,12 +1324,9 @@ class ChatService:
 
         if context["source"] == SessionSource.CHANNEL.value and chat_id:
             where = f' named "{chat_name}"' if chat_name else ""
-            channel_display_name = context.get("channel_display_name") or (
-                source_system_label or "channel"
-            )
             attachment += (
                 f" It is bound to a chat{where} (id {chat_id!r}) on the "
-                f"{channel_display_name} platform: the messages, images and "
+                f"{source_system_label} platform: the messages, images and "
                 "files people send there are relayed to you here, and your "
                 "replies are delivered back to that same chat."
             )
