@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ._auto_memory_prompt import build_auto_memory_prompt_overrides
+
 
 _MAX_FILE_BYTES = 10 * 1024 * 1024
 
@@ -262,6 +264,7 @@ def _memory_jobs() -> dict[str, Any]:
                 "memory_hint": string,
             },
             ("messages",),
+            prompt_dict=build_auto_memory_prompt_overrides(),
         ),
         # ``auto_memory`` writes daily cards; dream is the downstream memory
         # consolidation phase that turns those cards into durable digest
