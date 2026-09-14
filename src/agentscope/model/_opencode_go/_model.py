@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The OpenCode Go chat model implementation."""
+import uuid
 from typing import Literal, Any, AsyncGenerator, Type
 
 from pydantic import BaseModel, Field
@@ -102,6 +103,8 @@ class OpenCodeGoChatModel(ChatModelBase):
         formatter_input_media_types: list[str] | None = None,
         formatter_tool_result_media_types: list[str] | None = None,
         formatter_input_types: list[str] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        session_id: str | None = None,
         api_style: Literal["chat_completions", "anthropic_messages"] = (
             _API_STYLE_CHAT_COMPLETIONS
         ),
@@ -130,6 +133,28 @@ class OpenCodeGoChatModel(ChatModelBase):
         self.formatter_tool_result_media_types = (
             formatter_tool_result_media_types
         )
+        self.client_kwargs = self._build_client_kwargs(
+            client_kwargs=client_kwargs,
+            session_id=session_id,
+        )
+
+    @staticmethod
+    def _build_client_kwargs(
+        *,
+        client_kwargs: dict[str, Any] | None,
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        """Ensure OpenCode Go requests always carry a session header."""
+        resolved_client_kwargs = dict(client_kwargs or {})
+        default_headers = dict(
+            resolved_client_kwargs.get("default_headers") or {},
+        )
+        default_headers.setdefault(
+            "x-opencode-session",
+            session_id or uuid.uuid4().hex,
+        )
+        resolved_client_kwargs["default_headers"] = default_headers
+        return resolved_client_kwargs
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -200,6 +225,7 @@ class OpenCodeGoChatModel(ChatModelBase):
                 formatter_tool_result_media_types=(
                     self.formatter_tool_result_media_types
                 ),
+                client_kwargs=self.client_kwargs,
             )
 
         openai_parameters = OpenAIChatModel.Parameters(
@@ -222,6 +248,7 @@ class OpenCodeGoChatModel(ChatModelBase):
             formatter_tool_result_media_types=(
                 self.formatter_tool_result_media_types
             ),
+            client_kwargs=self.client_kwargs,
         )
 
     def _build_generate_kwargs(

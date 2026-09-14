@@ -949,7 +949,12 @@ class ChatService:
             return
 
         try:
-            title_model = await get_model(user_id, model_cfg, self._storage)
+            title_model = await get_model(
+                user_id,
+                model_cfg,
+                self._storage,
+                session_id=session_id,
+            )
             title = await generate_session_title(
                 title_model,
                 first_user_msg=first_user_msg,
@@ -1503,7 +1508,12 @@ class ChatService:
                     reason="missing_model_config",
                 )
 
-            model = await get_model(user_id, model_cfg, self._storage)
+            model = await get_model(
+                user_id,
+                model_cfg,
+                self._storage,
+                session_id=session_id,
+            )
             agent = self._agent_cls(
                 name=agent_record.data.name,
                 system_prompt=base_system_prompt,
@@ -1921,11 +1931,21 @@ class ChatService:
                 status_code=404,
                 detail=f"No model configuration found for agent {agent_id}",
             )
-        model = await get_model(user_id, model_cfg, self._storage)
+        model = await get_model(
+            user_id,
+            model_cfg,
+            self._storage,
+            session_id=session_id,
+        )
 
         fallback_cfg = session_record.config.fallback_chat_model_config
         fallback_model = (
-            await get_model(user_id, fallback_cfg, self._storage)
+            await get_model(
+                user_id,
+                fallback_cfg,
+                self._storage,
+                session_id=session_id,
+            )
             if fallback_cfg is not None
             else None
         )

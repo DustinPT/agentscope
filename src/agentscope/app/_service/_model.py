@@ -12,6 +12,7 @@ async def get_model(
     user_id: str,
     config: ChatModelConfig,
     storage: StorageBase,
+    session_id: str | None = None,
 ) -> ChatModelBase:
     """Get the model instance from the configuration and storage.
 
@@ -22,6 +23,9 @@ async def get_model(
             The chat model configuration.
         storage (`StorageBase`):
             The storage instance.
+        session_id (`str | None`):
+            Optional session identifier forwarded to providers that require
+            stable per-session routing metadata.
 
     Returns:
         `ChatModelBase`:
@@ -56,6 +60,11 @@ async def get_model(
         ) from e
 
     runtime_init_kwargs = model_cls.get_runtime_init_kwargs(config.model)
+    if (
+        session_id is not None
+        and getattr(model_cls, "type", None) == "opencode_go_chat"
+    ):
+        runtime_init_kwargs["session_id"] = session_id
     return model_cls(
         credential=credential,
         model=config.model,
