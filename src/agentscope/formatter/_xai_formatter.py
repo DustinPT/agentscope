@@ -114,8 +114,8 @@ class XAIChatFormatter(FormatterBase):
                                 url_str = str(block.source.url)
                                 if url_str.startswith("file://"):
                                     # Local file — read and encode as data URI
-                                    local_path = url_str.removeprefix(
-                                        "file://",
+                                    local_path = self._extract_local_file_path(
+                                        url_str,
                                     )
                                     with open(local_path, "rb") as f:
                                         encoded = base64.b64encode(
@@ -320,7 +320,7 @@ class XAIChatFormatter(FormatterBase):
                 if isinstance(sub.source, URLSource):
                     url_str = str(sub.source.url)
                     if url_str.startswith("file://"):
-                        local_path = url_str.removeprefix("file://")
+                        local_path = self._extract_local_file_path(url_str)
                         with open(local_path, "rb") as f:
                             encoded = base64.b64encode(f.read()).decode(
                                 "utf-8",

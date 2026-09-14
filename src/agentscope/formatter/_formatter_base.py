@@ -139,6 +139,15 @@ class FormatterBase(BaseModel):
         return stable_path
 
     @staticmethod
+    def _extract_local_file_path(url: str) -> str:
+        """Decode a ``file://`` URL into a usable local filesystem path."""
+        parsed = urlparse(url)
+        local_path = unquote(parsed.path or "")
+        if parsed.netloc and parsed.netloc != "localhost":
+            local_path = f"//{parsed.netloc}{local_path}"
+        return local_path
+
+    @staticmethod
     def _build_markdown_link(label: str, url: str) -> str:
         """Build a markdown link for fallback text."""
         escaped_label = label.replace("\\", "\\\\").replace("]", "\\]")
@@ -162,9 +171,7 @@ class FormatterBase(BaseModel):
         if isinstance(source, URLSource):
             parsed = urlparse(str(source.url))
             if parsed.scheme == "file":
-                local_path = unquote(parsed.path or "")
-                if parsed.netloc and parsed.netloc != "localhost":
-                    local_path = f"//{parsed.netloc}{local_path}"
+                local_path = self._extract_local_file_path(str(source.url))
                 return self._build_markdown_link(
                     self._build_fallback_link_label(
                         main_type,
@@ -203,9 +210,7 @@ class FormatterBase(BaseModel):
         if isinstance(source, URLSource):
             parsed = urlparse(str(source.url))
             if parsed.scheme == "file":
-                local_path = unquote(parsed.path or "")
-                if parsed.netloc and parsed.netloc != "localhost":
-                    local_path = f"//{parsed.netloc}{local_path}"
+                local_path = self._extract_local_file_path(str(source.url))
                 return (
                     f"<system-reminder>A(n) {main_type} file is "
                     f"returned and saved locally at: {local_path}."

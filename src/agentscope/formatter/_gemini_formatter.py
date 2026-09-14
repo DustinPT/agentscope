@@ -84,7 +84,7 @@ class _GeminiFormatterBase(FormatterBase, ABC):
             url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
-                file_path = url.removeprefix("file://")
+                file_path = _GeminiFormatterBase._extract_local_file_path(url)
                 with open(file_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
                 return {

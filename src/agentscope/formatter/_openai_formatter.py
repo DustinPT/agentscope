@@ -110,7 +110,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file — read and encode as base64 data URI
-                local_path = url_str.removeprefix("file://")
+                local_path = self._extract_local_file_path(url_str)
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -162,7 +162,9 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file
-                local_path = url_str.removeprefix("file://")
+                local_path = _OpenAIFormatterBase._extract_local_file_path(
+                    url_str,
+                )
                 extension = local_path.rsplit(".", 1)[-1].lower()
                 if extension not in ["wav", "mp3"]:
                     raise TypeError(

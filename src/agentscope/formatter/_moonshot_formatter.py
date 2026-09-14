@@ -37,7 +37,7 @@ def _moonshot_format_image_source(
     elif isinstance(source, URLSource):
         url_str = str(source.url)
         if url_str.startswith("file://"):
-            local_path = url_str.removeprefix("file://")
+            local_path = _OpenAIFormatterBase._extract_local_file_path(url_str)
             with open(local_path, "rb") as f:
                 encoded = base64.b64encode(f.read()).decode("utf-8")
             url = f"data:{source.media_type};base64,{encoded}"
