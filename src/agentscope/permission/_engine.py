@@ -130,6 +130,8 @@ class PermissionEngine:
         2. Ask rules → ASK (with suggestions)
         3. ``tool.check_permissions``:
             - ALLOW / DENY → returned as-is
+            - Always-confirm ASK → returned with suggestions; cannot be
+              overridden by allow rules
             - Safety ASK (bypass-immune) → returned with suggestions; cannot
               be overridden by allow rules
             - Non-safety ASK / PASSTHROUGH → continue
@@ -173,7 +175,14 @@ class PermissionEngine:
             PermissionBehavior.DENY,
         ):
             return tool_decision
-        # step 4b: safety ASK is bypass-immune — allow rules can't override
+        # step 4b: always-confirm ASK must always reach the user
+        if self._is_always_confirm_ask(tool_decision):
+            tool_decision.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
+            return tool_decision
+        # step 4c: safety ASK is bypass-immune — allow rules can't override
         if self._is_safety_ask(tool_decision):
             tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
@@ -210,13 +219,16 @@ class PermissionEngine:
 
         1. Deny rules → DENY
         2. Ask rules → ASK (with suggestions)
-        3. :meth:`ToolBase.check_read_only` (input-aware):
+        3. ``tool.check_permissions``:
+            - Always-confirm ASK → returned with suggestions
+            - other outcomes ignored for EXPLORE
+        4. :meth:`ToolBase.check_read_only` (input-aware):
             - True  → ALLOW
             - False → DENY
 
-        ``tool.check_permissions`` is not invoked: EXPLORE is fully
-        resolved by the read-only verdict, so safety ASK paths (e.g.
-        ``rm -rf /``) are subsumed into the broader DENY. Allow rules are
+        EXPLORE normally resolves via the read-only verdict, but a tool
+        may still request an always-confirm ASK for operations that must
+        be manually approved in every interactive mode. Allow rules are
         intentionally not consulted — EXPLORE's read-only guarantee
         cannot be granted away by a user-configured rule.
 
@@ -244,17 +256,27 @@ class PermissionEngine:
             )
             return ask
 
-        # step 3: read-only fast path — ALLOW without invoking the tool
+        # step 3: always-confirm ASK must still reach the user in EXPLORE
+        tool_decision = await tool.check_permissions(tool_input, self.context)
+        if self._is_always_confirm_ask(tool_decision):
+            tool_decision.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
+            return tool_decision
+
+        # step 4: read-only fast path — ALLOW without invoking the tool
         read_only = await self._check_read_only_fast_path(tool, tool_input)
         if read_only:
             return read_only
 
-        # step 4: tool.check_permissions is intentionally not consulted in
-        # EXPLORE mode. Any non-read-only invocation is denied below.
+        # step 5: tool.check_permissions is otherwise intentionally not
+        # consulted in EXPLORE mode. Any non-read-only invocation is
+        # denied below.
 
-        # step 5: allow rules are intentionally not consulted in EXPLORE mode.
+        # step 6: allow rules are intentionally not consulted in EXPLORE mode.
 
-        # step 6: default — DENY the non-read-only invocation
+        # step 7: default — DENY the non-read-only invocation
         return PermissionDecision(
             behavior=PermissionBehavior.DENY,
             message=(
@@ -281,6 +303,7 @@ class PermissionEngine:
         4. ``tool.check_permissions``:
             - ALLOW (e.g. ``Write`` to a file in the working directory) /
               DENY → returned as-is
+            - Always-confirm ASK → returned with suggestions
             - Safety ASK (bypass-immune) → returned with suggestions
             - Non-safety ASK / PASSTHROUGH → continue
         5. Allow rules → ALLOW
@@ -324,7 +347,14 @@ class PermissionEngine:
             PermissionBehavior.DENY,
         ):
             return tool_decision
-        # step 4b: safety ASK is bypass-immune
+        # step 4b: always-confirm ASK must always reach the user
+        if self._is_always_confirm_ask(tool_decision):
+            tool_decision.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
+            return tool_decision
+        # step 4c: safety ASK is bypass-immune
         if self._is_safety_ask(tool_decision):
             tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
@@ -376,6 +406,7 @@ class PermissionEngine:
         2. Ask rules → ASK (with suggestions; honors explicit user intent)
         3. ``tool.check_permissions``:
             - ALLOW / DENY → returned as-is
+            - Always-confirm ASK → returned with suggestions
             - ASK (including bypass-immune safety ASKs) → falls through
             - PASSTHROUGH → falls through
         4. Allow rules → ALLOW
@@ -411,13 +442,20 @@ class PermissionEngine:
             return read_only
 
         # step 4: tool's own check_permissions — ALLOW / DENY returned;
-        # any ASK (including bypass-immune safety ASK) is intentionally
-        # NOT honored here, per BYPASS's "skip safety prompts" contract.
+        # always-confirm ASK is honored, while other ASK decisions
+        # (including bypass-immune safety ASK) are intentionally skipped
+        # per BYPASS's "skip safety prompts" contract.
         tool_decision = await tool.check_permissions(tool_input, self.context)
         if tool_decision.behavior in (
             PermissionBehavior.ALLOW,
             PermissionBehavior.DENY,
         ):
+            return tool_decision
+        if self._is_always_confirm_ask(tool_decision):
+            tool_decision.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
             return tool_decision
 
         # step 5: allow rules
@@ -449,7 +487,8 @@ class PermissionEngine:
         2. Ask rules → DENY (converted, with suggestions preserved)
         3. ``tool.check_permissions``:
             - ALLOW / DENY → returned as-is
-            - Safety ASK → DENY (converted, with suggestions preserved)
+            - Always-confirm ASK / Safety ASK → DENY (converted, with
+              suggestions preserved)
             - Non-safety ASK / PASSTHROUGH → continue
         4. Allow rules → ALLOW
         5. Default → DENY (user not available to answer)
@@ -491,8 +530,11 @@ class PermissionEngine:
             PermissionBehavior.DENY,
         ):
             return tool_decision
-        # step 4b: safety ASK converted to DENY (no user available)
-        if self._is_safety_ask(tool_decision):
+        # step 4b: always-confirm ASK / safety ASK converted to DENY
+        # (no user available)
+        if self._is_always_confirm_ask(tool_decision) or self._is_safety_ask(
+            tool_decision,
+        ):
             tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
                 tool_input,
@@ -579,6 +621,14 @@ class PermissionEngine:
         return (
             decision.behavior == PermissionBehavior.ASK
             and decision.bypass_immune
+        )
+
+    @staticmethod
+    def _is_always_confirm_ask(decision: PermissionDecision) -> bool:
+        """Whether a decision is an ASK that must always reach the user."""
+        return (
+            decision.behavior == PermissionBehavior.ASK
+            and decision.always_confirm
         )
 
     async def _check_read_only_fast_path(

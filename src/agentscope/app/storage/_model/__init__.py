@@ -11,6 +11,19 @@ from ._channel import (
 )
 from ._credential import CredentialRecord
 from ._schedule import ScheduleData, ScheduleRecord, ScheduleSource
+from ._sandbox_permission import (
+    SandboxGrantResourceType,
+    SandboxGrantScope,
+    SandboxOperation,
+    SandboxPermissionGrant,
+    SandboxPermissionRecord,
+    merge_sandbox_grants,
+    normalize_domain_pattern,
+    normalize_operations,
+    normalize_path_pattern,
+    normalize_sandbox_grant,
+    sandbox_grant_identity,
+)
 from ._session import (
     ChatModelConfig,
     EmbeddingModelConfig,
@@ -37,6 +50,11 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "SandboxGrantResourceType",
+    "SandboxGrantScope",
+    "SandboxOperation",
+    "SandboxPermissionGrant",
+    "SandboxPermissionRecord",
     "SessionConfig",
     "SessionRecord",
     "SessionScope",
@@ -52,4 +70,10 @@ __all__ = [
     "TeamRecord",
     "SubAgentTaskRecord",
     "UserRecord",
+    "merge_sandbox_grants",
+    "normalize_domain_pattern",
+    "normalize_operations",
+    "normalize_path_pattern",
+    "normalize_sandbox_grant",
+    "sandbox_grant_identity",
 ]

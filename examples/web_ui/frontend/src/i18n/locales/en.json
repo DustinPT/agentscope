@@ -91,6 +91,16 @@
 		},
 		"grep": {
 			"name": "Grep"
+                },
+                "requestSandboxAccess": {
+                        "name": "Request Sandbox Access",
+                        "unknownTarget": "the requested target",
+                        "summary": {
+                                "domainConnect": "Request permission to connect to domain {{target}}.",
+                                "pathRead": "Request permission to read {{target}}.",
+                                "pathReadWrite": "Request permission to read and write {{target}}.",
+                                "reason": "Reason: {{reason}}"
+                        }
 		}
 	},
 	"textInput": {
@@ -103,7 +113,20 @@
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",
-		"yesWithRule": "Yes, and allow {{toolName}} to execute {{ruleContent}} for this session"
+                "yesWithRule": "Yes, and allow {{toolName}} to execute {{ruleContent}} for this session",
+                "sandboxAccess": {
+                        "scope": "Save permission for",
+                        "operations": "Allowed operations",
+                        "scopeOptions": {
+                                "workspace": "This workspace",
+                                "agent": "This agent",
+                                "user": "This user"
+                        },
+                        "operationOptions": {
+                                "read_only": "Read only",
+                                "read_write": "Read and write"
+                        }
+                }
 	},
 	"messageBubble": {
 		"thinking": "Thinking",

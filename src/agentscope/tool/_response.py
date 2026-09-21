@@ -26,6 +26,14 @@ class ToolChunk(BaseModel):
     """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
 
+    restart_session: bool = False
+    """Whether the current chat run should end after this tool completes and
+    be resumed in a fresh run.
+
+    This is a runtime control signal for the agent/service layer. It is not
+    shown to the model as part of the tool output.
+    """
+
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The identity of the tool response."""
 
@@ -48,6 +56,10 @@ class ToolResponse(BaseModel):
     metadata: dict = Field(default_factory=dict)
     """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
+
+    restart_session: bool = False
+    """Whether the current chat run should end and be resumed in a fresh run
+    after this tool response is fully processed."""
 
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The identity of the tool response."""
@@ -121,6 +133,7 @@ class ToolResponse(BaseModel):
             self.state = ToolResultState.DENIED
 
         self.metadata.update(chunk.metadata)
+        self.restart_session = self.restart_session or chunk.restart_session
 
         # Post-processing: merge consecutive TextBlocks
         # DataBlocks are kept separate and only merged by explicit id matching

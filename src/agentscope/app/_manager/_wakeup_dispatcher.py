@@ -19,6 +19,7 @@ from .._bus_ops import enqueue_run_trigger
 from ..message_bus import MessageBusKeys
 from ..._logging import logger
 from ...event import (
+    CustomEvent,
     EventType,
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
@@ -334,7 +335,7 @@ class WakeupDispatcher:
         *,
         kind: str,
         payload: dict | None,
-    ) -> Msg | UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | None:
+    ) -> Msg | UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | CustomEvent | None:
         """Deserialize a wake-up queue payload into the chat-service input."""
         if kind == "wake":
             return None
@@ -353,4 +354,6 @@ class WakeupDispatcher:
             return ExternalExecutionResultEvent.model_validate(payload)
         if event_type == EventType.USER_INTERRUPT:
             return UserInterruptEvent.model_validate(payload)
+        if event_type == EventType.CUSTOM:
+            return CustomEvent.model_validate(payload)
         return Msg.model_validate(payload)

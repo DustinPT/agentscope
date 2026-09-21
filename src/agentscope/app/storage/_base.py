@@ -10,6 +10,7 @@ from ._model import (
     ChannelRecord,
     CredentialRecord,
     ScheduleRecord,
+    SandboxPermissionRecord,
     SessionConfig,
     SessionRecord,
     SessionSource,
@@ -74,6 +75,36 @@ class StorageBase(ABC):
             `UserRecord`:
                 The stored user settings record.
         """
+
+    @abstractmethod
+    async def get_sandbox_permissions_for_user(
+        self,
+        user_id: str,
+    ) -> SandboxPermissionRecord | None:
+        """Fetch persisted sandbox permissions for one user scope."""
+
+    @abstractmethod
+    async def get_sandbox_permissions_for_agent(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> SandboxPermissionRecord | None:
+        """Fetch persisted sandbox permissions for one agent scope."""
+
+    @abstractmethod
+    async def get_sandbox_permissions_for_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+    ) -> SandboxPermissionRecord | None:
+        """Fetch persisted sandbox permissions for one workspace scope."""
+
+    @abstractmethod
+    async def upsert_sandbox_permissions(
+        self,
+        record: SandboxPermissionRecord,
+    ) -> SandboxPermissionRecord:
+        """Create or update one persisted sandbox permission record."""
 
     @abstractmethod
     async def upsert_credential(

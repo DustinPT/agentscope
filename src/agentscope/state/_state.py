@@ -103,6 +103,10 @@ class ToolRuntimeContext(BaseModel):
     current_tool_call_id: str | None = None
     """The current tool call id being executed, if any."""
 
+    restart_session_requested: bool = False
+    """Whether a tool requested ending the current run and resuming it in a
+    fresh chat run."""
+
 
 class WaitNewMessagesCursor(BaseModel):
     """Incremental cursor tracked for one managed session wait loop."""

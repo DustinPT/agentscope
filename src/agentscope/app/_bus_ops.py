@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from .message_bus._base import MessageBus
 
     from agentscope.event import (
+        CustomEvent,
         ExternalExecutionResultEvent,
         UserConfirmResultEvent,
         UserInterruptEvent,
@@ -47,6 +48,7 @@ async def enqueue_run_trigger(
     inputs: UserConfirmResultEvent
     | ExternalExecutionResultEvent
     | UserInterruptEvent
+    | CustomEvent
     | Msg
     | None = None,
     generate_reply: bool = True,

@@ -1681,6 +1681,7 @@ class ChatService:
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
         | UserInterruptEvent
+        | CustomEvent
         | None = None,
         *,
         generate_reply: bool = True,
@@ -1755,6 +1756,7 @@ class ChatService:
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
         | UserInterruptEvent
+        | CustomEvent
         | None,
         *,
         generate_reply: bool = True,
@@ -2022,6 +2024,7 @@ class ChatService:
         # 7. Run the agent inside the bus's distributed session lock
         # ----------------------------------------------------------------
         needs_followup_wakeup = False
+        needs_restart_wakeup = False
         released_inbox_consumer = False
         reply_msg: Msg | None = None
         runtime_input_msg = input_msg
@@ -2118,7 +2121,11 @@ class ChatService:
 
                 elif isinstance(
                     input_msg,
-                    (UserConfirmResultEvent, ExternalExecutionResultEvent),
+                    (
+                        UserConfirmResultEvent,
+                        ExternalExecutionResultEvent,
+                        CustomEvent,
+                    ),
                 ):
                     # Case B: continuation (UserConfirmResult / ExternalExecResult)
                     reply_msg = await self._storage.get_message(
@@ -2135,7 +2142,10 @@ class ChatService:
                             agent.state.reply_id,
                             session_id,
                         )
-                    elif input_msg:
+                    elif input_msg and not isinstance(input_msg, CustomEvent):
+                        # Custom continuation events are runtime control
+                        # signals rather than reply-scoped events, so they
+                        # should not be appended to the persisted reply.
                         reply_msg.append_event(input_msg)
                         self._record_checkpoint_event(
                             checkpoint_state,
@@ -2262,6 +2272,11 @@ class ChatService:
                     ),
                 )
 
+                runtime_context = agent.state.tool_context.runtime_context
+                needs_restart_wakeup = bool(
+                    runtime_context is not None
+                    and runtime_context.restart_session_requested
+                )
                 parked_on_awaiting_tool = is_reply_awaiting_tool_interaction(
                     agent,
                 )
@@ -2277,17 +2292,22 @@ class ChatService:
                         )
                     released_inbox_consumer = True
                 else:
-                    needs_followup_wakeup = (
-                        await has_pending_inbox_or_release(
-                            self._message_bus,
-                            session_id,
-                        )
+                    has_pending_inbox = await has_pending_inbox_or_release(
+                        self._message_bus,
+                        session_id,
                     )
-                    released_inbox_consumer = not needs_followup_wakeup
-                    if needs_followup_wakeup:
+                    needs_followup_wakeup = has_pending_inbox
+                    released_inbox_consumer = not has_pending_inbox
+                    if has_pending_inbox:
                         logger.info(
                             "ChatService: session %s finished with pending inbox "
                             "entries; scheduling a follow-up wakeup.",
+                            session_id,
+                        )
+                    if needs_restart_wakeup:
+                        logger.info(
+                            "ChatService: session %s requested a fresh rerun "
+                            "after tool execution; scheduling wakeup.",
                             session_id,
                         )
             except asyncio.CancelledError:
@@ -2336,7 +2356,19 @@ class ChatService:
 
         # ``session_run.__aexit__`` trims the replay log before
         # releasing the lock — see :meth:`MessageBus.session_run`.
-        if needs_followup_wakeup:
+        if needs_restart_wakeup:
+            await enqueue_run_trigger(
+                self._message_bus,
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+                inputs=CustomEvent(
+                    name="restart_session",
+                    value={"reply_id": agent.state.reply_id},
+                ),
+            )
+        elif needs_followup_wakeup:
             await enqueue_run_trigger(
                 self._message_bus,
                 user_id=user_id,

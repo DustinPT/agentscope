@@ -20,7 +20,14 @@ from ...workspace._srt._paths import (
 )
 from ...workspace._srt._srt_workspace import SRTWorkspace
 from .._service._workspace_seed import sync_workspace_state
-from ..storage import AgentMCPAsset, AgentSkillAsset
+from ..storage import (
+    AgentMCPAsset,
+    AgentSkillAsset,
+    SandboxGrantResourceType,
+    SandboxOperation,
+    SandboxPermissionGrant,
+    merge_sandbox_grants,
+)
 from ._base import IsolationPolicy
 from ._local_workspace_manager import LocalWorkspaceManager
 
@@ -61,22 +68,78 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
         """Return the derived SRT settings path for one workspace."""
         return os.path.join(self._basedir, user_id, workspace_id, ".srt-settings.json")
 
-    def _ensure_workspace_layout(self, workspace_id: str, user_id: str) -> tuple[str, str]:
+    async def _ensure_workspace_layout(
+        self,
+        workspace_id: str,
+        user_id: str,
+        agent_id: str,
+    ) -> tuple[str, str]:
         """Ensure one workspace has both workdir and fresh derived SRT settings."""
         user_dir = os.path.join(self._basedir, user_id)
         workdir = os.path.join(user_dir, workspace_id)
         settings_path = self._settings_path_for(workspace_id, user_id)
         os.makedirs(workdir, exist_ok=True)
-        _write_derived_srt_settings(
-            template_path=self._default_srt_settings_path,
-            target_path=settings_path,
+        settings = await self._build_expected_settings(
+            workspace_id=workspace_id,
             user_dir=user_dir,
+            user_id=user_id,
+            agent_id=agent_id,
+        )
+        _write_derived_srt_settings(
+            target_path=settings_path,
+            config=settings,
         )
         return workdir, settings_path
 
-    def _build_workspace(self, workspace_id: str, user_id: str) -> SRTWorkspace:
+    async def _build_expected_settings(
+        self,
+        *,
+        workspace_id: str,
+        user_dir: str,
+        user_id: str,
+        agent_id: str,
+    ) -> dict[str, Any]:
+        """Build the current derived SRT settings for one workspace."""
+        return await _build_derived_srt_settings(
+            template_path=self._default_srt_settings_path,
+            user_dir=user_dir,
+            storage=self._storage,
+            user_id=user_id,
+            agent_id=agent_id,
+            workspace_id=workspace_id,
+        )
+
+    async def _workspace_requires_rebuild(
+        self,
+        *,
+        workspace_id: str,
+        user_id: str,
+        agent_id: str,
+    ) -> bool:
+        """Return whether the on-disk settings differ from expected state."""
+        user_dir = os.path.join(self._basedir, user_id)
+        settings_path = self._settings_path_for(workspace_id, user_id)
+        expected = await self._build_expected_settings(
+            workspace_id=workspace_id,
+            user_dir=user_dir,
+            user_id=user_id,
+            agent_id=agent_id,
+        )
+        current = _load_existing_srt_settings(settings_path)
+        return current != expected
+
+    async def _build_workspace(
+        self,
+        workspace_id: str,
+        user_id: str,
+        agent_id: str,
+    ) -> SRTWorkspace:
         """Construct one SRTWorkspace for an existing or newly materialized workdir."""
-        workdir, settings_path = self._ensure_workspace_layout(workspace_id, user_id)
+        workdir, settings_path = await self._ensure_workspace_layout(
+            workspace_id,
+            user_id,
+            agent_id,
+        )
         return SRTWorkspace(
             workspace_id=workspace_id,
             workdir=workdir,
@@ -107,17 +170,28 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
         async with self._lock:
             now = time.monotonic()
             expired = self._pop_expired(now)
+            rebuild: list[SRTWorkspace] = []
             cached = self._cache.get(workspace_id)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, now)
-                hit = ws
+                if await self._workspace_requires_rebuild(
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                ):
+                    self._cache.pop(workspace_id, None)
+                    rebuild.append(ws)
+                    hit = None
+                else:
+                    self._cache[workspace_id] = (ws, now)
+                    hit = ws
             else:
                 hit = None
 
-        if expired:
+        stale = [*expired, *rebuild]
+        if stale:
             await asyncio.gather(
-                *(self._safe_close(ws) for ws in expired),
+                *(self._safe_close(ws) for ws in stale),
                 return_exceptions=True,
             )
 
@@ -137,19 +211,27 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
             cached = self._cache.get(workspace_id)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
-                view = AgentWorkspaceView(ws, agent_id)
-                await sync_workspace_state(
-                    view,
-                    expected_mcps=agent_mcps or [],
-                    expected_mcp_assets=agent_mcp_assets or [],
-                    expected_skills=agent_skill_assets or [],
-                    manager_default_mcps=self._default_mcps,
-                    manager_skill_paths=self._skill_paths,
-                )
-                return view
+                if await self._workspace_requires_rebuild(
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                ):
+                    self._cache.pop(workspace_id, None)
+                    await self._safe_close(ws)
+                else:
+                    self._cache[workspace_id] = (ws, time.monotonic())
+                    view = AgentWorkspaceView(ws, agent_id)
+                    await sync_workspace_state(
+                        view,
+                        expected_mcps=agent_mcps or [],
+                        expected_mcp_assets=agent_mcp_assets or [],
+                        expected_skills=agent_skill_assets or [],
+                        manager_default_mcps=self._default_mcps,
+                        manager_skill_paths=self._skill_paths,
+                    )
+                    return view
 
-            ws = self._build_workspace(workspace_id, user_id)
+            ws = await self._build_workspace(workspace_id, user_id, agent_id)
             await ws.initialize()
             view = AgentWorkspaceView(ws, agent_id)
             await sync_workspace_state(
@@ -175,44 +257,117 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
             )
 
 
-def _write_derived_srt_settings(
+async def _build_derived_srt_settings(
     *,
     template_path: str | None,
-    target_path: str,
     user_dir: str,
-) -> None:
-    """Create a workspace-specific SRT settings file from the template."""
+    storage: Any,
+    user_id: str,
+    agent_id: str,
+    workspace_id: str,
+) -> dict[str, Any]:
+    """Build one workspace-specific SRT settings config from template + grants."""
     config = _load_srt_template_config(template_path)
 
     network = config.setdefault("network", {})
     filesystem = config.setdefault("filesystem", {})
 
-    filesystem["allowRead"] = _append_unique_path(
+    filesystem["allowRead"] = _append_unique_value(
         filesystem.get("allowRead"),
         user_dir,
     )
-    filesystem["allowWrite"] = _append_unique_path(
+    filesystem["allowWrite"] = _append_unique_value(
         filesystem.get("allowWrite"),
         user_dir,
     )
     venv_dir = active_virtualenv_dir()
     if venv_dir is not None:
-        filesystem["allowRead"] = _append_unique_path(
+        filesystem["allowRead"] = _append_unique_value(
             filesystem.get("allowRead"),
             venv_dir,
         )
     for path in runtime_module_search_paths(
         "agentscope.workspace._srt._local_runtime_service",
     ):
-        filesystem["allowRead"] = _append_unique_path(
+        filesystem["allowRead"] = _append_unique_value(
             filesystem.get("allowRead"),
             path,
         )
     network["allowLocalBinding"] = True
 
+    grants = await _load_sandbox_grants(
+        storage=storage,
+        user_id=user_id,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+    )
+    for grant in grants:
+        if grant.resource_type == SandboxGrantResourceType.DOMAIN:
+            if SandboxOperation.CONNECT in grant.operations:
+                network["allowedDomains"] = _append_unique_value(
+                    network.get("allowedDomains"),
+                    grant.pattern,
+                )
+            continue
+
+        if SandboxOperation.READ in grant.operations:
+            filesystem["allowRead"] = _append_unique_value(
+                filesystem.get("allowRead"),
+                grant.pattern,
+            )
+        if SandboxOperation.WRITE in grant.operations:
+            filesystem["allowWrite"] = _append_unique_value(
+                filesystem.get("allowWrite"),
+                grant.pattern,
+            )
+
+    return config
+
+
+async def _load_sandbox_grants(
+    *,
+    storage: Any,
+    user_id: str,
+    agent_id: str,
+    workspace_id: str,
+) -> list[SandboxPermissionGrant]:
+    """Load and merge sandbox grants from user, agent, and workspace scopes."""
+    if storage is None:
+        return []
+
+    user_record = await storage.get_sandbox_permissions_for_user(user_id)
+    agent_record = await storage.get_sandbox_permissions_for_agent(
+        user_id,
+        agent_id,
+    )
+    workspace_record = await storage.get_sandbox_permissions_for_workspace(
+        user_id,
+        workspace_id,
+    )
+    return merge_sandbox_grants(
+        user_record.grants if user_record is not None else [],
+        agent_record.grants if agent_record is not None else [],
+        workspace_record.grants if workspace_record is not None else [],
+    )
+
+
+def _write_derived_srt_settings(
+    *,
+    target_path: str,
+    config: dict[str, Any],
+) -> None:
+    """Write one workspace-specific SRT settings file."""
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
     with open(target_path, "w", encoding="utf-8") as file_obj:
         json.dump(config, file_obj, indent=2, ensure_ascii=False)
+
+
+def _load_existing_srt_settings(path: str) -> dict[str, Any] | None:
+    """Load one existing derived SRT settings file if present."""
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as file_obj:
+        return json.load(file_obj)
 
 
 def _load_srt_template_config(template_path: str | None) -> dict[str, Any]:
@@ -239,9 +394,9 @@ def _platform_default_srt_settings_name() -> str:
     raise RuntimeError(f"Unsupported platform for built-in SRT settings: {sys.platform}")
 
 
-def _append_unique_path(existing: Any, path: str) -> list[str]:
-    """Append one path to a JSON list field while preserving order."""
+def _append_unique_value(existing: Any, value: str) -> list[str]:
+    """Append one string to a JSON list field while preserving order."""
     values = [item for item in (existing or []) if isinstance(item, str)]
-    if path not in values:
-        values.append(path)
+    if value not in values:
+        values.append(value)
     return values

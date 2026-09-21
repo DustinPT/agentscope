@@ -29,6 +29,7 @@ from ._confirm_tool_calls import ConfirmToolCalls
 from ._create_test_session import CreateTestSession
 from ._import_agent_package import ImportAgentPackage
 from ._interrupt_session import InterruptSession
+from ._request_sandbox_access import RequestSandboxAccess
 from ._send_session_message import SendSessionMessage
 from ._subagent_run import SubAgentRun
 from ._submit_external_results import SubmitExternalResults
@@ -44,6 +45,7 @@ __all__ = [
     "DEFAULT_SUB_AGENT_TEMPLATE",
     "ImportAgentPackage",
     "InterruptSession",
+    "RequestSandboxAccess",
     "SendSessionMessage",
     "SubAgentRun",
     "SubmitExternalResults",

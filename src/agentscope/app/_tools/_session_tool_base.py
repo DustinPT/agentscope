@@ -95,6 +95,7 @@ class _SessionToolBase(ToolBase):
         payload: dict[str, Any],
         *,
         state: ToolResultState = ToolResultState.SUCCESS,
+        restart_session: bool = False,
     ) -> ToolChunk:
         """Build a JSON tool result that is easy for agents to consume."""
         return ToolChunk(
@@ -110,6 +111,7 @@ class _SessionToolBase(ToolBase):
             ],
             state=state,
             metadata=payload,
+            restart_session=restart_session,
         )
 
     async def _get_owned_agent(

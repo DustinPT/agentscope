@@ -9,13 +9,41 @@ import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 
 type SelectOption = 'yes' | 'yes_with_rule' | 'no';
+type SandboxScope = 'workspace' | 'agent' | 'user';
+type SandboxOperationMode = 'read_only' | 'read_write';
+
+const SANDBOX_ACCESS_TOOL_NAME = 'RequestSandboxAccess';
+
+type SandboxAccessInput = {
+        resource_type?: 'domain' | 'path';
+        pattern?: string;
+        operations?: string[];
+        scope?: SandboxScope;
+        reason?: string;
+};
+
+function parseSandboxAccessInput(toolCall: ToolCallBlock): SandboxAccessInput {
+        try {
+                return JSON.parse(toolCall.input) as SandboxAccessInput;
+        } catch {
+                return {};
+        }
+}
+
+function isSandboxAccessTool(toolCall: ToolCallBlock): boolean {
+        return toolCall.name === SANDBOX_ACCESS_TOOL_NAME;
+}
 
 export function ConfirmCard({
 	toolCall,
 	onUserConfirm,
 }: {
 	toolCall: ToolCallBlock;
-	onUserConfirm: (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => void;
+        onUserConfirm: (
+                confirm: boolean,
+                confirmedToolCall?: ToolCallBlock,
+                rules?: ToolCallBlock['suggested_rules'],
+        ) => void;
 }) {
 	const { t } = useTranslation();
 	const hasSuggestedRules = !!toolCall.suggested_rules?.length;
@@ -25,6 +53,35 @@ export function ConfirmCard({
                 [hasSuggestedRules],
         );
 	const [selected, setSelected] = useState<SelectOption>('yes');
+        const sandboxInput = useMemo(() => parseSandboxAccessInput(toolCall), [toolCall]);
+        const isSandboxAccess = isSandboxAccessTool(toolCall);
+        const [scope, setScope] = useState<SandboxScope>(sandboxInput.scope ?? 'workspace');
+        const [pathMode, setPathMode] = useState<SandboxOperationMode>(
+                sandboxInput.operations?.includes('write') ? 'read_write' : 'read_only',
+        );
+
+        useEffect(() => {
+                setScope(sandboxInput.scope ?? 'workspace');
+                setPathMode(sandboxInput.operations?.includes('write') ? 'read_write' : 'read_only');
+        }, [sandboxInput]);
+
+        const buildConfirmedToolCall = useMemo(() => {
+                if (!isSandboxAccess) return toolCall;
+                const nextInput: SandboxAccessInput = {
+                        ...sandboxInput,
+                        scope,
+                        operations:
+                                sandboxInput.resource_type === 'path'
+                                        ? pathMode === 'read_write'
+                                                ? ['read', 'write']
+                                                : ['read']
+                                        : ['connect'],
+                };
+                return {
+                        ...toolCall,
+                        input: JSON.stringify(nextInput),
+                } satisfies ToolCallBlock;
+        }, [isSandboxAccess, pathMode, sandboxInput, scope, toolCall]);
 
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -41,9 +98,9 @@ export function ConfirmCard({
 				case 'Enter':
 					e.preventDefault();
                                         if (selected === 'yes_with_rule' && suggestedRule) {
-                                                onUserConfirm(true, [suggestedRule]);
+                                                onUserConfirm(true, buildConfirmedToolCall, [suggestedRule]);
 					} else {
-						onUserConfirm(selected === 'yes');
+                                                onUserConfirm(selected === 'yes', buildConfirmedToolCall);
 					}
 					break;
 			}
@@ -51,16 +108,81 @@ export function ConfirmCard({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-        }, [onUserConfirm, options, selected, suggestedRule]);
+        }, [buildConfirmedToolCall, onUserConfirm, options, selected, suggestedRule]);
 
 	return (
 		<div className="ring ring-border rounded-xl w-full p-4 space-y-4 text-sm overflow-hidden">
 			<div className="flex flex-col gap-y-2">
 				<strong className="text-secondary-foreground">{getDisplayName(toolCall, t)}</strong>
 				<div className="px-4 py-2 bg-white rounded-sm">
-					{renderConfirmBody(toolCall, t)}
+                                        {renderConfirmBody(buildConfirmedToolCall, t)}
 				</div>
 			</div>
+                        {isSandboxAccess && (
+                                <div className="space-y-3">
+                                        <div className="space-y-2">
+                                                <strong className="text-secondary-foreground">
+                                                        {t('confirmCard.sandboxAccess.scope')}
+                                                </strong>
+                                                <div className="flex flex-wrap gap-2">
+                                                        {(['workspace', 'agent', 'user'] as SandboxScope[]).map((value) => (
+                                                                <Button
+                                                                        key={value}
+                                                                        type="button"
+                                                                        size="sm"
+                                                                        variant={scope === value ? 'default' : 'outline'}
+                                                                        onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                e.preventDefault();
+                                                                                setScope(value);
+                                                                        }}
+                                                                >
+                                                                        {t(
+                                                                                `confirmCard.sandboxAccess.scopeOptions.${value}`,
+                                                                        )}
+                                                                </Button>
+                                                        ))}
+                                                </div>
+                                        </div>
+                                        {sandboxInput.resource_type === 'path' && (
+                                                <div className="space-y-2">
+                                                        <strong className="text-secondary-foreground">
+                                                                {t('confirmCard.sandboxAccess.operations')}
+                                                        </strong>
+                                                        <div className="flex flex-wrap gap-2">
+                                                                <Button
+                                                                        type="button"
+                                                                        size="sm"
+                                                                        variant={pathMode === 'read_only' ? 'default' : 'outline'}
+                                                                        onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                e.preventDefault();
+                                                                                setPathMode('read_only');
+                                                                        }}
+                                                                >
+                                                                        {t(
+                                                                                'confirmCard.sandboxAccess.operationOptions.read_only',
+                                                                        )}
+                                                                </Button>
+                                                                <Button
+                                                                        type="button"
+                                                                        size="sm"
+                                                                        variant={pathMode === 'read_write' ? 'default' : 'outline'}
+                                                                        onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                e.preventDefault();
+                                                                                setPathMode('read_write');
+                                                                        }}
+                                                                >
+                                                                        {t(
+                                                                                'confirmCard.sandboxAccess.operationOptions.read_write',
+                                                                        )}
+                                                                </Button>
+                                                        </div>
+                                                </div>
+                                        )}
+                                </div>
+                        )}
 			<div className="flex flex-col">
 				<strong className="text-secondary-foreground mb-1">
 					{t('chat.confirmToolCall')}
@@ -76,7 +198,7 @@ export function ConfirmCard({
 					onClick={(e) => {
 						e.stopPropagation();
 						e.preventDefault();
-						onUserConfirm(true);
+                                                onUserConfirm(true, buildConfirmedToolCall);
 					}}
 				>
 					<ChevronRight
@@ -100,7 +222,7 @@ export function ConfirmCard({
 							e.stopPropagation();
 							e.preventDefault();
                                                           if (suggestedRule) {
-                                                                  onUserConfirm(true, [suggestedRule]);
+                                                                  onUserConfirm(true, buildConfirmedToolCall, [suggestedRule]);
                                                           }
 						}}
 					>
@@ -137,7 +259,7 @@ export function ConfirmCard({
 					onClick={(e) => {
 						e.stopPropagation();
 						e.preventDefault();
-						onUserConfirm(false);
+                                                onUserConfirm(false, buildConfirmedToolCall);
 					}}
 				>
 					<ChevronRight

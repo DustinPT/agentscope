@@ -463,6 +463,7 @@ function renderBlock(
 	onUserConfirm?: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
+                confirmedToolCall?: ToolCallBlock,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => void,
 ) {
@@ -477,8 +478,15 @@ function renderBlock(
 					{askingCall && (
 						<ConfirmCard
 							toolCall={askingCall}
-							onUserConfirm={(confirm, rules) => {
-								if (onUserConfirm) onUserConfirm(askingCall, confirm, rules);
+                                                        onUserConfirm={(confirm, confirmedToolCall, rules) => {
+                                                                if (onUserConfirm) {
+                                                                        onUserConfirm(
+                                                                                askingCall,
+                                                                                confirm,
+                                                                                confirmedToolCall,
+                                                                                rules,
+                                                                        );
+                                                                }
 							}}
 						/>
 					)}
@@ -890,10 +898,17 @@ export function MessageBubble({
 							(
 								toolCall: ToolCallBlock,
 								confirm: boolean,
+                                                                confirmedToolCall?: ToolCallBlock,
 								rules?: ToolCallBlock['suggested_rules'],
 							) => {
-								onUserConfirm(toolCall, confirm, message.id, rules);
-								toolCall.state = confirm ? 'allowed' : 'finished';
+                                                                onUserConfirm(
+                                                                        confirmedToolCall ?? toolCall,
+                                                                        confirm,
+                                                                        message.id,
+                                                                        rules,
+                                                                );
+                                                                const localToolCall = confirmedToolCall ?? toolCall;
+                                                                localToolCall.state = confirm ? 'allowed' : 'finished';
 							},
 						),
 					)}

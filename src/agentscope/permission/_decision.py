@@ -30,6 +30,29 @@ class PermissionDecision:
     suggested_rules: list[PermissionRule] | None = None
     """Optional list of suggested permission rules for user to apply."""
 
+    always_confirm: bool = False
+    """Whether this ASK must be surfaced for manual confirmation in all
+    interactive permission modes.
+
+    Only meaningful when :attr:`behavior` is :attr:`PermissionBehavior.ASK`.
+    A tool sets this to ``True`` to express that the operation is not a
+    normal "policy can decide" permission prompt, but a required
+    human-in-the-loop confirmation. Unlike ``bypass_immune``, this flag
+    is honored even in :attr:`PermissionMode.BYPASS`.
+
+    Per-mode handling of a ``always_confirm=True`` ASK:
+
+    - ``DEFAULT`` / ``ACCEPT_EDITS``: honored — allow rules cannot
+      override it.
+    - ``EXPLORE``: honored — the confirmation ASK is surfaced before the
+      usual non-read-only deny path.
+    - ``BYPASS``: honored — bypass does not auto-allow it.
+    - ``DONT_ASK``: converted to DENY because no user is available.
+
+    Use this only for tools that fundamentally require explicit human
+    approval regardless of the session's broader permission mode.
+    """
+
     bypass_immune: bool = False
     """Whether this decision is immune to being silenced by allow rules
     ("bypass-immune").

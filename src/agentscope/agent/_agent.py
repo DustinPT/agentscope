@@ -26,6 +26,7 @@ from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..event import (
     AgentEvent,
+    CustomEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
@@ -926,7 +927,8 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-          | UserInterruptEvent
+        | UserInterruptEvent
+        | CustomEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
@@ -941,7 +943,8 @@ class Agent:
                 | list[Msg]
                 | UserConfirmResultEvent
                 | ExternalExecutionResultEvent
-                  | UserInterruptEvent
+                | UserInterruptEvent
+                | CustomEvent
                 | None = inputs,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
@@ -973,7 +976,8 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
-          | UserInterruptEvent
+        | UserInterruptEvent
+        | CustomEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
@@ -982,6 +986,7 @@ class Agent:
             UserConfirmResultEvent
             | ExternalExecutionResultEvent
             | UserInterruptEvent
+            | CustomEvent
             | None
         )
         msgs: Msg | list[Msg] | None
@@ -991,6 +996,7 @@ class Agent:
                 UserConfirmResultEvent,
                 ExternalExecutionResultEvent,
                 UserInterruptEvent,
+                CustomEvent,
             ),
         ):
             event = inputs
@@ -1136,6 +1142,12 @@ class Agent:
                     return
 
             # Update the iteration count after each round of reasoning-acting
+            runtime_context = self.state.tool_context.runtime_context
+            if (
+                runtime_context is not None
+                and runtime_context.restart_session_requested
+            ):
+                return
             self.state.cur_iter += 1
 
         # ===================================================================
@@ -1409,6 +1421,17 @@ class Agent:
         if isinstance(event, UserInterruptEvent):
             return True
 
+        if isinstance(event, CustomEvent):
+            if event.name != "restart_session":
+                raise ValueError(
+                    f"Unsupported custom event for reply continuation: {event.name}",
+                )
+            if event.value.get("reply_id") != self.state.reply_id:
+                raise ValueError(
+                    "Received restart_session event for a different reply id.",
+                )
+            return True
+
         if isinstance(event, UserConfirmResultEvent):
             if not awaiting_confirmations:
                 raise ValueError(
@@ -1447,7 +1470,7 @@ class Agent:
 
     async def _handle_incoming_event(
         self,
-        event: UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | None,
+        event: UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent | CustomEvent | None,
     ) -> AsyncGenerator[
         ToolResultStartEvent
         | ToolResultTextDeltaEvent
@@ -1471,6 +1494,9 @@ class Agent:
         """
         # Return directly if no event
         if event is None or len(self.state.context) == 0:
+            return
+
+        if isinstance(event, CustomEvent):
             return
 
         if isinstance(event, UserConfirmResultEvent):
@@ -1679,6 +1705,12 @@ class Agent:
                 ):
                     break_execution = True
                     break
+            runtime_context = self.state.tool_context.runtime_context
+            if (
+                runtime_context is not None
+                and runtime_context.restart_session_requested
+            ):
+                break_execution = True
             if break_execution:
                 break
 
@@ -2025,6 +2057,10 @@ class Agent:
             async for chunk in self._acting(tool_call):
                 # The ToolResponse is the last and completed tool result here
                 if isinstance(chunk, ToolResponse):
+                    runtime_context = self.state.tool_context.runtime_context
+                    if runtime_context is not None and chunk.restart_session:
+                        runtime_context.restart_session_requested = True
+
                     tool_result_block = ToolResultBlock(
                         id=tool_call.id,
                         name=tool_call.name,

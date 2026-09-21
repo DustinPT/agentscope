@@ -13,6 +13,8 @@ from ._model import (
     ChannelRecord,
     CredentialRecord,
     ScheduleRecord,
+    SandboxGrantScope,
+    SandboxPermissionRecord,
     SubAgentTaskRecord,
     SessionConfig,
     SessionRecord,
@@ -54,6 +56,15 @@ class RedisStorage(StorageBase):
         session: str = "agentscope:user:{user_id}:session:{session_id}"
         session_state: str = (
             "agentscope:user:{user_id}:session_state:{session_id}"
+        )
+        sandbox_permissions_user: str = (
+            "agentscope:user:{user_id}:sandbox_permissions:user"
+        )
+        sandbox_permissions_agent: str = (
+            "agentscope:user:{user_id}:sandbox_permissions:agent:{agent_id}"
+        )
+        sandbox_permissions_workspace: str = (
+            "agentscope:user:{user_id}:sandbox_permissions:workspace:{workspace_id}"
         )
         subagent_task: str = (
             "agentscope:user:{user_id}:subagent_task:{task_id}"
@@ -262,6 +273,94 @@ class RedisStorage(StorageBase):
             )
         await self._set_with_ttl(key, record.model_dump_json())
         return record
+
+    async def get_sandbox_permissions_for_user(
+        self,
+        user_id: str,
+    ) -> SandboxPermissionRecord | None:
+        """Fetch persisted sandbox permissions for one user scope."""
+        key = self._key(
+            self.key_config.sandbox_permissions_user,
+            user_id=user_id,
+        )
+        raw = await self._client.get(key)
+        return SandboxPermissionRecord.model_validate_json(raw) if raw else None
+
+    async def get_sandbox_permissions_for_agent(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> SandboxPermissionRecord | None:
+        """Fetch persisted sandbox permissions for one agent scope."""
+        key = self._key(
+            self.key_config.sandbox_permissions_agent,
+            user_id=user_id,
+            agent_id=agent_id,
+        )
+        raw = await self._client.get(key)
+        return SandboxPermissionRecord.model_validate_json(raw) if raw else None
+
+    async def get_sandbox_permissions_for_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+    ) -> SandboxPermissionRecord | None:
+        """Fetch persisted sandbox permissions for one workspace scope."""
+        key = self._key(
+            self.key_config.sandbox_permissions_workspace,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+        raw = await self._client.get(key)
+        return SandboxPermissionRecord.model_validate_json(raw) if raw else None
+
+    def _sandbox_permissions_key(
+        self,
+        record: SandboxPermissionRecord,
+    ) -> str:
+        """Return the Redis key for one sandbox permission record."""
+        if record.scope == SandboxGrantScope.USER:
+            return self._key(
+                self.key_config.sandbox_permissions_user,
+                user_id=record.user_id,
+            )
+        if record.scope == SandboxGrantScope.AGENT:
+            if not record.agent_id:
+                raise ValueError("agent_id is required for agent sandbox permissions.")
+            return self._key(
+                self.key_config.sandbox_permissions_agent,
+                user_id=record.user_id,
+                agent_id=record.agent_id,
+            )
+        if not record.workspace_id:
+            raise ValueError(
+                "workspace_id is required for workspace sandbox permissions.",
+            )
+        return self._key(
+            self.key_config.sandbox_permissions_workspace,
+            user_id=record.user_id,
+            workspace_id=record.workspace_id,
+        )
+
+    async def upsert_sandbox_permissions(
+        self,
+        record: SandboxPermissionRecord,
+    ) -> SandboxPermissionRecord:
+        """Create or update one persisted sandbox permission record."""
+        key = self._sandbox_permissions_key(record)
+        raw = await self._client.get(key)
+        if raw:
+            persisted = SandboxPermissionRecord.model_validate_json(raw)
+            persisted.scope = record.scope
+            persisted.user_id = record.user_id
+            persisted.agent_id = record.agent_id
+            persisted.workspace_id = record.workspace_id
+            persisted.grants = record.grants
+            persisted.updated_at = datetime.now()
+        else:
+            persisted = record
+        await self._set_with_ttl(key, persisted.model_dump_json())
+        return persisted
 
     async def _generate_credential_name(
         self,

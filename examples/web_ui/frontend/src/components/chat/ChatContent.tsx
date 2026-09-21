@@ -24,21 +24,21 @@ interface ChatContentProps {
 		toolCall: ToolCallBlock,
 		confirm: boolean,
 		replyId: string,
-		rules?: ToolCallBlock['suggested_rules'],
-	) => void;
-	autoComplete?: (input: string) => string | null;
-	className?: string;
-	scrollTargetMessageId?: string | null;
-	onScrollTargetHandled?: () => void;
-	activeMessageId?: string | null;
-	scrollViewportCommand?: {
-		type: 'top' | 'bottom';
-		nonce: number;
-	} | null;
-	/** @see TextInputProps.allowedInputTypes */
+                rules?: ToolCallBlock['suggested_rules'],
+        ) => void;
+        autoComplete?: (input: string) => string | null;
+        className?: string;
+        scrollTargetMessageId?: string | null;
+        onScrollTargetHandled?: () => void;
+        activeMessageId?: string | null;
+        scrollViewportCommand?: {
+                type: 'top' | 'bottom';
+                nonce: number;
+        } | null;
+        /** @see TextInputProps.allowedInputTypes */
         allowedInputTypes?: string[];
-	/** @see TextInputProps.fileProcessor */
-	fileProcessor: (file: File) => Promise<ContentBlock | null>;
+        /** @see TextInputProps.fileProcessor */
+        fileProcessor: (file: File) => Promise<ContentBlock | null>;
         value?: string;
         onValueChange?: (value: string) => void;
         files?: ProcessedFile[];

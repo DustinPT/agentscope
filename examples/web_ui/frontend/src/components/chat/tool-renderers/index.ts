@@ -14,6 +14,7 @@ import { EditRenderer } from './EditRenderer';
 import { GlobRenderer } from './GlobRenderer';
 import { GrepRenderer } from './GrepRenderer';
 import { ReadRenderer } from './ReadRenderer';
+import { RequestSandboxAccessRenderer } from './RequestSandboxAccessRenderer';
 import { SubAgentRunRenderer } from './SubAgentRunRenderer';
 import { TaskCreateRenderer } from './TaskCreateRenderer';
 import type { TFunction, ToolCallWithResult, ToolRenderer } from './types';
@@ -23,6 +24,7 @@ const renderers: Record<string, ToolRenderer> = {
 	Bash: BashRenderer,
 	ContextCompress: ContextCompressRenderer,
 	Read: ReadRenderer,
+        RequestSandboxAccess: RequestSandboxAccessRenderer,
 	Write: WriteRenderer,
 	Edit: EditRenderer,
 	Glob: GlobRenderer,

@@ -13,6 +13,7 @@ from .._tools import (
     CreateTestSession,
     ImportAgentPackage,
     InterruptSession,
+    RequestSandboxAccess,
     SendSessionMessage,
     SubAgentRun,
     SubmitExternalResults,
@@ -33,7 +34,8 @@ from ...tool import (
     TaskUpdate,
     Toolkit,
 )
-from ...workspace import WorkspaceBase
+from ...workspace import AgentWorkspaceView, WorkspaceBase
+from ...workspace._srt._srt_workspace import SRTWorkspace
 
 if TYPE_CHECKING:
     from ._agent_asset_store import AgentAssetStore
@@ -199,6 +201,15 @@ optional):
             ],
         )
 
+    sandbox_type = _detect_sandbox_type(workspace)
+    if sandbox_type is not None:
+        tools.append(
+            RequestSandboxAccess(
+                **managed_tool_kwargs,
+                sandbox_type=sandbox_type,
+            ),
+        )
+
     # Team tools — variant based on ``agent_record.source``. A worker
     # only gets TeamSay (to report back); a user-owned agent always
     # gets the full leader-side toolset. Each tool checks its own
@@ -278,3 +289,11 @@ optional):
             if client.connection_status == "connected"
         ],
     )
+
+
+def _detect_sandbox_type(workspace: WorkspaceBase) -> str | None:
+    """Return the sandbox type for the current workspace when supported."""
+    runtime = workspace._runtime if isinstance(workspace, AgentWorkspaceView) else workspace
+    if isinstance(runtime, SRTWorkspace):
+        return "srt"
+    return None

@@ -91,6 +91,16 @@
 		},
 		"grep": {
 			"name": "Grep"
+                },
+                "requestSandboxAccess": {
+                        "name": "申请沙箱访问权限",
+                        "unknownTarget": "目标资源",
+                        "summary": {
+                                "domainConnect": "申请连接域名 {{target}}。",
+                                "pathRead": "申请读取 {{target}}。",
+                                "pathReadWrite": "申请读写 {{target}}。",
+                                "reason": "原因：{{reason}}"
+                        }
 		}
 	},
 	"textInput": {
@@ -103,7 +113,20 @@
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
-		"yesWithRule": "是，且该次对话中都允许 {{toolName}} 执行 {{ruleContent}}"
+                "yesWithRule": "是，且该次对话中都允许 {{toolName}} 执行 {{ruleContent}}",
+                "sandboxAccess": {
+                        "scope": "权限保存范围",
+                        "operations": "允许的操作",
+                        "scopeOptions": {
+                                "workspace": "当前工作区",
+                                "agent": "当前 Agent",
+                                "user": "当前用户"
+                        },
+                        "operationOptions": {
+                                "read_only": "只读",
+                                "read_write": "读写"
+                        }
+                }
 	},
 	"messageBubble": {
 		"thinking": "思考中",
