@@ -2305,6 +2305,14 @@ class ChatService:
                             session_id,
                         )
                     if needs_restart_wakeup:
+                        await publish_session_event(
+                            self._message_bus,
+                            session_id,
+                            CustomEvent(
+                                name="restart_session",
+                                value={"reply_id": agent.state.reply_id},
+                            ).model_dump(mode="json"),
+                        )
                         logger.info(
                             "ChatService: session %s requested a fresh rerun "
                             "after tool execution; scheduling wakeup.",

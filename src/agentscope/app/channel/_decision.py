@@ -58,6 +58,7 @@ async def resume_after_decision(
     session_id: str,
     tool_call_id: str,
     approved: bool,
+    tool_input_override: str = "",
 ) -> bool:
     """Resume the run with a decision on ``tool_call_id``.
 
@@ -73,6 +74,8 @@ async def resume_after_decision(
         session_id (`str`): The derived session.
         tool_call_id (`str`): The awaiting tool call to answer.
         approved (`bool`): The user's decision.
+        tool_input_override (`str`, optional): Replacement
+            ``tool_call.input`` chosen by the channel UI.
 
     Returns:
         `bool`: Whether a resume was enqueued.
@@ -86,6 +89,11 @@ async def resume_after_decision(
     tool_call = next((t for t in asking if t.id == tool_call_id), None)
     if tool_call is None:
         return False
+    confirmed_tool_call = tool_call
+    if approved and tool_input_override:
+        confirmed_tool_call = tool_call.model_copy(
+            update={"input": tool_input_override},
+        )
     await enqueue_run_trigger(
         bus,
         user_id=user_id,
@@ -95,7 +103,10 @@ async def resume_after_decision(
         inputs=UserConfirmResultEvent(
             reply_id=reply_id,
             confirm_results=[
-                ConfirmResult(confirmed=approved, tool_call=tool_call),
+                ConfirmResult(
+                    confirmed=approved,
+                    tool_call=confirmed_tool_call,
+                ),
             ],
         ),
     )

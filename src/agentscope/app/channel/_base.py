@@ -96,9 +96,10 @@ class ChannelEvent(BaseModel):
 class ChannelConfirmationResultEvent(BaseModel):
     """A user's decision on a pending tool-approval, delivered inbound.
 
-    Enters through the *same* gateway entry point as messages. Carries
-    only lookup keys — the authoritative pending tool call is read from
-    the session state, never trusted from this round-tripped payload.
+    Enters through the *same* gateway entry point as messages. The
+    authoritative pending tool call is still read from session state;
+    channel-specific UIs may additionally attach a narrowed replacement
+    ``tool_call.input`` selected by the user.
     """
 
     channel_id: str
@@ -125,6 +126,17 @@ class ChannelConfirmationResultEvent(BaseModel):
 
     approved: bool
     """The user's decision."""
+
+    tool_input_override: str = ""
+    """Optional replacement ``tool_call.input`` chosen by the channel UI.
+
+    This is only used for tool-specific confirmation UIs that let the
+    user narrow or adjust the requested input before approval.
+    """
+
+    decision_label: str = ""
+    """Human-readable decision detail from the channel UI, used only for
+    presentation such as resolved approval cards."""
 
     actor: str = ""
     """Platform-side id of whoever made the decision (for audit)."""

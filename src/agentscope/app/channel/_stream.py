@@ -26,6 +26,18 @@ _TERMINAL_EVENTS = frozenset(
         EventType.REQUIRE_EXTERNAL_EXECUTION,
     },
 )
+_RESTART_SESSION_EVENT_NAME = "restart_session"
+
+
+def _is_terminal_event(evt: dict) -> bool:
+    """Return whether a session event should end one reply delivery stream."""
+    event_type = evt.get("type", "")
+    if event_type in _TERMINAL_EVENTS:
+        return True
+    return (
+        event_type == EventType.CUSTOM
+        and evt.get("name") == _RESTART_SESSION_EVENT_NAME
+    )
 
 
 async def open_reply_stream(
@@ -96,7 +108,7 @@ async def _read(
         ):
             seen.add(str(entry_id))
             yield evt
-            if evt.get("type", "") in _TERMINAL_EVENTS:
+            if _is_terminal_event(evt):
                 return
         while True:
             evt = await queue.get()
@@ -106,7 +118,7 @@ async def _read(
                     continue
                 seen.add(str(eid))
             yield evt
-            if evt.get("type", "") in _TERMINAL_EVENTS:
+            if _is_terminal_event(evt):
                 return
     finally:
         feeder_task.cancel()

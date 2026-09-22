@@ -629,7 +629,15 @@ class FeishuChannel(ChannelBase):
         parsed = _parse_action(action)
         if parsed is None:
             return _build_toast(False)
-        tool_call_id, chat_id, approved, agent_id, session_id = parsed
+        (
+            tool_call_id,
+            chat_id,
+            approved,
+            agent_id,
+            session_id,
+            tool_input_override,
+            decision_label,
+        ) = parsed
         operator = getattr(data.event, "operator", None)
         user_id = getattr(operator, "open_id", "") or ""
         if self._emit:
@@ -643,13 +651,15 @@ class FeishuChannel(ChannelBase):
                         session_id=session_id,
                         tool_call_id=tool_call_id,
                         approved=approved,
+                        tool_input_override=tool_input_override,
+                        decision_label=decision_label,
                     ),
                 ),
                 loop,
             )
         # Update the clicked card in place via the callback response —
         # reliable even while the approved run floods the card API.
-        return _build_action_response(approved)
+        return _build_action_response(approved, decision_label)
 
     # -- Outbound (gateway → platform) --
 
@@ -865,7 +875,7 @@ class FeishuChannel(ChannelBase):
                     tool.id,
                     event.chat_id,
                     tool.name,
-                    str(tool.input)[:800],
+                    str(tool.input),
                     event.metadata.get("agent_id", ""),
                     event.metadata.get("session_id", ""),
                 ),
