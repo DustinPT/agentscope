@@ -210,6 +210,7 @@
                 "title": "Workspace",
                 "description": "View the MCP servers, skills, and files available in this session workspace.",
                 "skillTab": "Skill",
+                "permissionTab": "Sandbox Access",
                 "fileTab": "Files",
                 "mcp": {
                         "description": "MCP servers currently available in the workspace.",
@@ -226,6 +227,65 @@
                         "description": "Skills currently available in the workspace.",
                         "searchPlaceholder": "Search skills in the workspace",
                         "empty": "No skills found"
+                },
+                "permission": {
+                        "description": "Manage sandbox permission rules associated with this workspace.",
+                        "add": "Add Rule",
+                        "searchPlaceholder": "Search pattern",
+                        "deleteTitle": "Delete this permission rule?",
+                        "scopes": {
+                                "workspace": "Workspace",
+                                "agent": "Agent",
+                                "user": "User"
+                        },
+                        "scopeDescriptions": {
+                                "workspace": "Only affects this workspace and future rebuilds.",
+                                "agent": "Affects future workspaces attached to the current agent.",
+                                "user": "Affects all future agents and workspaces for the current user."
+                        },
+                        "resourceTypes": {
+                                "domain": "Domain",
+                                "path": "Path"
+                        },
+                        "operations": {
+                                "connect": "Connect",
+                                "read": "Read",
+                                "write": "Write"
+                        },
+                        "operationModes": {
+                                "read_only": "Read Only",
+                                "read_write": "Read + Write"
+                        },
+                        "fields": {
+                                "scope": "Scope",
+                                "resourceType": "Resource Type",
+                                "resourceTypeHint": "Domains only allow connect. Paths allow read-only or read/write.",
+                                "pattern": "Target Pattern",
+                                "domainPlaceholder": "For example api.openai.com or *.example.com",
+                                "pathPlaceholder": "For example /Users/wengjing/project",
+                                "domainHint": "Enter a concrete or wildcard domain without protocol or path.",
+                                "pathHint": "Enter a concrete directory or file path. Do not append /** to directories.",
+                                "operations": "Allowed Operations",
+                                "operationsHint": "Path rules can be read-only or read/write. Domain rules are always connect."
+                        },
+                        "dialog": {
+                                "createTitle": "Add Permission Rule",
+                                "createDescription": "Create a persisted sandbox permission rule for the current scope.",
+                                "editTitle": "Edit Permission Rule",
+                                "editDescription": "Update the sandbox permission rule for the current scope.",
+                                "scopeHint": "The active tab decides where this rule is saved."
+                        },
+                        "empty": {
+                                "title": "No permission rules yet",
+                                "description": "Add a rule to have future workspace rebuilds or new sessions reuse these permissions.",
+                                "searchTitle": "No matching rules",
+                                "searchDescription": "Try a different keyword."
+                        },
+                        "messages": {
+                                "createSuccess": "Permission rule saved",
+                                "updateSuccess": "Permission rule updated",
+                                "deleteSuccess": "Permission rule deleted"
+                        }
                 },
                 "file": {
                         "description": "Browse and download files and directories from the current workspace root.",

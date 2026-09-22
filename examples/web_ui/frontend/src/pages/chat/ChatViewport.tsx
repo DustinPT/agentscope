@@ -175,6 +175,11 @@ export function ChatViewport({
                 reconnectMcp,
 		skills,
 		skillsLoading,
+                sandboxPermissionRecords,
+                sandboxPermissionsLoading,
+                createSandboxPermission,
+                updateSandboxPermission,
+                deleteSandboxPermission,
                 listWorkspaceFiles,
                 buildWorkspaceFileDownloadUrl,
                 buildWorkspaceFilePreviewUrl,
@@ -597,6 +602,11 @@ export function ChatViewport({
                                                         reconnectMcp={reconnectMcp}
 						skills={skills}
 						skillsLoading={skillsLoading}
+                                                sandboxPermissionRecords={sandboxPermissionRecords}
+                                                sandboxPermissionsLoading={sandboxPermissionsLoading}
+                                                createSandboxPermission={createSandboxPermission}
+                                                updateSandboxPermission={updateSandboxPermission}
+                                                deleteSandboxPermission={deleteSandboxPermission}
                                                 listWorkspaceFiles={listWorkspaceFiles}
                                                 buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
                                                 buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}

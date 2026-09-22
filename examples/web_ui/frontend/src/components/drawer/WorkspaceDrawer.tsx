@@ -1,8 +1,17 @@
 import { Eye, Search } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
-import type { MCPClientStatus, Skill, WorkspaceFileEntry } from '@/api';
+import type {
+        CreateSandboxPermissionRequest,
+        DeleteSandboxPermissionRequest,
+        MCPClientStatus,
+        Skill,
+        UpdateSandboxPermissionRequest,
+        WorkspaceFileEntry,
+        WorkspaceSandboxPermissionsResponse,
+} from '@/api';
 import { ProjectDirectoryTab } from '@/components/drawer/ProjectDirectoryTab';
+import { SandboxPermissionTab } from '@/components/drawer/SandboxPermissionTab';
 import { Button } from '@/components/ui/button';
 import {
         Dialog,
@@ -35,6 +44,11 @@ interface WorkspaceDrawerProps {
         reconnectMcp?: (name: string) => Promise<unknown>;
 	skills: Skill[];
 	skillsLoading?: boolean;
+        sandboxPermissionRecords: WorkspaceSandboxPermissionsResponse;
+        sandboxPermissionsLoading?: boolean;
+        createSandboxPermission: (body: CreateSandboxPermissionRequest) => Promise<unknown>;
+        updateSandboxPermission: (body: UpdateSandboxPermissionRequest) => Promise<unknown>;
+        deleteSandboxPermission: (body: DeleteSandboxPermissionRequest) => Promise<unknown>;
         listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
         buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
         buildWorkspaceFilePreviewUrl: (path: string) => string | null;
@@ -50,6 +64,11 @@ export function WorkspaceDrawer({
         reconnectMcp,
 	skills,
 	skillsLoading = false,
+        sandboxPermissionRecords,
+        sandboxPermissionsLoading = false,
+        createSandboxPermission,
+        updateSandboxPermission,
+        deleteSandboxPermission,
         listWorkspaceFiles,
         buildWorkspaceFileDownloadUrl,
         buildWorkspaceFilePreviewUrl,
@@ -80,6 +99,9 @@ export function WorkspaceDrawer({
 						<TabsList className={'w-full'}>
 							<TabsTrigger value={'mcp'}>MCP</TabsTrigger>
                                                         <TabsTrigger value={'skill'}>{t('workspace-drawer.skillTab')}</TabsTrigger>
+                                                        <TabsTrigger value={'permission'}>
+                                                                {t('workspace-drawer.permissionTab')}
+                                                        </TabsTrigger>
                                                         <TabsTrigger value={'file'}>
                                                                 {t('workspace-drawer.fileTab')}
                                                         </TabsTrigger>
@@ -221,6 +243,15 @@ export function WorkspaceDrawer({
 								)}
 							</div>
 						</TabsContent>
+                                                <TabsContent value={'permission'} asChild>
+                                                        <SandboxPermissionTab
+                                                                records={sandboxPermissionRecords}
+                                                                loading={sandboxPermissionsLoading}
+                                                                onCreate={createSandboxPermission}
+                                                                onUpdate={updateSandboxPermission}
+                                                                onDelete={deleteSandboxPermission}
+                                                        />
+                                                </TabsContent>
                                                 <TabsContent value={'file'} asChild>
                                                         <ProjectDirectoryTab
                                                                 listWorkspaceFiles={listWorkspaceFiles}

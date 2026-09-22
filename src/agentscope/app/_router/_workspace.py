@@ -24,7 +24,18 @@ from ..deps import (
     get_workspace_manager,
 )
 from ..workspace_manager import WorkspaceManagerBase
-from ..storage import AgentRecord, StorageBase
+from ..storage import (
+    AgentRecord,
+    SandboxGrantResourceType,
+    SandboxGrantScope,
+    SandboxOperation,
+    SandboxPermissionGrant,
+    SandboxPermissionRecord,
+    StorageBase,
+    merge_sandbox_grants,
+    normalize_sandbox_grant,
+    sandbox_grant_identity,
+)
 from ...mcp import MCPClient
 from ...skill import Skill
 from ...tool import DirEntry, LocalBackend
@@ -106,6 +117,60 @@ class WorkspaceFileEntry(BaseModel):
     mtime: float | None = None
 
 
+class SandboxGrantPayload(BaseModel):
+    """Client payload that identifies one sandbox permission grant."""
+
+    resource_type: SandboxGrantResourceType = Field(
+        description="Sandbox resource type.",
+    )
+    pattern: str = Field(
+        description="Domain or path pattern to authorize.",
+        min_length=1,
+    )
+    operations: list[SandboxOperation | str] = Field(
+        default_factory=list,
+        description="Operations allowed for the resource pattern.",
+    )
+
+
+class CreateSandboxPermissionRequest(SandboxGrantPayload):
+    """Request body for creating one sandbox permission grant."""
+
+    scope: SandboxGrantScope = Field(
+        description="Storage scope for the new grant.",
+    )
+
+
+class UpdateSandboxPermissionRequest(BaseModel):
+    """Request body for updating one sandbox permission grant."""
+
+    scope: SandboxGrantScope = Field(
+        description="Storage scope for the edited grant.",
+    )
+    original: SandboxGrantPayload = Field(
+        description="Original normalized grant identity to replace.",
+    )
+    updated: SandboxGrantPayload = Field(
+        description="New grant content after editing.",
+    )
+
+
+class DeleteSandboxPermissionRequest(SandboxGrantPayload):
+    """Request body for deleting one sandbox permission grant."""
+
+    scope: SandboxGrantScope = Field(
+        description="Storage scope for the deleted grant.",
+    )
+
+
+class WorkspaceSandboxPermissionsResponse(BaseModel):
+    """All sandbox permission records relevant to one session workspace."""
+
+    workspace: SandboxPermissionRecord
+    agent: SandboxPermissionRecord
+    user: SandboxPermissionRecord
+
+
 async def get_workspace_download_user_id(
     x_user_id: str | None = Header(default=None, alias="X-User-ID"),
     user_id: str | None = Query(default=None),
@@ -159,6 +224,184 @@ async def _resolve_agent_workspace(
         agent_skill_assets=resolved_skills,
     )
     return agent_record, workspace
+
+
+async def _resolve_workspace_id_for_session(
+    *,
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+    storage: StorageBase,
+) -> str:
+    """Resolve the workspace id for one owned session."""
+    session_record = await storage.get_session_meta(user_id, session_id)
+    if session_record is None or session_record.agent_id != agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id!r} not found.",
+        )
+    return session_record.config.workspace_id
+
+
+def _empty_sandbox_permission_record(
+    *,
+    user_id: str,
+    scope: SandboxGrantScope,
+    agent_id: str,
+    workspace_id: str,
+) -> SandboxPermissionRecord:
+    """Build an empty sandbox permission record for one scope."""
+    if scope == SandboxGrantScope.USER:
+        return SandboxPermissionRecord(
+            user_id=user_id,
+            scope=scope,
+        )
+    if scope == SandboxGrantScope.AGENT:
+        return SandboxPermissionRecord(
+            user_id=user_id,
+            scope=scope,
+            agent_id=agent_id,
+        )
+    return SandboxPermissionRecord(
+        user_id=user_id,
+        scope=scope,
+        workspace_id=workspace_id,
+    )
+
+
+async def _load_sandbox_permission_record(
+    *,
+    user_id: str,
+    scope: SandboxGrantScope,
+    agent_id: str,
+    workspace_id: str,
+    storage: StorageBase,
+) -> SandboxPermissionRecord:
+    """Load one sandbox permission record for a specific scope."""
+    if scope == SandboxGrantScope.USER:
+        record = await storage.get_sandbox_permissions_for_user(user_id)
+    elif scope == SandboxGrantScope.AGENT:
+        record = await storage.get_sandbox_permissions_for_agent(user_id, agent_id)
+    else:
+        record = await storage.get_sandbox_permissions_for_workspace(
+            user_id,
+            workspace_id,
+        )
+    return record or _empty_sandbox_permission_record(
+        user_id=user_id,
+        scope=scope,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+    )
+
+
+async def _load_workspace_sandbox_permissions(
+    *,
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+    storage: StorageBase,
+) -> WorkspaceSandboxPermissionsResponse:
+    """Load sandbox permission records for workspace, agent, and user scopes."""
+    workspace_id = await _resolve_workspace_id_for_session(
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        storage=storage,
+    )
+    workspace_record = await _load_sandbox_permission_record(
+        user_id=user_id,
+        scope=SandboxGrantScope.WORKSPACE,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+        storage=storage,
+    )
+    agent_record = await _load_sandbox_permission_record(
+        user_id=user_id,
+        scope=SandboxGrantScope.AGENT,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+        storage=storage,
+    )
+    user_record = await _load_sandbox_permission_record(
+        user_id=user_id,
+        scope=SandboxGrantScope.USER,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+        storage=storage,
+    )
+    return WorkspaceSandboxPermissionsResponse(
+        workspace=workspace_record,
+        agent=agent_record,
+        user=user_record,
+    )
+
+
+def _normalize_sandbox_permission_payload(
+    *,
+    payload: SandboxGrantPayload,
+    scope: SandboxGrantScope,
+    created_by: str | None,
+) -> SandboxPermissionGrant:
+    """Normalize one sandbox permission payload into storage shape."""
+    try:
+        return normalize_sandbox_grant(
+            resource_type=payload.resource_type,
+            scope=scope,
+            pattern=payload.pattern,
+            operations=payload.operations,
+            created_by=created_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+def _replace_sandbox_grant(
+    *,
+    record: SandboxPermissionRecord,
+    original: SandboxPermissionGrant,
+    updated: SandboxPermissionGrant,
+) -> SandboxPermissionRecord:
+    """Replace one grant in-place by grant identity."""
+    original_identity = sandbox_grant_identity(original)
+    next_grants: list[SandboxPermissionGrant] = []
+    matched = False
+    for grant in record.grants:
+        if sandbox_grant_identity(grant) == original_identity:
+            matched = True
+            continue
+        next_grants.append(grant)
+    if not matched:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sandbox permission rule not found.",
+        )
+    record.grants = merge_sandbox_grants(next_grants, [updated])
+    return record
+
+
+def _delete_sandbox_grant(
+    *,
+    record: SandboxPermissionRecord,
+    target: SandboxPermissionGrant,
+) -> SandboxPermissionRecord:
+    """Delete one grant from a record by identity."""
+    target_identity = sandbox_grant_identity(target)
+    next_grants = [
+        grant
+        for grant in record.grants
+        if sandbox_grant_identity(grant) != target_identity
+    ]
+    if len(next_grants) == len(record.grants):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sandbox permission rule not found.",
+        )
+    record.grants = next_grants
+    return record
 
 
 def _workspace_root_path(workspace: WorkspaceBase) -> str:
@@ -566,6 +809,145 @@ async def list_skills(
         asset_store,
     )
     return await workspace.list_skills()
+
+
+# ---------------------------------------------------------------------------
+# Sandbox permission endpoints
+# ---------------------------------------------------------------------------
+
+
+@workspace_router.get("/sandbox-permissions")
+async def list_sandbox_permissions(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> WorkspaceSandboxPermissionsResponse:
+    """Return sandbox permission records for all scopes relevant to one session."""
+    return await _load_workspace_sandbox_permissions(
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        storage=storage,
+    )
+
+
+@workspace_router.post("/sandbox-permissions")
+async def create_sandbox_permission(
+    body: CreateSandboxPermissionRequest,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> SandboxPermissionRecord:
+    """Create one sandbox permission rule inside the selected scope."""
+    workspace_id = await _resolve_workspace_id_for_session(
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        storage=storage,
+    )
+    record = await _load_sandbox_permission_record(
+        user_id=user_id,
+        scope=body.scope,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+        storage=storage,
+    )
+    grant = _normalize_sandbox_permission_payload(
+        payload=SandboxGrantPayload(
+            resource_type=body.resource_type,
+            pattern=body.pattern,
+            operations=body.operations,
+        ),
+        scope=body.scope,
+        created_by=user_id,
+    )
+    record.grants = merge_sandbox_grants(record.grants, [grant])
+    return await storage.upsert_sandbox_permissions(record)
+
+
+@workspace_router.patch("/sandbox-permissions")
+async def update_sandbox_permission(
+    body: UpdateSandboxPermissionRequest,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> SandboxPermissionRecord:
+    """Update one sandbox permission rule inside the selected scope."""
+    workspace_id = await _resolve_workspace_id_for_session(
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        storage=storage,
+    )
+    record = await _load_sandbox_permission_record(
+        user_id=user_id,
+        scope=body.scope,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+        storage=storage,
+    )
+    original = _normalize_sandbox_permission_payload(
+        payload=body.original,
+        scope=body.scope,
+        created_by=None,
+    )
+
+    existing_created_by = user_id
+    original_identity = sandbox_grant_identity(original)
+    for grant in record.grants:
+        if sandbox_grant_identity(grant) == original_identity:
+            existing_created_by = grant.created_by or user_id
+            break
+
+    updated = _normalize_sandbox_permission_payload(
+        payload=body.updated,
+        scope=body.scope,
+        created_by=existing_created_by,
+    )
+    _replace_sandbox_grant(
+        record=record,
+        original=original,
+        updated=updated,
+    )
+    return await storage.upsert_sandbox_permissions(record)
+
+
+@workspace_router.post("/sandbox-permissions/delete")
+async def delete_sandbox_permission(
+    body: DeleteSandboxPermissionRequest,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> SandboxPermissionRecord:
+    """Delete one sandbox permission rule from the selected scope."""
+    workspace_id = await _resolve_workspace_id_for_session(
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        storage=storage,
+    )
+    record = await _load_sandbox_permission_record(
+        user_id=user_id,
+        scope=body.scope,
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+        storage=storage,
+    )
+    target = _normalize_sandbox_permission_payload(
+        payload=SandboxGrantPayload(
+            resource_type=body.resource_type,
+            pattern=body.pattern,
+            operations=body.operations,
+        ),
+        scope=body.scope,
+        created_by=None,
+    )
+    _delete_sandbox_grant(record=record, target=target)
+    return await storage.upsert_sandbox_permissions(record)
 
 
 # ---------------------------------------------------------------------------

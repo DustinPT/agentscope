@@ -115,7 +115,7 @@
 		"toConfirm": "确认",
                 "yesWithRule": "是，且该次对话中都允许 {{toolName}} 执行 {{ruleContent}}",
                 "sandboxAccess": {
-                        "scope": "权限保存范围",
+                        "scope": "权限作用域",
                         "operations": "允许的操作",
                         "scopeOptions": {
                                 "workspace": "当前工作区",
@@ -210,6 +210,7 @@
                 "title": "工作区",
                 "description": "查看当前会话工作区中的 MCP、技能与文件。",
                 "skillTab": "技能",
+                "permissionTab": "沙箱授权",
                 "fileTab": "文件",
                 "mcp": {
                         "description": "当前工作区中可用的 MCP 服务。",
@@ -226,6 +227,65 @@
                         "description": "当前工作区中可用的技能。",
                         "searchPlaceholder": "搜索工作区中的技能",
                         "empty": "暂无技能"
+                },
+                "permission": {
+                        "description": "管理当前工作区关联的沙箱授权规则。",
+                        "add": "新增规则",
+                        "searchPlaceholder": "搜索匹配模式",
+                        "deleteTitle": "删除这条授权规则？",
+                        "scopes": {
+                                "workspace": "当前工作区",
+                                "agent": "当前 Agent",
+                                "user": "当前用户"
+                        },
+                        "scopeDescriptions": {
+                                "workspace": "仅影响当前 workspace 以及后续重建结果。",
+                                "agent": "影响当前 Agent 后续关联的 workspace。",
+                                "user": "影响当前用户后续所有 Agent / workspace。"
+                        },
+                        "resourceTypes": {
+                                "domain": "域名",
+                                "path": "路径"
+                        },
+                        "operations": {
+                                "connect": "连接",
+                                "read": "读取",
+                                "write": "写入"
+                        },
+                        "operationModes": {
+                                "read_only": "只读",
+                                "read_write": "读写"
+                        },
+                        "fields": {
+                                "scope": "作用域",
+                                "resourceType": "资源类型",
+                                "resourceTypeHint": "域名只允许连接，路径允许只读或读写。",
+                                "pattern": "匹配模式",
+                                "domainPlaceholder": "例如 api.openai.com 或 *.example.com",
+                                "pathPlaceholder": "例如 /Users/wengjing/project",
+                                "domainHint": "填写具体域名或通配域名，不需要包含协议头和路径。",
+                                "pathHint": "填写具体目录或文件路径；目录路径不要追加 /**。",
+                                "operations": "允许操作",
+                                "operationsHint": "路径规则可选只读或读写；域名规则固定为连接。"
+                        },
+                        "dialog": {
+                                "createTitle": "新增授权规则",
+                                "createDescription": "为当前作用域添加一条持久化沙箱授权规则。",
+                                "editTitle": "编辑授权规则",
+                                "editDescription": "修改当前作用域下的授权规则内容。",
+                                "scopeHint": "作用域由当前标签页决定。"
+                        },
+                        "empty": {
+                                "title": "暂无授权规则",
+                                "description": "新增一条规则后，后续 workspace 重建或新会话会自动使用这些授权。",
+                                "searchTitle": "没有匹配的规则",
+                                "searchDescription": "换个关键词试试。"
+                        },
+                        "messages": {
+                                "createSuccess": "授权规则已保存",
+                                "updateSuccess": "授权规则已更新",
+                                "deleteSuccess": "授权规则已删除"
+                        }
                 },
                 "file": {
                         "description": "查看当前工作区根目录中的文件和目录，并支持直接下载。",

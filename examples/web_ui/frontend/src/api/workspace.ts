@@ -1,5 +1,14 @@
 import { client, getBaseUrl, getUserId } from './client';
-import type { MCPClientStatus, Skill, WorkspaceFileEntry } from './types';
+import type {
+        CreateSandboxPermissionRequest,
+        DeleteSandboxPermissionRequest,
+        MCPClientStatus,
+        SandboxPermissionRecord,
+        Skill,
+        UpdateSandboxPermissionRequest,
+        WorkspaceFileEntry,
+        WorkspaceSandboxPermissionsResponse,
+} from './types';
 
 export const workspaceApi = {
 	mcp: {
@@ -19,6 +28,29 @@ export const workspaceApi = {
 		list: (agentId: string, sessionId: string) =>
 			client.get<Skill[]>('/workspace/skill', { agent_id: agentId, session_id: sessionId }),
 	},
+
+        sandboxPermissions: {
+                list: (agentId: string, sessionId: string) =>
+                        client.get<WorkspaceSandboxPermissionsResponse>('/workspace/sandbox-permissions', {
+                                agent_id: agentId,
+                                session_id: sessionId,
+                        }),
+                create: (agentId: string, sessionId: string, body: CreateSandboxPermissionRequest) =>
+                        client.post<SandboxPermissionRecord>('/workspace/sandbox-permissions', body, {
+                                agent_id: agentId,
+                                session_id: sessionId,
+                        }),
+                update: (agentId: string, sessionId: string, body: UpdateSandboxPermissionRequest) =>
+                        client.patch<SandboxPermissionRecord>('/workspace/sandbox-permissions', body, {
+                                agent_id: agentId,
+                                session_id: sessionId,
+                        }),
+                delete: (agentId: string, sessionId: string, body: DeleteSandboxPermissionRequest) =>
+                        client.post<SandboxPermissionRecord>('/workspace/sandbox-permissions/delete', body, {
+                                agent_id: agentId,
+                                session_id: sessionId,
+                        }),
+        },
 
         files: {
                 list: (agentId: string, sessionId: string, path = '') =>

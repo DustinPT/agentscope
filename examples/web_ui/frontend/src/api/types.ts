@@ -533,6 +533,54 @@ export interface WorkspaceFileEntry {
         mtime?: number | null;
 }
 
+export type SandboxGrantScope = 'workspace' | 'agent' | 'user';
+
+export type SandboxGrantResourceType = 'domain' | 'path';
+
+export type SandboxOperation = 'connect' | 'read' | 'write';
+
+export interface SandboxPermissionGrant {
+        resource_type: SandboxGrantResourceType;
+        scope: SandboxGrantScope;
+        pattern: string;
+        operations: SandboxOperation[];
+        created_by?: string | null;
+}
+
+export interface SandboxPermissionRecord extends RecordBase {
+        user_id: string;
+        scope: SandboxGrantScope;
+        agent_id?: string | null;
+        workspace_id?: string | null;
+        grants: SandboxPermissionGrant[];
+}
+
+export interface SandboxPermissionGrantInput {
+        resource_type: SandboxGrantResourceType;
+        pattern: string;
+        operations: SandboxOperation[];
+}
+
+export interface WorkspaceSandboxPermissionsResponse {
+        workspace: SandboxPermissionRecord;
+        agent: SandboxPermissionRecord;
+        user: SandboxPermissionRecord;
+}
+
+export interface CreateSandboxPermissionRequest extends SandboxPermissionGrantInput {
+        scope: SandboxGrantScope;
+}
+
+export interface UpdateSandboxPermissionRequest {
+        scope: SandboxGrantScope;
+        original: SandboxPermissionGrantInput;
+        updated: SandboxPermissionGrantInput;
+}
+
+export interface DeleteSandboxPermissionRequest extends SandboxPermissionGrantInput {
+        scope: SandboxGrantScope;
+}
+
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 
 export type PermissionMode =
