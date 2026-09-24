@@ -8,10 +8,11 @@ from typing import Any
 
 from pydantic import Field
 
+from ...message import TextBlock, ToolResultState
 from ...permission import PermissionBehavior, PermissionContext, PermissionDecision
-from ...tool import ParamsBase
+from ...tool import ParamsBase, ToolBase, ToolChunk
 from .._service._skill_library import SkillLibraryService
-from ._session_tool_base import _SessionToolBase
+from ...workspace import WorkspaceBase
 
 
 class _DownloadSkillParams(ParamsBase):
@@ -23,7 +24,7 @@ class _DownloadSkillParams(ParamsBase):
     )
 
 
-class DownloadSkill(_SessionToolBase):
+class DownloadSkill(ToolBase):
     """Download a user-owned skill to the current workspace skills directory."""
 
     name = "DownloadSkill"
@@ -34,15 +35,23 @@ class DownloadSkill(_SessionToolBase):
         "local path to the downloaded SKILL.md file."
     )
     input_schema: dict[str, Any] = _DownloadSkillParams.model_json_schema()
+    is_concurrency_safe: bool = False
     is_read_only = False
+    is_state_injected: bool = False
+    is_external_tool: bool = False
+    is_mcp: bool = False
+    mcp_name: str | None = None
 
     def __init__(
         self,
         *,
+        workspace: WorkspaceBase,
+        user_id: str,
         skill_library_service: SkillLibraryService,
-        **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
+        super().__init__()
+        self._workspace = workspace
+        self._user_id = user_id
         self._skill_library_service = skill_library_service
 
     async def check_permissions(
@@ -54,6 +63,27 @@ class DownloadSkill(_SessionToolBase):
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             message="Downloading owned skills is allowed.",
+        )
+
+    def _result(
+        self,
+        payload: dict[str, object],
+        *,
+        state: ToolResultState = ToolResultState.SUCCESS,
+    ) -> ToolChunk:
+        """Build a compact JSON result for the agent."""
+        return ToolChunk(
+            content=[
+                TextBlock(
+                    text=json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                ),
+            ],
+            state=state,
+            metadata=payload,
         )
 
     async def call(

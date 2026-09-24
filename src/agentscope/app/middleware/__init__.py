@@ -3,6 +3,7 @@
 
 from ._inbox_middleware import InboxMiddleware
 from ._protocol import ProtocolMiddlewareBase, AGUIProtocolMiddleware
+from ._skill_library_middleware import SkillLibraryMiddleware
 from ._state_change_middleware import StateChangeMiddleware
 from ._subagent_result_middleware import SubAgentMiddleware
 from ._tool_offload_middleware import ToolOffloadMiddleware
@@ -12,6 +13,7 @@ __all__ = [
     "InboxMiddleware",
     "ProtocolMiddlewareBase",
     "AGUIProtocolMiddleware",
+    "SkillLibraryMiddleware",
     "StateChangeMiddleware",
     "SubAgentMiddleware",
     "ToolOffloadMiddleware",
