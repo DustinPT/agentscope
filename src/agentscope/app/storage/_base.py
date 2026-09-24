@@ -11,6 +11,7 @@ from ._model import (
     CredentialRecord,
     ScheduleRecord,
     SandboxPermissionRecord,
+    SkillLibraryRecord,
     SessionConfig,
     SessionRecord,
     SessionSource,
@@ -709,6 +710,60 @@ class StorageBase(ABC):
             messages (`list[Msg]`): Full replacement message list in
                 chronological order.
         """
+
+    # ------------------------------------------------------------------
+    # Skill library persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_skill(
+        self,
+        user_id: str,
+        record: SkillLibraryRecord,
+    ) -> SkillLibraryRecord:
+        """Create or update one skill library record."""
+
+    @abstractmethod
+    async def get_skill(
+        self,
+        skill_id: str,
+    ) -> SkillLibraryRecord | None:
+        """Fetch one skill library record by skill id."""
+
+    @abstractmethod
+    async def get_skill_by_name(
+        self,
+        user_id: str,
+        skill_name: str,
+    ) -> SkillLibraryRecord | None:
+        """Fetch one skill library record by user and skill name."""
+
+    @abstractmethod
+    async def list_skills(
+        self,
+        user_id: str,
+        keyword: str | None,
+        limit: int,
+        offset: int = 0,
+    ) -> tuple[list[SkillLibraryRecord], int]:
+        """List skill library records with keyword filtering and pagination."""
+
+    @abstractmethod
+    async def search_skills(
+        self,
+        user_id: str,
+        query: str,
+        limit: int,
+    ) -> list[SkillLibraryRecord]:
+        """Return the top-N most relevant skills for tool usage."""
+
+    @abstractmethod
+    async def delete_skill(
+        self,
+        user_id: str,
+        skill_name: str,
+    ) -> bool:
+        """Delete one skill library record by user and skill name."""
 
     # ------------------------------------------------------------------
     # Team persistence

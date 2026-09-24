@@ -2,6 +2,7 @@
 # pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
 
+import asyncio
 from datetime import datetime
 from typing import Any, TYPE_CHECKING, Self
 
@@ -15,6 +16,7 @@ from ._model import (
     ScheduleRecord,
     SandboxGrantScope,
     SandboxPermissionRecord,
+    SkillLibraryRecord,
     SubAgentTaskRecord,
     SessionConfig,
     SessionRecord,
@@ -26,14 +28,17 @@ from ._model import (
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
+from ...embedding import EmbeddingModelBase
 from ...message import Msg
 from ...state import AgentState
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
+    from redisvl.index import AsyncSearchIndex
 else:
     ConnectionPool = Any
     Redis = Any
+    AsyncSearchIndex = Any
 
 
 class RedisStorage(StorageBase):
@@ -111,6 +116,9 @@ class RedisStorage(StorageBase):
 
         team: str = "agentscope:user:{user_id}:team:{team_id}"
         team_index: str = "agentscope:user:{user_id}:teams"
+        skill_library: str = "agentscope:skill_library:{skill_id}"
+        skill_library_index_name: str = "agentscope_skill_library"
+        skill_library_index_prefix: str = "agentscope:skill_library"
 
     def __init__(
         self,
@@ -121,6 +129,7 @@ class RedisStorage(StorageBase):
         connection_pool: ConnectionPool | None = None,
         key_ttl: int | None = None,
         key_config: "RedisStorage.KeyConfig | None" = None,
+        skill_embedding_model: EmbeddingModelBase[Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Store connection parameters; the actual pool is created in
@@ -158,10 +167,14 @@ class RedisStorage(StorageBase):
         self._kwargs = kwargs
         self.key_ttl = key_ttl
         self.key_config = key_config or RedisStorage.KeyConfig()
+        self._skill_embedding_model = skill_embedding_model
 
         # Populated in __aenter__; None until the context is entered.
         self._client: Redis | None = None
         self._owned_pool: ConnectionPool | None = None
+        self._skill_index: AsyncSearchIndex | None = None
+        self._skill_index_ready = False
+        self._skill_index_lock = asyncio.Lock()
 
     def _key(self, template: str, **kwargs: str) -> str:
         """Format a key template with the given keyword arguments."""
@@ -229,6 +242,8 @@ class RedisStorage(StorageBase):
 
         Externally supplied pools are left open — the caller owns them.
         """
+        self._skill_index = None
+        self._skill_index_ready = False
         if self._owned_pool is not None:
             await self._owned_pool.aclose()
             self._owned_pool = None
@@ -246,6 +261,234 @@ class RedisStorage(StorageBase):
     def get_client(self) -> Redis:
         """Get the underlying Redis client instance."""
         return self._client
+
+    def _skill_key(self, skill_id: str) -> str:
+        """Return the Redis key for one skill record."""
+        return self._key(
+            self.key_config.skill_library,
+            skill_id=skill_id,
+        )
+
+    def _skill_key_prefix(self) -> str:
+        """Return the Redis key prefix used by the skill JSON index."""
+        return self._skill_key("")
+
+    async def _ensure_skill_index(self) -> None:
+        """Create the RedisVL JSON index for skill records lazily."""
+        if self._skill_index_ready:
+            return
+
+        async with self._skill_index_lock:
+            if self._skill_index_ready:
+                return
+
+            try:
+                from redisvl.index import AsyncSearchIndex
+            except ImportError as exc:
+                raise ImportError(
+                    "The 'redisvl' package is required for skill library search.",
+                ) from exc
+            if self._skill_embedding_model is None:
+                raise RuntimeError(
+                    "RedisStorage requires skill_embedding_model for skill library search.",
+                )
+
+            schema = {
+                "index": {
+                    "name": self.key_config.skill_library_index_name,
+                    "prefix": self.key_config.skill_library_index_prefix,
+                    "storage_type": "json",
+                    "language": "chinese",
+                },
+                "fields": [
+                    {
+                        "name": "id",
+                        "type": "tag",
+                        "path": "$.id",
+                        "attrs": {"case_sensitive": True},
+                    },
+                    {
+                        "name": "user_id",
+                        "type": "tag",
+                        "path": "$.user_id",
+                        "attrs": {"case_sensitive": True},
+                    },
+                    {
+                        "name": "name",
+                        "type": "tag",
+                        "path": "$.name",
+                        "attrs": {"case_sensitive": True},
+                    },
+                    {"name": "description", "type": "text", "path": "$.description"},
+                    {
+                        "name": "content_hash",
+                        "type": "tag",
+                        "path": "$.content_hash",
+                        "attrs": {"case_sensitive": True},
+                    },
+                    {
+                        "name": "created_at",
+                        "type": "text",
+                        "path": "$.created_at",
+                    },
+                    {
+                        "name": "updated_at",
+                        "type": "text",
+                        "path": "$.updated_at",
+                        "attrs": {"sortable": True},
+                    },
+                    {
+                        "name": "embedding",
+                        "type": "vector",
+                        "path": "$.embedding",
+                        "attrs": {
+                            "dims": (
+                                getattr(self._skill_embedding_model, "dimensions", None)
+                                or 1024
+                            ),
+                            "distance_metric": "cosine",
+                            "algorithm": "flat",
+                            "datatype": "float32",
+                        },
+                    },
+                ],
+            }
+            self._skill_index = AsyncSearchIndex.from_dict(
+                schema,
+                redis_client=self._client,
+                validate_on_load=True,
+            )
+            try:
+                await self._skill_index.create(overwrite=False)
+            except Exception as exc:  # pragma: no cover - backend-specific wording
+                message = str(exc).lower()
+                if "exists" not in message and "already" not in message:
+                    raise
+            self._skill_index_ready = True
+
+    async def _write_skill_json(self, record: SkillLibraryRecord) -> None:
+        """Persist one skill record as Redis JSON."""
+        try:
+            from redis.commands.json.path import Path
+        except ImportError as exc:
+            raise ImportError(
+                "The 'redis' package with JSON support is required for skill library storage.",
+            ) from exc
+        await self._client.json().set(
+            self._skill_key(record.id),
+            Path.root_path(),
+            record.model_dump(mode="json"),
+        )
+        await self._refresh_key_ttl(self._skill_key(record.id))
+
+    @staticmethod
+    def _parse_skill_record(raw: Any) -> SkillLibraryRecord | None:
+        """Parse one Redis JSON payload into a skill record."""
+        if raw is None:
+            return None
+        if isinstance(raw, list):
+            if not raw:
+                return None
+            raw = raw[0]
+        return SkillLibraryRecord.model_validate(raw)
+
+    async def _load_skill_records_by_ids(
+        self,
+        skill_ids: list[str],
+    ) -> list[SkillLibraryRecord]:
+        """Load skill records by ids while preserving input order."""
+        records: list[SkillLibraryRecord] = []
+        for skill_id in skill_ids:
+            record = await self.get_skill(skill_id)
+            if record is not None:
+                records.append(record)
+        return records
+
+    @staticmethod
+    async def _embed_skill_query(
+        embedding_model: EmbeddingModelBase[Any],
+        query: str,
+    ) -> list[float]:
+        """Embed one skill search query with the configured embedding model."""
+        response = await embedding_model([query], text_type="query")
+        if not response.embeddings:
+            raise RuntimeError("Embedding model returned no vectors.")
+        return [float(value) for value in response.embeddings[0]]
+
+    def _validate_skill_embedding(self, embedding: list[float]) -> None:
+        """Validate one embedding vector against the configured model size."""
+        expected_dimensions = getattr(
+            self._skill_embedding_model,
+            "dimensions",
+            None,
+        )
+        if (
+            expected_dimensions is not None
+            and len(embedding) != expected_dimensions
+        ):
+            raise ValueError(
+                "Skill embedding dimension mismatch: "
+                f"expected {expected_dimensions}, got {len(embedding)}.",
+            )
+
+    def _extract_skill_id_from_result(self, value: Any) -> str | None:
+        """Normalize a RedisVL result id into the persisted skill id."""
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        if not isinstance(value, str) or not value:
+            return None
+        key_prefix = self._skill_key_prefix()
+        if value.startswith(key_prefix):
+            return value[len(key_prefix) :]
+        return value
+
+    async def _run_skill_index_query(
+        self,
+        query_string: str,
+        *,
+        limit: int,
+        offset: int = 0,
+        sort_by_updated_at: bool = False,
+    ) -> tuple[list[str], int]:
+        """Run one raw RediSearch query against the skill index."""
+        from redis.commands.search.query import Query
+
+        redis_query = Query(query_string).paging(offset, limit).no_content()
+        if sort_by_updated_at:
+            redis_query = redis_query.sort_by("updated_at", asc=False)
+
+        result = await self._client.ft(
+            self.key_config.skill_library_index_name,
+        ).search(redis_query)
+        skill_ids = [
+            skill_id
+            for skill_id in (
+                self._extract_skill_id_from_result(doc.id)
+                for doc in getattr(result, "docs", [])
+            )
+            if skill_id is not None
+        ]
+        return skill_ids, int(getattr(result, "total", 0))
+
+    def _build_skill_list_query(
+        self,
+        *,
+        user_id: str,
+        keyword: str | None,
+    ) -> str:
+        """Build one RediSearch query string for skill list filtering."""
+        from redisvl.query.filter import Tag
+        from redisvl.utils.token_escaper import TokenEscaper
+
+        base_clause = str(Tag("user_id") == user_id)
+        normalized_keyword = (keyword or "").strip()
+        if not normalized_keyword:
+            return base_clause
+
+        tag_pattern = str(Tag("name") % f"*{normalized_keyword}*")
+        text_keyword = TokenEscaper().escape(normalized_keyword)
+        description_clause = f"@description:({text_keyword})"
+        return f"(({tag_pattern}) | ({description_clause})) {base_clause}"
 
     async def get_user(self, user_id: str) -> UserRecord | None:
         """Fetch the persisted settings record for one user."""
@@ -1608,6 +1851,144 @@ class RedisStorage(StorageBase):
             *[message.model_dump_json() for message in messages],
         )
         await self._refresh_key_ttl(key)
+
+    async def upsert_skill(
+        self,
+        user_id: str,
+        record: SkillLibraryRecord,
+    ) -> SkillLibraryRecord:
+        """Create or update one skill library record."""
+        existing = await self.get_skill(record.id)
+        if existing is not None:
+            persisted = existing.model_copy(deep=True)
+            persisted.user_id = user_id
+            persisted.name = record.name
+            persisted.description = record.description
+            persisted.archive_name = record.archive_name
+            persisted.dir = record.dir
+            persisted.content_hash = record.content_hash
+            persisted.skill_markdown = record.skill_markdown
+            persisted.file_manifest = record.file_manifest
+            persisted.embedding = record.embedding
+            persisted.updated_at = datetime.now()
+        else:
+            persisted = record.model_copy(deep=True)
+            persisted.user_id = user_id
+        self._validate_skill_embedding(persisted.embedding)
+        await self._ensure_skill_index()
+        await self._write_skill_json(persisted)
+        return persisted
+
+    async def get_skill(
+        self,
+        skill_id: str,
+    ) -> SkillLibraryRecord | None:
+        """Fetch one skill library record by skill id."""
+        raw = await self._client.json().get(self._skill_key(skill_id))
+        return self._parse_skill_record(raw)
+
+    async def get_skill_by_name(
+        self,
+        user_id: str,
+        skill_name: str,
+    ) -> SkillLibraryRecord | None:
+        """Fetch one skill library record by user and skill name."""
+        await self._ensure_skill_index()
+        from redisvl.query import FilterQuery
+        from redisvl.query.filter import Tag
+
+        filter_expression = (Tag("user_id") == user_id) & (Tag("name") == skill_name)
+        results = await self._skill_index.query(
+            FilterQuery(
+                filter_expression=filter_expression,
+                num_results=1,
+            ),
+        )
+        if not results:
+            return None
+        return self._parse_skill_record(results[0])
+
+    async def list_skills(
+        self,
+        user_id: str,
+        keyword: str | None,
+        limit: int,
+        offset: int = 0,
+    ) -> tuple[list[SkillLibraryRecord], int]:
+        """List skill library records with keyword filtering and pagination."""
+        await self._ensure_skill_index()
+        page_ids, total = await self._run_skill_index_query(
+            self._build_skill_list_query(user_id=user_id, keyword=keyword),
+            limit=limit,
+            offset=offset,
+            sort_by_updated_at=True,
+        )
+        return await self._load_skill_records_by_ids(page_ids), total
+
+    async def search_skills(
+        self,
+        user_id: str,
+        query: str,
+        limit: int,
+    ) -> list[SkillLibraryRecord]:
+        """Return the top-N most relevant skills for tool usage."""
+        await self._ensure_skill_index()
+        from redisvl.query import HybridQuery
+        from redisvl.query.filter import Tag
+
+        normalized_query = query.strip()
+        if not normalized_query:
+            return []
+
+        vector = await self._embed_skill_query(
+            self._skill_embedding_model,
+            normalized_query,
+        )
+        self._validate_skill_embedding(vector)
+        hybrid_query = HybridQuery(
+            text=normalized_query,
+            text_field_name="description",
+            vector=vector,
+            vector_field_name="embedding",
+            filter_expression=Tag("user_id") == user_id,
+            return_fields=["id"],
+            combination_method="LINEAR",
+            linear_alpha=0.6,
+            num_results=limit,
+        )
+        raw_results = await self._client.ft(
+            self.key_config.skill_library_index_name,
+        ).hybrid_search(
+            query=hybrid_query.query,
+            combine_method=hybrid_query.combination_method,
+            post_processing=(
+                hybrid_query.postprocessing_config
+                if hybrid_query.postprocessing_config.build_args()
+                else None
+            ),
+            params_substitution=hybrid_query.params,
+        )
+        skill_ids = [
+            skill_id
+            for skill_id in (
+                self._extract_skill_id_from_result(result.get("id"))
+                for result in getattr(raw_results, "results", [])
+            )
+            if skill_id is not None
+        ]
+        return await self._load_skill_records_by_ids(skill_ids)
+
+    async def delete_skill(
+        self,
+        user_id: str,
+        skill_name: str,
+    ) -> bool:
+        """Delete one skill library record by user and skill name."""
+        record = await self.get_skill_by_name(user_id, skill_name)
+        if record is None:
+            return False
+        deleted = await self._client.json().delete(self._skill_key(record.id))
+        return deleted > 0
 
     # ------------------------------------------------------------------
     # Team persistence

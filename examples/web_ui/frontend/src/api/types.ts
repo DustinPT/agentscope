@@ -524,6 +524,38 @@ export interface Skill {
 	content_hash: string;
 }
 
+export interface SkillLibraryFileRecord {
+        path: string;
+        size_bytes: number;
+        mime_type?: string | null;
+}
+
+export interface SkillLibraryRecord extends RecordBase {
+        user_id: string;
+        name: string;
+        description: string;
+        archive_name: string;
+        dir: string;
+        content_hash: string;
+        skill_markdown: string;
+        file_manifest: SkillLibraryFileRecord[];
+        embedding?: number[];
+}
+
+export interface SkillLibraryListResponse {
+        skills: SkillLibraryRecord[];
+        total: number;
+}
+
+export interface SkillLibrarySearchHit {
+        skill: SkillLibraryRecord;
+        score: number | null;
+}
+
+export interface SkillLibrarySearchResponse {
+        skills: SkillLibrarySearchHit[];
+}
+
 export interface WorkspaceFileEntry {
         name: string;
         path: string;

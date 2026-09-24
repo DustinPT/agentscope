@@ -749,6 +749,10 @@
                                 "modelDefaults": {
                                         "title": "Global Default Models",
                                         "description": "Manage default models for fixed task categories."
+                                },
+                                "skillLibrary": {
+                                        "title": "Skill Library",
+                                        "description": "Upload, search, inspect, and delete user-private skill packages."
                                 }
                         }
                 },
@@ -802,6 +806,49 @@
                                 "writing": {
                                         "title": "writing",
                                         "description": "Text, docs, prose"
+                                }
+                        }
+                },
+                "skillLibrary": {
+                        "title": "Skill Library",
+                        "description": "Upload ZIP skill packages and browse your own skill assets.",
+                        "upload": "Upload Skill Package",
+                        "uploading": "Uploading…",
+                        "download": "Download Skill",
+                        "search": "Search",
+                        "searchPlaceholder": "Enter a skill name or description keyword",
+                        "totalCount": "{{count}} skills total",
+                        "testSearchTitle": "search_skills Test",
+                        "testSearchDescription": "Call the backend top-N retrieval API and inspect the most relevant skill results.",
+                        "testSearchQueryPlaceholder": "Enter an intent, e.g. web automation, GitHub search",
+                        "testSearchLimitLabel": "Result limit",
+                        "testSearchMinScoreLabel": "Min score",
+                        "testSearchMinScorePlaceholder": "Optional",
+                        "testSearchScore": "Score {{score}}",
+                        "testSearchRun": "Run Test",
+                        "testSearchEmpty": "No search results yet",
+                        "viewDetail": "View Details",
+                        "empty": "No skills yet. Upload a ZIP skill package to get started.",
+                        "deleteTitle": "Delete skill \"{{name}}\"?",
+                        "deleteDescription": "This removes the skill metadata, index entries, and stored files.",
+                        "toast": {
+                                "uploadSuccess": "Skill {{name}} uploaded",
+                                "deleteSuccess": "Skill {{name}} deleted"
+                        },
+                        "card": {
+                                "fileCount": "{{count}} files",
+                                "archiveName": "Archive: {{name}}",
+                                "updatedAt": "Updated: {{value}}"
+                        },
+                        "detail": {
+                                "loading": "Loading skill details…",
+                                "fileCount": "{{count}} files",
+                                "archiveName": "Archive: {{name}}",
+                                "createdAt": "Created: {{value}}",
+                                "updatedAt": "Updated: {{value}}",
+                                "tabs": {
+                                        "skillMd": "SKILL.md",
+                                        "files": "Files"
                                 }
                         }
                 }

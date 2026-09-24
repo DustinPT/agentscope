@@ -27,9 +27,11 @@ Selection of the right subset by ``agent.source`` happens inline in
 from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
 from ._confirm_tool_calls import ConfirmToolCalls
 from ._create_test_session import CreateTestSession
+from ._download_skill import DownloadSkill
 from ._import_agent_package import ImportAgentPackage
 from ._interrupt_session import InterruptSession
 from ._request_sandbox_access import RequestSandboxAccess
+from ._search_skills import SearchSkills
 from ._send_session_message import SendSessionMessage
 from ._subagent_run import SubAgentRun
 from ._submit_external_results import SubmitExternalResults
@@ -43,9 +45,11 @@ __all__ = [
     "ConfirmToolCalls",
     "CreateTestSession",
     "DEFAULT_SUB_AGENT_TEMPLATE",
+    "DownloadSkill",
     "ImportAgentPackage",
     "InterruptSession",
     "RequestSandboxAccess",
+    "SearchSkills",
     "SendSessionMessage",
     "SubAgentRun",
     "SubmitExternalResults",

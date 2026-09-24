@@ -1,4 +1,4 @@
-import { BotMessageSquare, Cable, Calendars, Compass, KeyRound, Languages, Settings } from 'lucide-react';
+import { BotMessageSquare, Cable, Calendars, Compass, KeyRound, Languages, LibraryBig, Settings } from 'lucide-react';
 import { useOnborda } from 'onborda';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -82,6 +82,22 @@ export function AppSidebar() {
                                                                         className="px-2"
                                                                 >
                                                                         <Cable />
+                                                                </SidebarMenuButton>
+                                                        </SidebarMenuItem>
+                                                        <SidebarMenuItem>
+                                                                <SidebarMenuButton
+                                                                        tooltip={{
+                                                                                children: t('settings.skillLibrary.title'),
+                                                                                hidden: false,
+                                                                        }}
+                                                                        isActive={
+                                                                                location.pathname === '/skill-library' ||
+                                                                                location.pathname.startsWith('/skill-library/')
+                                                                        }
+                                                                        onClick={() => navigate('/skill-library')}
+                                                                        className="px-2"
+                                                                >
+                                                                        <LibraryBig />
                                                                 </SidebarMenuButton>
                                                         </SidebarMenuItem>
 						</SidebarMenu>

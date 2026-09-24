@@ -11,6 +11,7 @@ import { ChatPage } from '@/pages/chat';
 import { ChannelPage } from '@/pages/channel';
 import { CredentialPage } from '@/pages/credential';
 import { SchedulePage } from '@/pages/schedule';
+import { SkillLibraryPage } from '@/pages/skill-library';
 import { ModelDefaultsPage, SettingsConnectionPage, SettingsHomePage } from '@/pages/settings';
 import { SetupPage } from '@/pages/setup';
 
@@ -38,9 +39,13 @@ const router = createBrowserRouter([
 			{ path: '/schedule', element: <SchedulePage /> },
                         { path: '/channel', element: <ChannelPage /> },
 			{ path: '/credential', element: <CredentialPage /> },
+                        { path: '/skill-library', element: <SkillLibraryPage /> },
+                        { path: '/skill-library/:skillName', element: <SkillLibraryPage /> },
                         { path: '/settings', element: <SettingsHomePage /> },
                         { path: '/settings/connection', element: <SettingsConnectionPage /> },
                         { path: '/settings/model-defaults', element: <ModelDefaultsPage /> },
+                        { path: '/settings/skill-library', element: <Navigate to="/skill-library" replace /> },
+                        { path: '/settings/skill-library/:skillName', element: <Navigate to="/skill-library" replace /> },
 		],
 	},
 	{ path: '/setup', element: <SetupPageRoute /> },

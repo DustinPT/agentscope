@@ -7,6 +7,8 @@ from ._chat import ChatService
 from ._embedding import get_embedding_model
 from ._model import get_model
 from ._session import SessionService
+from ._skill_library import SkillLibraryService
+from ._skill_reranker import CrossEncoderSkillReranker, SkillRerankerBase
 from ._toolkit import get_toolkit
 from ._tts_model import get_tts_model
 from ._workspace_seed import (
@@ -19,8 +21,11 @@ __all__ = [
     "AgentAssetStore",
     "AttachmentStore",
     "ChannelService",
+    "CrossEncoderSkillReranker",
     "ChatService",
     "SessionService",
+    "SkillLibraryService",
+    "SkillRerankerBase",
     "get_embedding_model",
     "get_model",
     "get_tts_model",

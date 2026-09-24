@@ -180,8 +180,19 @@ class RedisMessageBus(MessageBus):
             )
 
         import redis.asyncio as aioredis
+        import inspect
 
-        connection_kwargs = dict(self._client.connection_pool.connection_kwargs)
+        raw_connection_kwargs = dict(
+            self._client.connection_pool.connection_kwargs,
+        )
+        accepted_keys = set(
+            inspect.signature(aioredis.Redis.__init__).parameters.keys(),
+        )
+        connection_kwargs = {
+            key: value
+            for key, value in raw_connection_kwargs.items()
+            if key in accepted_keys and key != "self"
+        }
         connection_kwargs["decode_responses"] = True
         # A long-lived subscription must not inherit the default
         # socket_timeout=5 behaviour from redis-py 8, otherwise an idle

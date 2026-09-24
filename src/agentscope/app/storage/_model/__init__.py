@@ -11,6 +11,7 @@ from ._channel import (
 )
 from ._credential import CredentialRecord
 from ._schedule import ScheduleData, ScheduleRecord, ScheduleSource
+from ._skill_library import SkillLibraryFileRecord, SkillLibraryRecord
 from ._sandbox_permission import (
     SandboxGrantResourceType,
     SandboxGrantScope,
@@ -50,6 +51,8 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "SkillLibraryFileRecord",
+    "SkillLibraryRecord",
     "SandboxGrantResourceType",
     "SandboxGrantScope",
     "SandboxOperation",

@@ -7,4 +7,5 @@ export { workspaceApi } from './workspace';
 export { scheduleApi } from './schedule';
 export { channelApi } from './channel';
 export { embeddingModelApi, modelApi, ttsModelApi } from './model';
+export { skillLibraryApi } from './skill-library';
 export { userApi } from './user';

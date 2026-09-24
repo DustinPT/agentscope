@@ -16,6 +16,7 @@ from ._service import (
     ChatService,
     SessionService,
 )
+from ._service._skill_library import SkillLibraryService
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .message_bus import MessageBus
 from .storage import StorageBase
@@ -154,6 +155,17 @@ async def get_agent_asset_store(request: Request) -> AgentAssetStore:
 async def get_attachment_store(request: Request) -> AttachmentStore:
     """Return the application-wide workspace attachment store."""
     return request.app.state.attachment_store
+
+
+async def get_skill_library_service(request: Request) -> SkillLibraryService:
+    """Return the application-wide skill library service."""
+    service = getattr(request.app.state, "skill_library_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Skill library service is not configured.",
+        )
+    return service
 
 
 async def get_extra_agent_middlewares(

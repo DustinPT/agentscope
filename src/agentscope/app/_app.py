@@ -15,6 +15,7 @@ from ._router import (
     embedding_model_router,
     model_router,
     schedule_router,
+    skill_library_router,
     session_router,
     tts_model_router,
     user_router,
@@ -170,6 +171,7 @@ def create_app(
         agent_asset_root or ".agent_assets",
     )
     app.state.attachment_store = AttachmentStore()
+    app.state.skill_library_service = None
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
@@ -198,6 +200,7 @@ def create_app(
         chat_router,
         credential_router,
         schedule_router,
+        skill_library_router,
         session_router,
         user_router,
         workspace_router,

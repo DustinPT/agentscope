@@ -749,6 +749,10 @@
                                 "modelDefaults": {
                                         "title": "全局默认模型配置",
                                         "description": "管理固定任务分类的默认模型。"
+                                },
+                                "skillLibrary": {
+                                        "title": "技能库",
+                                        "description": "上传、检索、查看和删除用户私有技能包。"
                                 }
                         }
                 },
@@ -802,6 +806,49 @@
                                 "writing": {
                                         "title": "writing",
                                         "description": "文本、文档、写作"
+                                }
+                        }
+                },
+                "skillLibrary": {
+                        "title": "技能库",
+                        "description": "上传 ZIP 技能包，并浏览你自己的技能资产。",
+                        "upload": "上传技能包",
+                        "uploading": "上传中…",
+                        "download": "下载技能",
+                        "search": "搜索",
+                        "searchPlaceholder": "输入技能名称或描述关键词",
+                        "totalCount": "共 {{count}} 个技能",
+                        "testSearchTitle": "search_skills 测试",
+                        "testSearchDescription": "调用后端 top-N 检索接口，查看最相关的技能结果。",
+                        "testSearchQueryPlaceholder": "输入检索意图，例如：网页自动化、GitHub 搜索",
+                        "testSearchLimitLabel": "返回数量",
+                        "testSearchMinScoreLabel": "最小分数",
+                        "testSearchMinScorePlaceholder": "可选",
+                        "testSearchScore": "分数 {{score}}",
+                        "testSearchRun": "运行测试",
+                        "testSearchEmpty": "暂无检索结果",
+                        "viewDetail": "查看详情",
+                        "empty": "暂无技能，先上传一个 ZIP 技能包吧。",
+                        "deleteTitle": "删除技能 \"{{name}}\"？",
+                        "deleteDescription": "删除后会同步移除技能元数据、索引和文件内容。",
+                        "toast": {
+                                "uploadSuccess": "技能 {{name}} 上传成功",
+                                "deleteSuccess": "技能 {{name}} 已删除"
+                        },
+                        "card": {
+                                "fileCount": "{{count}} 个文件",
+                                "archiveName": "压缩包：{{name}}",
+                                "updatedAt": "更新时间：{{value}}"
+                        },
+                        "detail": {
+                                "loading": "正在加载技能详情…",
+                                "fileCount": "{{count}} 个文件",
+                                "archiveName": "压缩包：{{name}}",
+                                "createdAt": "创建时间：{{value}}",
+                                "updatedAt": "更新时间：{{value}}",
+                                "tabs": {
+                                        "skillMd": "SKILL.md",
+                                        "files": "文件列表"
                                 }
                         }
                 }

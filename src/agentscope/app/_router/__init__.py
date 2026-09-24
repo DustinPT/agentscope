@@ -7,6 +7,7 @@ from ._chat import chat_router
 from ._credential import credential_router
 from ._embedding_model import embedding_model_router
 from ._schedule import schedule_router
+from ._skill_library import skill_library_router
 from ._session import session_router
 from ._model import model_router
 from ._tts_model import tts_model_router
@@ -23,6 +24,7 @@ __all__ = [
     "chat_router",
     "credential_router",
     "schedule_router",
+    "skill_library_router",
     "session_router",
     "user_router",
     "workspace_router",

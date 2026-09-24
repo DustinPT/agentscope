@@ -63,10 +63,12 @@ service = [
     "uvicorn",
     "apscheduler",
     "ag-ui-protocol>=0.1.10",
+    "sentence-transformers>=6.1.0",
 ]
 # ------------ Storage ------------
 storage = [
     "redis",
+    "redisvl>=0.18.2",
 ]
 # ------------ Workspace -----------
 workspace = [

@@ -1,0 +1,100 @@
+# -*- coding: utf-8 -*-
+"""Builtin tool for searching user-owned skills."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import Field, field_validator
+
+from ...permission import PermissionContext, PermissionDecision, PermissionBehavior
+from ...tool import ParamsBase
+from .._service._skill_library import SkillLibraryService
+from ._session_tool_base import _SessionToolBase
+
+
+class _SearchSkillsParams(ParamsBase):
+    """The params of the search skills tool."""
+
+    query: str = Field(
+        description=(
+            "Describe in English the capability you need, the task you want "
+            "to solve, or the tool behavior you are looking for."
+        ),
+        min_length=1,
+    )
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum number of candidate skills to return.",
+    )
+
+    @field_validator("query")
+    @classmethod
+    def validate_query_is_english(cls, value: str) -> str:
+        """Require an English-only query for skill retrieval."""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Query must not be empty.")
+        if not normalized.isascii():
+            raise ValueError(
+                "Query must be written in English using ASCII characters only.",
+            )
+        return normalized
+
+
+class SearchSkills(_SessionToolBase):
+    """Search top-N skills from the current user's skill library."""
+
+    name = "SearchSkills"
+    description = (
+        "Find skills that may help with the current task. Use this before "
+        "downloading a skill when you do not already know the exact skill "
+        "name. Provide a short description of the capability you need, and "
+        "the tool will return the most relevant skill names and summaries."
+    )
+    input_schema: dict[str, Any] = _SearchSkillsParams.model_json_schema()
+    is_read_only = True
+
+    def __init__(
+        self,
+        *,
+        skill_library_service: SkillLibraryService,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._skill_library_service = skill_library_service
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        del tool_input, context
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="Searching owned skills is always allowed.",
+        )
+
+    async def call(
+        self,
+        query: str,
+        limit: int = 5,
+    ):
+        hits = await self._skill_library_service.search_skills(
+            user_id=self._user_id,
+            query=query,
+            limit=limit,
+        )
+        return self._result(
+            {
+                "skills": [
+                    {
+                        "name": item.record.name,
+                        "description": item.record.description,
+                    }
+                    for item in hits
+                ],
+            },
+        )
