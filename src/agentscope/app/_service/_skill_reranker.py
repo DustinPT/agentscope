@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import asyncio
+from http import HTTPStatus
 from typing import Protocol
+
+from ...credential import DashScopeCredential
 
 
 class SkillRerankerBase(Protocol):
@@ -92,4 +95,77 @@ class CrossEncoderSkillReranker:
         for item in rankings:
             corpus_id = int(item["corpus_id"])
             scores[corpus_id] = float(item["score"])
+        return scores
+
+
+class DashScopeSkillReranker:
+    """Call DashScope text-rerank for async skill reranking."""
+
+    def __init__(
+        self,
+        *,
+        credential: DashScopeCredential,
+        model: str,
+        instruct: str,
+        top_n: int | None = None,
+    ) -> None:
+        self._api_key = credential.api_key.get_secret_value()
+        self._model = model
+        self._instruct = instruct
+        self._top_n = top_n
+
+    async def rank(
+        self,
+        *,
+        query: str,
+        documents: list[str],
+    ) -> list[float]:
+        """Rerank candidate skill documents via DashScope text-rerank."""
+        if not documents:
+            return []
+
+        return await asyncio.to_thread(
+            self._rank_sync,
+            query,
+            documents,
+        )
+
+    def _rank_sync(
+        self,
+        query: str,
+        documents: list[str],
+    ) -> list[float]:
+        """Call the DashScope API and map scores back to input order."""
+        import dashscope
+
+        response = dashscope.TextReRank.call(
+            model=self._model,
+            query=query,
+            documents=documents,
+            top_n=self._top_n,
+            api_key=self._api_key,
+            instruct=self._instruct,
+        )
+        if response.status_code != HTTPStatus.OK:
+            raise RuntimeError(
+                "DashScope text-rerank API error: "
+                f"status={response.status_code}, code={response.code!r}, "
+                f"message={response.message!r}, request_id={response.request_id!r}",
+            )
+
+        results = getattr(response.output, "results", None)
+        if results is None:
+            raise RuntimeError(
+                "DashScope text-rerank API returned no results.",
+            )
+
+        scores = [0.0] * len(documents)
+        for item in results:
+            index = int(item.index)
+            if index < 0 or index >= len(documents):
+                raise RuntimeError(
+                    "DashScope text-rerank API returned an out-of-range "
+                    f"document index: {index}",
+                )
+            scores[index] = float(item.relevance_score)
         return scores
