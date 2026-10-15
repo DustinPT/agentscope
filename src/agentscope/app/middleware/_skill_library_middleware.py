@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 from ...middleware import MiddlewareBase
 from ...tool import ToolBase
 
-from .._tools import DownloadSkill, SearchSkills
+from .._tools import (
+    DeleteSkillFromLibrary,
+    DownloadSkill,
+    SearchSkills,
+    UploadSkillToLibrary,
+)
 
 if TYPE_CHECKING:
     from ...agent import Agent
@@ -31,6 +36,15 @@ _SKILL_LIBRARY_SYSTEM_PROMPT_SUFFIX = (
     "before continuing."
 )
 
+_SKILL_LIBRARY_MANAGEMENT_PROMPT_SUFFIX = (
+    "\n\n"
+    "You can also manage skills in the library. When you create or update "
+    "a skill ZIP inside the current workspace, use `UploadSkillToLibrary` "
+    "to add it to the library or replace the existing version. Use "
+    "`DeleteSkillFromLibrary` only when you are sure a library skill "
+    "should be removed by its exact name."
+)
+
 
 class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     """Expose skill-library tools and prompt guidance for using them."""
@@ -41,11 +55,13 @@ class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         workspace,
         user_id: str,
         skill_library_service,
+        enable_management_tools: bool = False,
     ) -> None:
         """Store the runtime dependencies needed by skill-library tools."""
         self._workspace = workspace
         self._user_id = user_id
         self._skill_library_service = skill_library_service
+        self._enable_management_tools = enable_management_tools
 
     async def on_system_prompt(  # type: ignore[override]
         self,
@@ -54,13 +70,21 @@ class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     ) -> str:
         """Append skill-library tool guidance to the system prompt."""
         del agent
-        if _SKILL_LIBRARY_SYSTEM_PROMPT_SUFFIX in current_prompt:
-            return current_prompt
-        return f"{current_prompt}\n\n{_SKILL_LIBRARY_SYSTEM_PROMPT_SUFFIX}"
+        next_prompt = current_prompt
+        if _SKILL_LIBRARY_SYSTEM_PROMPT_SUFFIX not in next_prompt:
+            next_prompt = f"{next_prompt}\n\n{_SKILL_LIBRARY_SYSTEM_PROMPT_SUFFIX}"
+        if (
+            self._enable_management_tools
+            and _SKILL_LIBRARY_MANAGEMENT_PROMPT_SUFFIX not in next_prompt
+        ):
+            next_prompt = (
+                f"{next_prompt}{_SKILL_LIBRARY_MANAGEMENT_PROMPT_SUFFIX}"
+            )
+        return next_prompt
 
     async def list_tools(self) -> list[ToolBase]:
         """Return the skill-library tools attached for this agent run."""
-        return [
+        tools: list[ToolBase] = [
             SearchSkills(
                 user_id=self._user_id,
                 skill_library_service=self._skill_library_service,
@@ -71,3 +95,18 @@ class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 skill_library_service=self._skill_library_service,
             ),
         ]
+        if self._enable_management_tools:
+            tools.extend(
+                [
+                    UploadSkillToLibrary(
+                        workspace=self._workspace,
+                        user_id=self._user_id,
+                        skill_library_service=self._skill_library_service,
+                    ),
+                    DeleteSkillFromLibrary(
+                        user_id=self._user_id,
+                        skill_library_service=self._skill_library_service,
+                    ),
+                ],
+            )
+        return tools

@@ -193,11 +193,12 @@ class SkillLibraryService:
         *,
         user_id: str,
         file: UploadFile,
+        overwrite: bool = False,
     ) -> SkillLibraryRecord:
         """Upload one ZIP skill package into the managed user library."""
         skill_root, name, description, markdown = await self._stage_skill_zip(file)
         existing = await self._storage.get_skill_by_name(user_id, name)
-        if existing is not None:
+        if existing is not None and not overwrite:
             shutil.rmtree(os.path.dirname(skill_root), ignore_errors=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -206,7 +207,7 @@ class SkillLibraryService:
 
         target_dir = self._skill_dir(user_id, name)
         os.makedirs(self._user_root(user_id), exist_ok=True)
-        if os.path.exists(target_dir):
+        if os.path.exists(target_dir) and not overwrite:
             shutil.rmtree(os.path.dirname(skill_root), ignore_errors=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -216,6 +217,8 @@ class SkillLibraryService:
         manifest = await asyncio.to_thread(self._list_files, skill_root)
         content_hash = await asyncio.to_thread(_hash_directory, skill_root)
         embedding = await self._embed_text(description)
+        if overwrite and os.path.exists(target_dir):
+            await asyncio.to_thread(shutil.rmtree, target_dir, True)
         await asyncio.to_thread(shutil.move, skill_root, target_dir)
         await asyncio.to_thread(
             shutil.rmtree,

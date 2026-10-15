@@ -27,6 +27,7 @@ Selection of the right subset by ``agent.source`` happens inline in
 from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
 from ._confirm_tool_calls import ConfirmToolCalls
 from ._create_test_session import CreateTestSession
+from ._delete_skill_from_library import DeleteSkillFromLibrary
 from ._download_skill import DownloadSkill
 from ._import_agent_package import ImportAgentPackage
 from ._interrupt_session import InterruptSession
@@ -38,6 +39,7 @@ from ._submit_external_results import SubmitExternalResults
 from ._team_create import TeamCreate
 from ._team_delete import TeamDelete
 from ._team_say import TeamSay
+from ._upload_skill_to_library import UploadSkillToLibrary
 from ._wait_new_messages import WaitNewMessages
 
 __all__ = [
@@ -45,6 +47,7 @@ __all__ = [
     "ConfirmToolCalls",
     "CreateTestSession",
     "DEFAULT_SUB_AGENT_TEMPLATE",
+    "DeleteSkillFromLibrary",
     "DownloadSkill",
     "ImportAgentPackage",
     "InterruptSession",
@@ -56,5 +59,6 @@ __all__ = [
     "TeamCreate",
     "TeamDelete",
     "TeamSay",
+    "UploadSkillToLibrary",
     "WaitNewMessages",
 ]
