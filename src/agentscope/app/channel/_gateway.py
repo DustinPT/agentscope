@@ -342,6 +342,7 @@ class ChannelGateway:
             return
 
         fallback = record.session.fallback_chat_model_config
+        permission_mode = PermissionMode(record.session.permission_mode)
         session_config = SessionConfig(
             workspace_id=await self._workspace_manager.assign_workspace_id(
                 user_id=record.user_id,
@@ -355,13 +356,14 @@ class ChannelGateway:
                 ChatModelConfig(**fallback) if fallback else None
             ),
             name=self._session_name(record, event, scope),
+            permission_mode=permission_mode,
         )
         initial_state = AgentState(
             conversation_kind=(
                 chat_kind.value if chat_kind is not None else None
             ),
             permission_context=PermissionContext(
-                mode=PermissionMode(record.session.permission_mode),
+                mode=permission_mode,
             ),
         )
         await self._storage.upsert_session(
