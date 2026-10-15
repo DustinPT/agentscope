@@ -16,10 +16,19 @@ if TYPE_CHECKING:
 
 _SKILL_LIBRARY_SYSTEM_PROMPT_SUFFIX = (
     "## Skill library\n\n"
-    "You have access to a skill library for this task.\n\n"
-    "When a skill may be useful for the current task, you may use "
-    "`SearchSkills` to discover relevant skills, then use "
-    "`DownloadSkill` to download the chosen skill for use."
+    "You are equipped with a skill library.\n\n"
+    "This skill library is separate from the skills already available to "
+    "you. If present, the `<agent-skills>` section lists those available "
+    "skills. Skills in the library are not available by default: you must "
+    "search for them with `SearchSkills` and load them with "
+    "`DownloadSkill` before using them.\n\n"
+    "When you start a new task, first consider whether an installed skill "
+    "already fits. If not, or if the work is unfamiliar, multi-step, "
+    "domain-specific, or tool-heavy, proactively call `SearchSkills` early "
+    "instead of waiting until you are blocked. Use a short English ASCII "
+    "query that describes the capability or task you need. If the search "
+    "returns a promising match, use `DownloadSkill` to load that skill "
+    "before continuing."
 )
 
 
