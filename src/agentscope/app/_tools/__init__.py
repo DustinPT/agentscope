@@ -25,13 +25,18 @@ Selection of the right subset by ``agent.source`` happens inline in
 :func:`get_toolkit`; there is no separate "team tool factory" helper.
 """
 from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
+from ._add_knowledge_base_files import AddKnowledgeBaseFiles
 from ._confirm_tool_calls import ConfirmToolCalls
 from ._create_test_session import CreateTestSession
 from ._delete_skill_from_library import DeleteSkillFromLibrary
+from ._delete_knowledge_base_files import DeleteKnowledgeBaseFiles
 from ._download_skill import DownloadSkill
+from ._get_knowledge_base_file_chunks import GetKnowledgeBaseFileChunks
 from ._import_agent_package import ImportAgentPackage
 from ._interrupt_session import InterruptSession
+from ._refresh_knowledge_base_files import RefreshKnowledgeBaseFiles
 from ._request_sandbox_access import RequestSandboxAccess
+from ._search_knowledge_base import SearchKnowledgeBase
 from ._search_skills import SearchSkills
 from ._send_session_message import SendSessionMessage
 from ._subagent_run import SubAgentRun
@@ -43,15 +48,20 @@ from ._upload_skill_to_library import UploadSkillToLibrary
 from ._wait_new_messages import WaitNewMessages
 
 __all__ = [
+    "AddKnowledgeBaseFiles",
     "AgentCreate",
     "ConfirmToolCalls",
     "CreateTestSession",
     "DEFAULT_SUB_AGENT_TEMPLATE",
+    "DeleteKnowledgeBaseFiles",
     "DeleteSkillFromLibrary",
     "DownloadSkill",
+    "GetKnowledgeBaseFileChunks",
     "ImportAgentPackage",
     "InterruptSession",
+    "RefreshKnowledgeBaseFiles",
     "RequestSandboxAccess",
+    "SearchKnowledgeBase",
     "SearchSkills",
     "SendSessionMessage",
     "SubAgentRun",

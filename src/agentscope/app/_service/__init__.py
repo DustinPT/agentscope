@@ -5,6 +5,7 @@ from ._attachment_store import AttachmentStore
 from ._channel import ChannelService
 from ._chat import ChatService
 from ._embedding import get_embedding_model
+from ._knowledge_base import KnowledgeBaseService
 from ._model import get_model
 from ._session import SessionService
 from ._skill_library import SkillLibraryService
@@ -29,6 +30,7 @@ __all__ = [
     "ChatService",
     "DashScopeSkillReranker",
     "SessionService",
+    "KnowledgeBaseService",
     "SkillLibraryService",
     "SkillRerankerBase",
     "get_embedding_model",
