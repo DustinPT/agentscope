@@ -12,6 +12,7 @@ from pydantic import Field, field_validator
 from ...message import TextBlock, ToolResultState
 from ...permission import PermissionBehavior, PermissionContext, PermissionDecision
 from ...tool import ParamsBase, ToolBase, ToolChunk
+from ...workspace import WorkspaceBase
 from .._service._knowledge_base import KnowledgeBaseService
 
 
@@ -19,7 +20,12 @@ class _AddKnowledgeBaseFilesParams(ParamsBase):
     """The params of the add-files knowledge-base tool."""
 
     file_paths: list[str] = Field(
-        description="One or more absolute local file paths to add into the current user's knowledge base.",
+        description=(
+            "One or more absolute local file paths to add into the current "
+            "user's knowledge base. Each file must already be inside a "
+            "dedicated project directory under the workspace `projects/` "
+            "directory."
+        ),
         min_length=1,
     )
     wait_for_index: bool = Field(
@@ -53,8 +59,9 @@ class AddKnowledgeBaseFiles(ToolBase):
         "Add one or more valuable local files into the current user's "
         "knowledge base so they can be searched later. Use this only for "
         "documents worth reusing across turns or when the user explicitly "
-        "asks to add files. Optionally wait until newly added files finish "
-        "indexing."
+        "asks to add files. Files must already be inside a dedicated project "
+        "directory under the workspace `projects/` directory. Optionally wait "
+        "until newly added files finish indexing."
     )
     input_schema: dict[str, Any] = _AddKnowledgeBaseFilesParams.model_json_schema()
     is_concurrency_safe: bool = False
@@ -67,12 +74,47 @@ class AddKnowledgeBaseFiles(ToolBase):
     def __init__(
         self,
         *,
+        workspace: WorkspaceBase,
         user_id: str,
         knowledge_base_service: KnowledgeBaseService,
     ) -> None:
         super().__init__()
+        self._workspace = workspace
         self._user_id = user_id
         self._knowledge_base_service = knowledge_base_service
+
+    def _validate_project_file_paths(self, file_paths: list[str]) -> list[str]:
+        """Require files to live under a dedicated workspace project directory."""
+        projects_root = os.path.realpath(
+            os.path.join(self._workspace.workdir, "projects"),
+        )
+        normalized: list[str] = []
+        for file_path in file_paths:
+            resolved_path = os.path.realpath(file_path)
+            try:
+                common_root = os.path.commonpath([projects_root, resolved_path])
+            except ValueError as exc:
+                raise ValueError(
+                    "Each file must be located under the workspace projects directory.",
+                ) from exc
+            if common_root != projects_root:
+                raise ValueError(
+                    "Each file must be located under the workspace `projects/` "
+                    "directory. If the file is elsewhere, copy it into a "
+                    "project directory first.",
+                )
+            relative_path = os.path.relpath(resolved_path, projects_root)
+            if (
+                relative_path == "."
+                or relative_path.startswith("..")
+                or len(relative_path.split(os.sep)) < 2
+            ):
+                raise ValueError(
+                    "Each file must be inside a dedicated project subdirectory "
+                    "under the workspace `projects/` directory.",
+                )
+            normalized.append(resolved_path)
+        return normalized
 
     async def check_permissions(
         self,
@@ -111,9 +153,10 @@ class AddKnowledgeBaseFiles(ToolBase):
         file_paths: list[str],
         wait_for_index: bool = False,
     ):
+        normalized_paths = self._validate_project_file_paths(file_paths)
         payload = await self._knowledge_base_service.add_files(
             user_id=self._user_id,
-            file_paths=file_paths,
+            file_paths=normalized_paths,
             wait_for_index=wait_for_index,
         )
         return self._result(payload)

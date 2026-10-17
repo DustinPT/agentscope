@@ -37,7 +37,11 @@ _KNOWLEDGE_BASE_SYSTEM_PROMPT_SUFFIX = (
 _KNOWLEDGE_BASE_MANAGEMENT_PROMPT_SUFFIX = (
     "\n\n"
     "Only add documents that are clearly valuable for future reuse or that "
-    "the user explicitly asks to add. "
+    "the user explicitly asks to add. Files added to the knowledge base must "
+    "already be located inside a dedicated project directory under the "
+    "workspace `projects/` directory. If a file is elsewhere, copy it into "
+    "the project directory first. If the project directory does not exist "
+    "yet, create the project directory first. "
     "The knowledge-base service automatically polls for file changes and "
     "removes records for files that no longer exist, so you usually do not "
     "need to call manual delete or refresh tools. Use the refresh tool only "
@@ -53,10 +57,12 @@ class KnowledgeBaseMiddleware(MiddlewareBase):  # pylint: disable=abstract-metho
     def __init__(
         self,
         *,
+        workspace,
         user_id: str,
         knowledge_base_service,
         enable_management_tools: bool = False,
     ) -> None:
+        self._workspace = workspace
         self._user_id = user_id
         self._knowledge_base_service = knowledge_base_service
         self._enable_management_tools = enable_management_tools
@@ -98,6 +104,7 @@ class KnowledgeBaseMiddleware(MiddlewareBase):  # pylint: disable=abstract-metho
             tools.extend(
                 [
                     AddKnowledgeBaseFiles(
+                        workspace=self._workspace,
                         user_id=self._user_id,
                         knowledge_base_service=self._knowledge_base_service,
                     ),
