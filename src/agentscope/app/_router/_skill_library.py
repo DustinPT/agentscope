@@ -71,8 +71,12 @@ async def upload_skill(
     user_id: str = Depends(get_current_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> SkillLibraryRecord:
-    """Upload one ZIP skill package into the caller's skill library."""
-    return await service.upload_skill(user_id=user_id, file=file)
+    """Upload or replace one ZIP skill package in the caller's skill library."""
+    return await service.upload_skill(
+        user_id=user_id,
+        file=file,
+        overwrite=True,
+    )
 
 
 @skill_library_router.get(

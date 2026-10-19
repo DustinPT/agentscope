@@ -1859,8 +1859,21 @@ class RedisStorage(StorageBase):
     ) -> SkillLibraryRecord:
         """Create or update one skill library record."""
         existing = await self.get_skill(record.id)
-        if existing is not None:
-            persisted = existing.model_copy(deep=True)
+        same_name_records = await self._list_skill_records_by_name(
+            user_id,
+            record.name,
+        )
+        canonical = next(
+            (item for item in same_name_records if item.id == record.id),
+            None,
+        )
+        if canonical is None and same_name_records:
+            canonical = same_name_records[0]
+        if canonical is None:
+            canonical = existing
+
+        if canonical is not None:
+            persisted = canonical.model_copy(deep=True)
             persisted.user_id = user_id
             persisted.name = record.name
             persisted.description = record.description
@@ -1877,6 +1890,13 @@ class RedisStorage(StorageBase):
         self._validate_skill_embedding(persisted.embedding)
         await self._ensure_skill_index()
         await self._write_skill_json(persisted)
+        duplicate_ids = [
+            item.id
+            for item in same_name_records
+            if item.id != persisted.id
+        ]
+        if duplicate_ids:
+            await self._delete_skill_records_by_ids(duplicate_ids)
         return persisted
 
     async def get_skill(
@@ -1893,6 +1913,17 @@ class RedisStorage(StorageBase):
         skill_name: str,
     ) -> SkillLibraryRecord | None:
         """Fetch one skill library record by user and skill name."""
+        records = await self._list_skill_records_by_name(user_id, skill_name)
+        if not records:
+            return None
+        return records[0]
+
+    async def _list_skill_records_by_name(
+        self,
+        user_id: str,
+        skill_name: str,
+    ) -> list[SkillLibraryRecord]:
+        """Load all records sharing one user-scoped skill name."""
         await self._ensure_skill_index()
         from redisvl.query import FilterQuery
         from redisvl.query.filter import Tag
@@ -1901,12 +1932,22 @@ class RedisStorage(StorageBase):
         results = await self._skill_index.query(
             FilterQuery(
                 filter_expression=filter_expression,
-                num_results=1,
+                num_results=100,
             ),
         )
-        if not results:
-            return None
-        return self._parse_skill_record(results[0])
+        records = [
+            record
+            for record in (
+                self._parse_skill_record(result)
+                for result in results
+            )
+            if record is not None
+        ]
+        records.sort(
+            key=lambda item: (item.updated_at, item.created_at, item.id),
+            reverse=True,
+        )
+        return records
 
     async def list_skills(
         self,
@@ -1984,11 +2025,19 @@ class RedisStorage(StorageBase):
         skill_name: str,
     ) -> bool:
         """Delete one skill library record by user and skill name."""
-        record = await self.get_skill_by_name(user_id, skill_name)
-        if record is None:
+        records = await self._list_skill_records_by_name(user_id, skill_name)
+        if not records:
             return False
-        deleted = await self._client.json().delete(self._skill_key(record.id))
-        return deleted > 0
+        await self._delete_skill_records_by_ids([record.id for record in records])
+        return True
+
+    async def _delete_skill_records_by_ids(
+        self,
+        skill_ids: list[str],
+    ) -> None:
+        """Delete skill records by id."""
+        for skill_id in skill_ids:
+            await self._client.json().delete(self._skill_key(skill_id))
 
     # ------------------------------------------------------------------
     # Team persistence
