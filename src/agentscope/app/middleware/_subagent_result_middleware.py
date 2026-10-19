@@ -488,6 +488,18 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             await self._persist_task(task)
             return
 
+        runtime_context = agent.state.tool_context.runtime_context
+        if (
+            runtime_context is not None
+            and runtime_context.restart_session_requested
+        ):
+            # A fresh rerun was requested for this child session, so the
+            # current run is only an intermediate handoff rather than the
+            # delegated task's terminal result.
+            task.status = "running"
+            await self._persist_task(task)
+            return
+
         if task.open_descendant_count > 0:
             task.status = "waiting_descendants"
             await self._persist_task(task)
