@@ -7,6 +7,7 @@ import asyncio
 from http import HTTPStatus
 from typing import Protocol
 
+import httpx
 from ...credential import DashScopeCredential
 
 
@@ -168,4 +169,108 @@ class DashScopeSkillReranker:
                     f"document index: {index}",
                 )
             scores[index] = float(item.relevance_score)
+        return scores
+
+
+class LlamaServeSkillReranker:
+    """Call one llama serve ``/v1/rerank`` endpoint for async skill reranking."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        top_n: int | None = None,
+        timeout: float = 30.0,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._model = model
+        self._top_n = top_n
+        self._owns_client = http_client is None
+        self._http = http_client or httpx.AsyncClient(
+            base_url=base_url.rstrip("/"),
+            timeout=timeout,
+            trust_env=False,
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client when owned by this instance."""
+        if self._owns_client:
+            await self._http.aclose()
+
+    @staticmethod
+    def _error_detail(response: httpx.Response) -> str:
+        """Extract a readable error detail from one rerank response."""
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+
+        if isinstance(payload, dict):
+            for key in ("detail", "error", "message"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        text = response.text.strip()
+        if text:
+            return text
+        return f"llama serve rerank request failed with status {response.status_code}."
+
+    async def rank(
+        self,
+        *,
+        query: str,
+        documents: list[str],
+    ) -> list[float]:
+        """Rerank candidate skill documents via llama serve ``/v1/rerank``."""
+        if not documents:
+            return []
+
+        response = await self._http.post(
+            "rerank",
+            json={
+                "model": self._model,
+                "query": query,
+                "documents": documents,
+                "top_n": self._top_n or len(documents),
+            },
+        )
+        if response.status_code != HTTPStatus.OK:
+            raise RuntimeError(
+                "llama serve rerank API error: "
+                f"status={response.status_code}, detail={self._error_detail(response)!r}",
+            )
+
+        payload = response.json()
+        results = payload.get("results")
+        if not isinstance(results, list):
+            raise RuntimeError(
+                "llama serve rerank API returned no results.",
+            )
+
+        scores = [0.0] * len(documents)
+        for item in results:
+            if not isinstance(item, dict):
+                raise RuntimeError(
+                    "llama serve rerank API returned one malformed result item.",
+                )
+            index = item.get("index")
+            if not isinstance(index, int):
+                raise RuntimeError(
+                    "llama serve rerank API returned one result without a valid index.",
+                )
+            if index < 0 or index >= len(documents):
+                raise RuntimeError(
+                    "llama serve rerank API returned an out-of-range "
+                    f"document index: {index}",
+                )
+            try:
+                scores[index] = float(item["relevance_score"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "llama serve rerank API returned one result without a valid relevance_score.",
+                ) from exc
         return scores

@@ -273,6 +273,94 @@ class RedisStorage(StorageBase):
         """Return the Redis key prefix used by the skill JSON index."""
         return self._skill_key("")
 
+    @staticmethod
+    def _decode_redis_search_value(value: Any) -> Any:
+        """Decode Redis search metadata values into plain Python strings."""
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return value
+
+    @classmethod
+    def _extract_skill_index_dimensions(cls, payload: Any) -> int | None:
+        """Extract the vector dimensions for the ``embedding`` field from index info."""
+        if isinstance(payload, dict):
+            normalized = {
+                str(cls._decode_redis_search_value(key)).lower(): cls._decode_redis_search_value(value)
+                for key, value in payload.items()
+            }
+            marker_values = {
+                str(normalized.get("attribute", "")).lower(),
+                str(normalized.get("identifier", "")).lower(),
+                str(normalized.get("name", "")).lower(),
+                str(normalized.get("path", "")).lower(),
+            }
+            if "embedding" in marker_values or "$.embedding" in marker_values:
+                for key in ("dim", "dims"):
+                    value = normalized.get(key)
+                    if value is not None:
+                        try:
+                            return int(value)
+                        except (TypeError, ValueError):
+                            return None
+
+            for key in ("attributes", "attrs"):
+                nested = normalized.get(key)
+                if nested is not None:
+                    dimensions = cls._extract_skill_index_dimensions(nested)
+                    if dimensions is not None:
+                        return dimensions
+
+            for value in normalized.values():
+                dimensions = cls._extract_skill_index_dimensions(value)
+                if dimensions is not None:
+                    return dimensions
+            return None
+
+        if isinstance(payload, (list, tuple)):
+            decoded = [cls._decode_redis_search_value(item) for item in payload]
+            marker_values = {
+                str(item).lower()
+                for item in decoded
+                if not isinstance(item, (dict, list, tuple))
+            }
+            if "embedding" in marker_values or "$.embedding" in marker_values:
+                for index in range(len(decoded) - 1):
+                    key = decoded[index]
+                    if isinstance(key, (dict, list, tuple)):
+                        continue
+                    if str(key).lower() not in {"dim", "dims"}:
+                        continue
+                    try:
+                        return int(decoded[index + 1])
+                    except (TypeError, ValueError):
+                        return None
+
+            for item in decoded:
+                dimensions = cls._extract_skill_index_dimensions(item)
+                if dimensions is not None:
+                    return dimensions
+        return None
+
+    def _expected_skill_embedding_dimensions(self) -> int:
+        """Return the configured skill embedding dimensions for the current model."""
+        return int(getattr(self._skill_embedding_model, "dimensions", None) or 1024)
+
+    async def _get_existing_skill_index_dimensions(self) -> int | None:
+        """Read the current Redis skill index vector dimensions, if the index exists."""
+        try:
+            info = await self._client.ft(
+                self.key_config.skill_library_index_name,
+            ).info()
+        except Exception as exc:  # pragma: no cover - backend-specific wording
+            message = str(exc).lower()
+            if "unknown index name" in message or "no such index" in message:
+                return None
+            raise
+
+        if isinstance(info, dict):
+            return self._extract_skill_index_dimensions(info.get("attributes", info))
+        return self._extract_skill_index_dimensions(info)
+
     async def _ensure_skill_index(self) -> None:
         """Create the RedisVL JSON index for skill records lazily."""
         if self._skill_index_ready:
@@ -342,10 +430,7 @@ class RedisStorage(StorageBase):
                         "type": "vector",
                         "path": "$.embedding",
                         "attrs": {
-                            "dims": (
-                                getattr(self._skill_embedding_model, "dimensions", None)
-                                or 1024
-                            ),
+                            "dims": self._expected_skill_embedding_dimensions(),
                             "distance_metric": "cosine",
                             "algorithm": "flat",
                             "datatype": "float32",
@@ -358,6 +443,14 @@ class RedisStorage(StorageBase):
                 redis_client=self._client,
                 validate_on_load=True,
             )
+            if await self._skill_index.exists():
+                current_dimensions = await self._get_existing_skill_index_dimensions()
+                expected_dimensions = self._expected_skill_embedding_dimensions()
+                if (
+                    current_dimensions is not None
+                    and current_dimensions != expected_dimensions
+                ):
+                    await self._skill_index.delete(drop=False)
             try:
                 await self._skill_index.create(overwrite=False)
             except Exception as exc:  # pragma: no cover - backend-specific wording
@@ -410,7 +503,7 @@ class RedisStorage(StorageBase):
         query: str,
     ) -> list[float]:
         """Embed one skill search query with the configured embedding model."""
-        response = await embedding_model([query], text_type="query")
+        response = await embedding_model([query])
         if not response.embeddings:
             raise RuntimeError("Embedding model returned no vectors.")
         return [float(value) for value in response.embeddings[0]]

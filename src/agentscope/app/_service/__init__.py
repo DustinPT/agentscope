@@ -12,6 +12,7 @@ from ._skill_library import SkillLibraryService
 from ._skill_reranker import (
     CrossEncoderSkillReranker,
     DashScopeSkillReranker,
+    LlamaServeSkillReranker,
     SkillRerankerBase,
 )
 from ._toolkit import get_toolkit
@@ -29,6 +30,7 @@ __all__ = [
     "CrossEncoderSkillReranker",
     "ChatService",
     "DashScopeSkillReranker",
+    "LlamaServeSkillReranker",
     "SessionService",
     "KnowledgeBaseService",
     "SkillLibraryService",
