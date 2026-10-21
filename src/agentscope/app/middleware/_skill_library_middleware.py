@@ -33,7 +33,14 @@ _SKILL_LIBRARY_SYSTEM_PROMPT_SUFFIX = (
     "instead of waiting until you are blocked. Use a short English ASCII "
     "query that describes the capability or task you need. If the search "
     "returns a promising match, use `DownloadSkill` to load that skill "
-    "before continuing."
+    "before continuing.\n\n"
+    "When using a library skill, if you find a meaningful, general-purpose, "
+    "and valuable improvement, do not change the skill on your own. First "
+    "tell the user what can be improved and let the user decide whether to "
+    "proceed. Only after the user agrees may you modify the skill and update "
+    "the library version. If you are a sub-agent without skill-library "
+    "management tools, send the improvement suggestion to the main agent so "
+    "the main agent can ask the user."
 )
 
 _SKILL_LIBRARY_MANAGEMENT_PROMPT_SUFFIX = (
