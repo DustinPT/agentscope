@@ -46,6 +46,7 @@ from .._manager import BackgroundTaskManager, SchedulerManager
 from .._manager import ChatRunRegistry
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
+    ChannelContextGuardMiddleware,
     InboxMiddleware,
     StateChangeMiddleware,
     SubAgentMiddleware,
@@ -1865,6 +1866,11 @@ class ChatService:
                 workspace=workspace,
             ),
         ]
+        if (
+            session_record.parent_session_id is None
+            and session_record.source == SessionSource.CHANNEL
+        ):
+            middlewares.append(ChannelContextGuardMiddleware())
         if agent_record.data.react_config.enable_tool_offload:
             middlewares.append(
                 ToolOffloadMiddleware(

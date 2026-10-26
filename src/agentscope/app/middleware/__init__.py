@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The middlewares module."""
 
+from ._channel_context_guard_middleware import ChannelContextGuardMiddleware
 from ._inbox_middleware import InboxMiddleware
 from ._knowledge_base_middleware import KnowledgeBaseMiddleware
 from ._protocol import ProtocolMiddlewareBase, AGUIProtocolMiddleware
@@ -11,6 +12,7 @@ from ._tool_offload_middleware import ToolOffloadMiddleware
 
 
 __all__ = [
+    "ChannelContextGuardMiddleware",
     "InboxMiddleware",
     "KnowledgeBaseMiddleware",
     "ProtocolMiddlewareBase",

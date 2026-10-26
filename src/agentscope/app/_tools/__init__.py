@@ -26,6 +26,7 @@ Selection of the right subset by ``agent.source`` happens inline in
 """
 from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
 from ._add_knowledge_base_files import AddKnowledgeBaseFiles
+from ._channel_context_reset import ChannelContextReset
 from ._confirm_tool_calls import ConfirmToolCalls
 from ._create_test_session import CreateTestSession
 from ._delete_skill_from_library import DeleteSkillFromLibrary
@@ -50,6 +51,7 @@ from ._wait_new_messages import WaitNewMessages
 __all__ = [
     "AddKnowledgeBaseFiles",
     "AgentCreate",
+    "ChannelContextReset",
     "ConfirmToolCalls",
     "CreateTestSession",
     "DEFAULT_SUB_AGENT_TEMPLATE",
