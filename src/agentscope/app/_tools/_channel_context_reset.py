@@ -27,7 +27,9 @@ class ChannelContextReset(ToolBase):
     description = (
         "Use this tool only in a main channel session when the prior "
         "conversation history is unrelated to the current user message. "
-        "Call it before any other analysis or tool usage for the new task. "
+        "Treat it as the required first action for unrelated-task switches, "
+        "and call it before any other analysis or tool usage for the new "
+        "task. "
         "It clears all runtime context messages before the current user "
         "message and also clears the compressed summary. Do not use it just "
         "because the context is long."
