@@ -27,8 +27,6 @@ import {
         Item,
         ItemActions,
         ItemContent,
-        ItemDescription,
-        ItemFooter,
         ItemHeader,
         ItemTitle,
 } from '@/components/ui/item';
@@ -125,9 +123,9 @@ export function SandboxPermissionTab({ records, loading, onCreate, onUpdate, onD
                         : record.grants;
                 if (loading) {
                         return (
-                                <div className="flex flex-col gap-3">
+                                <div className="flex flex-col gap-2">
                                         {Array.from({ length: 3 }).map((_, index) => (
-                                                <Skeleton key={index} className="h-24 rounded-xl" />
+                                                <Skeleton key={index} className="h-16 rounded-lg" />
                                         ))}
                                 </div>
                         );
@@ -168,25 +166,24 @@ export function SandboxPermissionTab({ records, loading, onCreate, onUpdate, onD
                 }
 
                 return (
-                        <div className="flex flex-col gap-3">
+                        <div className="flex flex-col gap-2">
+                                <p className="text-xs leading-5 text-muted-foreground">
+                                        {t(`workspace-drawer.permission.scopeDescriptions.${scope}`)}
+                                </p>
                                 {filteredGrants.map((grant) => (
                                         <Item
                                                 key={grantKey(grant)}
+                                                size="xs"
                                                 variant="outline"
-                                                className="items-start shadow-panel"
+                                                className="items-start gap-1.5 rounded-md shadow-none"
                                         >
                                                 <ItemHeader className="items-start">
                                                         <div className="min-w-0 flex-1">
-                                                                <ItemTitle className="max-w-full break-all font-mono whitespace-normal">
+                                                                <ItemTitle className="max-w-full break-all font-mono text-[13px] leading-5 whitespace-normal">
                                                                         {grant.pattern}
                                                                 </ItemTitle>
-                                                                <ItemDescription>
-                                                                        {t(
-                                                                                `workspace-drawer.permission.resourceTypes.${grant.resource_type}`,
-                                                                        )}
-                                                                </ItemDescription>
                                                         </div>
-                                                        <ItemActions className="shrink-0 self-start">
+                                                        <ItemActions className="shrink-0 self-start gap-1">
                                                                 <Button
                                                                         size="icon-xs"
                                                                         variant="ghost"
@@ -208,9 +205,9 @@ export function SandboxPermissionTab({ records, loading, onCreate, onUpdate, onD
                                                                 </Button>
                                                         </ItemActions>
                                                 </ItemHeader>
-                                                <ItemContent className="basis-full gap-2">
-                                                        <div className="flex flex-wrap items-center gap-2">
-                                                                <Badge variant="outline">
+                                                <ItemContent className="basis-full gap-1">
+                                                        <div className="flex flex-wrap items-center gap-1.5">
+                                                                <Badge variant="outline" className="h-4 px-1.5 text-[11px]">
                                                                         {t(
                                                                                 `workspace-drawer.permission.resourceTypes.${grant.resource_type}`,
                                                                         )}
@@ -219,6 +216,7 @@ export function SandboxPermissionTab({ records, loading, onCreate, onUpdate, onD
                                                                         <Badge
                                                                                 key={operation}
                                                                                 variant="secondary"
+                                                                                className="h-4 px-1.5 text-[11px]"
                                                                         >
                                                                                 {t(
                                                                                         `workspace-drawer.permission.operations.${operation}`,
@@ -227,13 +225,6 @@ export function SandboxPermissionTab({ records, loading, onCreate, onUpdate, onD
                                                                 ))}
                                                         </div>
                                                 </ItemContent>
-                                                <ItemFooter className="justify-start">
-                                                        <span className="text-xs text-muted-foreground">
-                                                                {t(
-                                                                        `workspace-drawer.permission.scopeDescriptions.${scope}`,
-                                                                )}
-                                                        </span>
-                                                </ItemFooter>
                                         </Item>
                                 ))}
                         </div>
@@ -242,16 +233,17 @@ export function SandboxPermissionTab({ records, loading, onCreate, onUpdate, onD
 
         return (
                 <>
-                        <div className="flex flex-col gap-4">
-                                <div className="flex items-start justify-between gap-3">
-                                        <div className="space-y-1">
+                        <div className="flex flex-col gap-3">
+                                <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0">
                                                 <p className="text-sm text-muted-foreground">
                                                         {t('workspace-drawer.permission.description')}
                                                 </p>
                                         </div>
                                         <Button
-                                                size="sm"
+                                                size="xs"
                                                 variant="outline"
+                                                className="shrink-0"
                                                 onClick={() => {
                                                         setEditingGrant(null);
                                                         setDialogOpen(true);
@@ -262,28 +254,38 @@ export function SandboxPermissionTab({ records, loading, onCreate, onUpdate, onD
                                         </Button>
                                 </div>
 
-                                <InputGroup>
-                                        <InputGroupInput
-                                                placeholder={t('workspace-drawer.permission.searchPlaceholder')}
-                                                value={search}
-                                                onChange={(event) => setSearch(event.target.value)}
-                                        />
-                                        <InputGroupAddon align="inline-end">
-                                                <Search />
-                                        </InputGroupAddon>
-                                </InputGroup>
-
                                 <Tabs value={activeScope} onValueChange={(value) => setActiveScope(value as SandboxGrantScope)}>
-                                        <TabsList variant="line" className="w-full justify-start">
+                                        <div className="flex items-center gap-2">
+                                                <InputGroup className="min-w-0 flex-1">
+                                                        <InputGroupInput
+                                                                placeholder={t(
+                                                                        'workspace-drawer.permission.searchPlaceholder',
+                                                                )}
+                                                                value={search}
+                                                                onChange={(event) => setSearch(event.target.value)}
+                                                        />
+                                                        <InputGroupAddon align="inline-end">
+                                                                <Search />
+                                                        </InputGroupAddon>
+                                                </InputGroup>
+                                        </div>
+                                        <TabsList
+                                                variant="line"
+                                                className="w-full justify-start gap-0.5 overflow-x-auto no-scrollbar"
+                                        >
                                                 {SCOPE_ORDER.map((scope) => (
-                                                        <TabsTrigger key={scope} value={scope}>
+                                                        <TabsTrigger
+                                                                key={scope}
+                                                                value={scope}
+                                                                className="h-7 flex-none gap-1 px-2 text-xs"
+                                                        >
                                                                 {scopeIcon(scope)}
                                                                 {t(`workspace-drawer.permission.scopes.${scope}`)}
                                                         </TabsTrigger>
                                                 ))}
                                         </TabsList>
                                         {SCOPE_ORDER.map((scope) => (
-                                                <TabsContent key={scope} value={scope} className="mt-2">
+                                                <TabsContent key={scope} value={scope} className="mt-1.5">
                                                         {renderList(scope)}
                                                 </TabsContent>
                                         ))}
