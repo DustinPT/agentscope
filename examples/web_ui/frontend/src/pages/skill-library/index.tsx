@@ -1,11 +1,11 @@
-import { ArrowLeft, Download, FileArchive, FileText, Hash, Search, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Download, FileArchive, FileSearch, FileText, Hash, Search, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { SkillVersionDetailDrawer } from './skill-version-detail-drawer';
-import { skillLibraryApi, type SkillLibraryRecord, type SkillLibrarySearchHit } from '@/api';
+import { skillLibraryApi, type SkillLibraryRecord } from '@/api';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ProjectDirectoryBrowser } from '@/components/project-directory/ProjectDirectoryBrowser';
@@ -31,12 +31,6 @@ export function SkillLibraryPage() {
         const [skills, setSkills] = useState<SkillLibraryRecord[]>([]);
         const [total, setTotal] = useState(0);
         const [skillsLoading, setSkillsLoading] = useState(false);
-        const [toolQuery, setToolQuery] = useState('');
-        const [toolLimit, setToolLimit] = useState('5');
-        const [toolMinScore, setToolMinScore] = useState('');
-        const [toolSearchLoading, setToolSearchLoading] = useState(false);
-        const [hasToolSearchRun, setHasToolSearchRun] = useState(false);
-        const [toolSearchSkills, setToolSearchSkills] = useState<SkillLibrarySearchHit[]>([]);
         const [detailLoading, setDetailLoading] = useState(false);
         const [detail, setDetail] = useState<SkillLibraryRecord | null>(null);
         const [versionsLoading, setVersionsLoading] = useState(false);
@@ -119,29 +113,6 @@ export function SkillLibraryPage() {
                 }
         };
 
-        const runToolSearch = async () => {
-                const normalizedQuery = toolQuery.trim();
-                if (!normalizedQuery) return;
-                const normalizedMinScore = toolMinScore.trim();
-                const parsedMinScore = normalizedMinScore ? Number(normalizedMinScore) : undefined;
-                setToolSearchLoading(true);
-                setHasToolSearchRun(true);
-                try {
-                        const response = await skillLibraryApi.search({
-                                query: normalizedQuery,
-                                limit: Number(toolLimit) || 5,
-                                ...(parsedMinScore !== undefined && Number.isFinite(parsedMinScore)
-                                        ? {
-                                                  min_score: parsedMinScore,
-                                          }
-                                        : {}),
-                        });
-                        setToolSearchSkills(response.skills);
-                } finally {
-                        setToolSearchLoading(false);
-                }
-        };
-
         const handleArchiveDownload = async (name: string) => {
                 const blob = await skillLibraryApi.downloadArchive(name);
                 const url = URL.createObjectURL(blob);
@@ -187,6 +158,10 @@ export function SkillLibraryPage() {
                                 </div>
                                 {selectedSkillName ? null : (
                                         <div className="flex items-center gap-2">
+                                                <Button variant="outline" onClick={() => navigate('/skill-library-test')}>
+                                                        <FileSearch className="size-4" />
+                                                        {t('settings.skillLibrary.openTestPage')}
+                                                </Button>
                                                 <input
                                                         ref={fileInputRef}
                                                         type="file"
@@ -402,106 +377,6 @@ export function SkillLibraryPage() {
                                                                                 {t('settings.skillLibrary.totalCount', { count: total })}
                                                                         </div>
                                                                 </div>
-                                                        </CardContent>
-                                                </Card>
-
-                                                <Card>
-                                                        <CardHeader>
-                                                                <CardTitle>{t('settings.skillLibrary.testSearchTitle')}</CardTitle>
-                                                                <CardDescription>
-                                                                        {t('settings.skillLibrary.testSearchDescription')}
-                                                                </CardDescription>
-                                                        </CardHeader>
-                                                        <CardContent className="space-y-4">
-                                                                <div className="flex flex-col gap-3 md:flex-row md:items-end">
-                                                                        <div className="w-full md:flex-1">
-                                                                                <Input
-                                                                                        placeholder={t('settings.skillLibrary.testSearchQueryPlaceholder')}
-                                                                                        value={toolQuery}
-                                                                                        onChange={(event) => setToolQuery(event.target.value)}
-                                                                                        onKeyDown={(event) => {
-                                                                                                if (event.key === 'Enter') {
-                                                                                                        void runToolSearch();
-                                                                                                }
-                                                                                        }}
-                                                                                />
-                                                                        </div>
-                                                                        <div className="w-full md:w-32">
-                                                                                <div className="mb-2 text-sm text-muted-foreground">
-                                                                                        {t('settings.skillLibrary.testSearchLimitLabel')}
-                                                                                </div>
-                                                                                <Input
-                                                                                        type="number"
-                                                                                        min={1}
-                                                                                        max={20}
-                                                                                        step="1"
-                                                                                        value={toolLimit}
-                                                                                        onChange={(event) => setToolLimit(event.target.value)}
-                                                                                />
-                                                                        </div>
-                                                                        <div className="w-full md:w-36">
-                                                                                <div className="mb-2 text-sm text-muted-foreground">
-                                                                                        {t('settings.skillLibrary.testSearchMinScoreLabel')}
-                                                                                </div>
-                                                                                <Input
-                                                                                        type="number"
-                                                                                        min={0}
-                                                                                        max={1}
-                                                                                        step="0.01"
-                                                                                        placeholder={t('settings.skillLibrary.testSearchMinScorePlaceholder')}
-                                                                                        value={toolMinScore}
-                                                                                        onChange={(event) => setToolMinScore(event.target.value)}
-                                                                                />
-                                                                        </div>
-                                                                        <Button
-                                                                                variant="outline"
-                                                                                onClick={() => void runToolSearch()}
-                                                                                disabled={toolSearchLoading || !toolQuery.trim()}
-                                                                        >
-                                                                                <Search className="size-4" />
-                                                                                {t('settings.skillLibrary.testSearchRun')}
-                                                                        </Button>
-                                                                </div>
-
-                                                                {toolSearchSkills.length > 0 ? (
-                                                                        <div className="grid gap-3 md:grid-cols-2">
-                                                                                {toolSearchSkills.map((hit) => (
-                                                                                        <Card key={hit.skill.id}>
-                                                                                                <CardContent className="space-y-4 pt-6">
-                                                                                                        <div className="flex items-start justify-between gap-3">
-                                                                                                                <div className="font-medium">{hit.skill.name}</div>
-                                                                                                                {hit.score !== null ? (
-                                                                                                                        <Badge variant="secondary">
-                                                                                                                                {t('settings.skillLibrary.testSearchScore', {
-                                                                                                                                        score: hit.score.toFixed(4),
-                                                                                                                                })}
-                                                                                                                        </Badge>
-                                                                                                                ) : null}
-                                                                                                        </div>
-                                                                                                        <div className="text-sm text-muted-foreground">
-                                                                                                                {hit.skill.description}
-                                                                                                        </div>
-                                                                                                        <div className="flex justify-end">
-                                                                                                                <Button
-                                                                                                                        variant="outline"
-                                                                                                                        onClick={() =>
-                                                                                                                                navigate(
-                                                                                                                                        `/skill-library/${encodeURIComponent(hit.skill.name)}`,
-                                                                                                                                )
-                                                                                                                        }
-                                                                                                                >
-                                                                                                                        {t('settings.skillLibrary.viewDetail')}
-                                                                                                                </Button>
-                                                                                                        </div>
-                                                                                                </CardContent>
-                                                                                        </Card>
-                                                                                ))}
-                                                                        </div>
-                                                                ) : hasToolSearchRun ? (
-                                                                        <div className="text-sm text-muted-foreground">
-                                                                                {t('settings.skillLibrary.testSearchEmpty')}
-                                                                        </div>
-                                                                ) : null}
                                                         </CardContent>
                                                 </Card>
 

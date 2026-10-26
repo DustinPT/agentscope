@@ -814,6 +814,10 @@
                 "skillLibrary": {
                         "title": "Skill Library",
                         "description": "Upload ZIP skill packages and browse your own skill assets.",
+                        "openTestPage": "Skill Test",
+                        "backToLibrary": "Back to Skill Library",
+                        "testPageTitle": "Skill Test",
+                        "testPageDescription": "Validate search_skills retrieval behavior on a dedicated page without mixing it into skill management.",
                         "upload": "Upload Skill Package",
                         "uploading": "Uploading…",
                         "download": "Download Skill",

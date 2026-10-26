@@ -91,6 +91,7 @@ export function AppSidebar() {
                                                                                 hidden: false,
                                                                         }}
                                                                         isActive={
+                                                                                location.pathname === '/skill-library-test' ||
                                                                                 location.pathname === '/skill-library' ||
                                                                                 location.pathname.startsWith('/skill-library/')
                                                                         }

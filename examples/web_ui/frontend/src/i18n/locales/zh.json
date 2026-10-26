@@ -814,6 +814,10 @@
                 "skillLibrary": {
                         "title": "技能库",
                         "description": "上传 ZIP 技能包，并浏览你自己的技能资产。",
+                        "openTestPage": "技能测试",
+                        "backToLibrary": "返回技能库",
+                        "testPageTitle": "技能测试",
+                        "testPageDescription": "在独立页面中验证 search_skills 检索效果，避免和技能管理视图混在一起。",
                         "upload": "上传技能包",
                         "uploading": "上传中…",
                         "download": "下载技能",

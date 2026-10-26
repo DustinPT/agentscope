@@ -7,13 +7,14 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
 import { useTranslation } from '@/i18n/useI18n';
-import { ChatPage } from '@/pages/chat';
 import { ChannelPage } from '@/pages/channel';
+import { ChatPage } from '@/pages/chat';
 import { CredentialPage } from '@/pages/credential';
 import { SchedulePage } from '@/pages/schedule';
-import { SkillLibraryPage } from '@/pages/skill-library';
 import { ModelDefaultsPage, SettingsConnectionPage, SettingsHomePage } from '@/pages/settings';
 import { SetupPage } from '@/pages/setup';
+import { SkillLibraryPage } from '@/pages/skill-library';
+import { SkillLibraryTestPage } from '@/pages/skill-library/skill-library-test-page';
 
 function SetupPageRoute() {
 	const navigate = useNavigate();
@@ -40,12 +41,14 @@ const router = createBrowserRouter([
                         { path: '/channel', element: <ChannelPage /> },
 			{ path: '/credential', element: <CredentialPage /> },
                         { path: '/skill-library', element: <SkillLibraryPage /> },
+                        { path: '/skill-library-test', element: <SkillLibraryTestPage /> },
                         { path: '/skill-library/:skillName', element: <SkillLibraryPage /> },
                         { path: '/settings', element: <SettingsHomePage /> },
                         { path: '/settings/connection', element: <SettingsConnectionPage /> },
                         { path: '/settings/model-defaults', element: <ModelDefaultsPage /> },
                         { path: '/settings/skill-library', element: <Navigate to="/skill-library" replace /> },
                         { path: '/settings/skill-library/:skillName', element: <Navigate to="/skill-library" replace /> },
+                        { path: '/settings/skill-library-test', element: <Navigate to="/skill-library-test" replace /> },
 		],
 	},
 	{ path: '/setup', element: <SetupPageRoute /> },
