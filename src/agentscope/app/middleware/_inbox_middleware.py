@@ -96,13 +96,23 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 agent.state.session_id,
             )
 
-            # Inject into agent context (same pattern as
-            # ToolOffloadMiddleware).
+            # Inject into the current reply. Inbox payloads can arrive before
+            # the current round has produced any model blocks, so the context
+            # tail may still be the previous round's assistant message. We
+            # must check ``reply_id`` here and split on mismatch; otherwise
+            # multiple reply rounds are merged into one context entry.
+            #
+            # ``get_current_reply_msg()`` and ``_save_model_blocks_to_context()``
+            # intentionally rely on the invariant established here: once inbox
+            # hints are segmented by ``reply_id``, the context tail for the
+            # active round is the current reply message, so those helpers can
+            # continue using the last assistant message as the authority.
             if len(agent.state.context) > 0:
                 last_msg = agent.state.context[-1]
                 if (
                     last_msg.role == "assistant"
                     and last_msg.name == agent.name
+                    and last_msg.id == agent.state.reply_id
                 ):
                     last_msg.content.extend(hint_blocks)
                 else:
