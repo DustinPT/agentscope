@@ -14,6 +14,7 @@ from .._bus_ops import deliver_to_inbox
 from ..message_bus import MessageBus, MessageBusKeys
 from ..middleware._subagent_result_middleware import (
     _build_error_hint_content,
+    _extract_run_error_text,
     is_msg_awaiting_tool_interaction,
     is_terminal_parent_invocation_status,
     load_session_current_reply,
@@ -124,6 +125,7 @@ class SubAgentReaper:
             user_id=user_id,
             task=task,
             child_session_name=child_session.config.name,
+            current_reply_text=_extract_run_error_text(current_reply),
         )
 
     async def _decrement_parent_task_descendant_count(
@@ -171,6 +173,7 @@ class SubAgentReaper:
         user_id: str,
         task: SubAgentTaskRecord,
         child_session_name: str,
+        current_reply_text: str | None = None,
     ) -> None:
         """Send one synthetic terminal error for a stalled child invocation."""
         if is_terminal_parent_invocation_status(task.status):
@@ -205,7 +208,8 @@ class SubAgentReaper:
                 agent_name=child_agent.data.name,
                 session_id=task.child_session_id,
                 session_name=child_session_name,
-                error_text=(
+                error_text=current_reply_text
+                or (
                     "The child session finished running but did not produce "
                     "a final reply."
                 ),

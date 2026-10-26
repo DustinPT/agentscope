@@ -49,6 +49,16 @@ reply.
 """.strip()
 
 
+_RUN_ERROR_KIND_SUMMARIES = {
+    "rate_limit": "Model service is rate limited.",
+    "auth": "Model authentication failed.",
+    "timeout": "Model request timed out.",
+    "connection": "Model service connection failed.",
+    "http": "Model request failed.",
+    "unknown": "Reply generation failed.",
+}
+
+
 def is_terminal_parent_invocation_status(status: str | None) -> bool:
     """Return whether the delegated task status is already terminal."""
     return status in _TERMINAL_PARENT_INVOCATION_STATUSES
@@ -189,6 +199,59 @@ def _build_error_hint_content(
         f"Error:\n\n{error_text}\n"
         "</subagent-message>"
     )
+
+
+def _extract_run_error_text(reply_msg: Msg | None) -> str | None:
+    """Format persisted child-session failure metadata for parent delivery."""
+    if reply_msg is None:
+        return None
+
+    metadata = reply_msg.metadata or {}
+    if metadata.get("terminal_state") != "failed":
+        return None
+
+    run_error = metadata.get("run_error")
+    if not isinstance(run_error, dict):
+        return None
+
+    kind = run_error.get("kind")
+    summary = run_error.get("summary")
+    detail = run_error.get("detail")
+    retryable = run_error.get("retryable")
+    status_code = run_error.get("status_code")
+
+    lines: list[str] = []
+    if isinstance(summary, str) and summary.strip():
+        lines.append(summary.strip())
+    elif isinstance(kind, str) and kind in _RUN_ERROR_KIND_SUMMARIES:
+        lines.append(_RUN_ERROR_KIND_SUMMARIES[kind])
+
+    extra_lines: list[str] = []
+    if isinstance(kind, str) and kind.strip():
+        extra_lines.append(f"Kind: {kind.strip()}")
+    if status_code is not None:
+        extra_lines.append(f"Status code: {status_code}")
+    if isinstance(detail, str) and detail.strip():
+        extra_lines.append(f"Detail: {detail.strip()}")
+    if isinstance(retryable, bool):
+        extra_lines.append(f"Retryable: {'yes' if retryable else 'no'}")
+
+    if extra_lines:
+        if lines:
+            lines.append("")
+        lines.extend(extra_lines)
+
+    if retryable is True:
+        lines.extend(
+            [
+                "",
+                "This error may be recoverable. The main agent can resume "
+                "this existing child session to continue execution.",
+            ],
+        )
+
+    formatted = "\n".join(lines).strip()
+    return formatted or None
 
 
 async def load_session_current_reply(
