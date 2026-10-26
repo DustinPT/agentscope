@@ -720,6 +720,8 @@ class StorageBase(ABC):
         self,
         user_id: str,
         record: SkillLibraryRecord,
+        *,
+        refresh_updated_at: bool = True,
     ) -> SkillLibraryRecord:
         """Create or update one skill library record."""
 

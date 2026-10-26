@@ -223,7 +223,13 @@ class SkillLibraryService:
             return current
         updated = current.model_copy(deep=True)
         updated.is_current = False
-        return await self._storage.upsert_skill(user_id, updated)
+        # Keep the historical version's original update time so version history
+        # reflects when that package was actually last changed.
+        return await self._storage.upsert_skill(
+            user_id,
+            updated,
+            refresh_updated_at=False,
+        )
 
     async def _cleanup_empty_dirs(self, skill_name: str, user_id: str) -> None:
         versions_dir = self._skill_versions_dir(user_id, skill_name)

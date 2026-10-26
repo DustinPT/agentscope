@@ -2080,6 +2080,8 @@ class RedisStorage(StorageBase):
         self,
         user_id: str,
         record: SkillLibraryRecord,
+        *,
+        refresh_updated_at: bool = True,
     ) -> SkillLibraryRecord:
         """Create or update one skill library record."""
         existing = await self.get_skill(record.id)
@@ -2096,7 +2098,8 @@ class RedisStorage(StorageBase):
             persisted.skill_markdown = record.skill_markdown
             persisted.file_manifest = record.file_manifest
             persisted.embedding = record.embedding
-            persisted.updated_at = datetime.now()
+            if refresh_updated_at:
+                persisted.updated_at = datetime.now()
         else:
             persisted = record.model_copy(deep=True)
             persisted.user_id = user_id
