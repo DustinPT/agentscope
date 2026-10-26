@@ -4,6 +4,7 @@ import type { ChangeEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { SkillVersionDetailDrawer } from './skill-version-detail-drawer';
 import { skillLibraryApi, type SkillLibraryRecord, type SkillLibrarySearchHit } from '@/api';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
@@ -38,6 +39,10 @@ export function SkillLibraryPage() {
         const [toolSearchSkills, setToolSearchSkills] = useState<SkillLibrarySearchHit[]>([]);
         const [detailLoading, setDetailLoading] = useState(false);
         const [detail, setDetail] = useState<SkillLibraryRecord | null>(null);
+        const [versionsLoading, setVersionsLoading] = useState(false);
+        const [versions, setVersions] = useState<SkillLibraryRecord[]>([]);
+        const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
+        const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
         const [deleteTarget, setDeleteTarget] = useState<SkillLibraryRecord | null>(null);
         const [uploading, setUploading] = useState(false);
 
@@ -68,17 +73,29 @@ export function SkillLibraryPage() {
                 }
         }, []);
 
+        const loadVersions = useCallback(async (name: string) => {
+                setVersionsLoading(true);
+                try {
+                        const response = await skillLibraryApi.listVersions(name);
+                        setVersions(response);
+                } finally {
+                        setVersionsLoading(false);
+                }
+        }, []);
+
         useEffect(() => {
-                        void loadSkills('');
+                void loadSkills('');
         }, [loadSkills]);
 
         useEffect(() => {
                 if (selectedSkillName) {
                         void loadDetail(selectedSkillName);
+                        void loadVersions(selectedSkillName);
                 } else {
                         setDetail(null);
+                        setVersions([]);
                 }
-        }, [loadDetail, selectedSkillName]);
+        }, [loadDetail, loadVersions, selectedSkillName]);
 
         const handleUploadClick = () => {
                 fileInputRef.current?.click();
@@ -199,6 +216,11 @@ export function SkillLibraryPage() {
                                                                 <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
                                                                         <div className="space-y-3">
                                                                                 <div className="flex flex-wrap items-center gap-2">
+                                                                                        <Badge variant="default">
+                                                                                                {t('settings.skillLibrary.version.versionBadge', {
+                                                                                                        version: detail.version_number,
+                                                                                                })}
+                                                                                        </Badge>
                                                                                         <Badge variant="secondary">
                                                                                                 <Hash className="size-3.5" />
                                                                                                 {detail.content_hash}
@@ -249,6 +271,10 @@ export function SkillLibraryPage() {
                                                                                 <FileArchive className="size-4" />
                                                                                 {t('settings.skillLibrary.detail.tabs.files')}
                                                                         </TabsTrigger>
+                                                                        <TabsTrigger value="history">
+                                                                                <FileArchive className="size-4" />
+                                                                                {t('settings.skillLibrary.detail.tabs.history')}
+                                                                        </TabsTrigger>
                                                                 </TabsList>
                                                                 <TabsContent value="skill-md">
                                                                         <Card>
@@ -285,6 +311,62 @@ export function SkillLibraryPage() {
                                                                                                         )
                                                                                                 }
                                                                                         />
+                                                                                </CardContent>
+                                                                        </Card>
+                                                                </TabsContent>
+                                                                <TabsContent value="history">
+                                                                        <Card>
+                                                                                <CardContent className="pt-6">
+                                                                                        {versionsLoading ? (
+                                                                                                <div className="text-sm text-muted-foreground">
+                                                                                                        {t('common.loading')}
+                                                                                                </div>
+                                                                                        ) : (
+                                                                                                <div className="grid gap-3">
+                                                                                                        {versions.map((version) => (
+                                                                                                                <Card key={version.id}>
+                                                                                                                        <CardContent className="flex flex-col gap-4 pt-6 md:flex-row md:items-start md:justify-between">
+                                                                                                                                <div className="space-y-2">
+                                                                                                                                        <div className="flex flex-wrap items-center gap-2">
+                                                                                                                                                <Badge variant={version.is_current ? 'default' : 'secondary'}>
+                                                                                                                                                        {version.is_current
+                                                                                                                                                                ? t('settings.skillLibrary.version.current')
+                                                                                                                                                                : t('settings.skillLibrary.version.history')}
+                                                                                                                                                </Badge>
+                                                                                                                                                <Badge variant="outline">
+                                                                                                                                                        {t('settings.skillLibrary.version.versionBadge', {
+                                                                                                                                                                version: version.version_number,
+                                                                                                                                                        })}
+                                                                                                                                                </Badge>
+                                                                                                                                        </div>
+                                                                                                                                        <div className="font-medium">
+                                                                                                                                                {version.archive_name}
+                                                                                                                                        </div>
+                                                                                                                                        <div className="text-sm text-muted-foreground break-all">
+                                                                                                                                                {version.content_hash}
+                                                                                                                                        </div>
+                                                                                                                                        <div className="text-sm text-muted-foreground">
+                                                                                                                                                {t('settings.skillLibrary.detail.updatedAt', {
+                                                                                                                                                        value: formatDateTime(version.updated_at),
+                                                                                                                                                })}
+                                                                                                                                        </div>
+                                                                                                                                </div>
+                                                                                                                                <div className="flex shrink-0 items-center gap-2">
+                                                                                                                                        <Button
+                                                                                                                                                variant="outline"
+                                                                                                                                                onClick={() => {
+                                                                                                                                                        setActiveVersionId(version.id);
+                                                                                                                                                        setVersionDrawerOpen(true);
+                                                                                                                                                }}
+                                                                                                                                        >
+                                                                                                                                                {t('settings.skillLibrary.viewDetail')}
+                                                                                                                                        </Button>
+                                                                                                                                </div>
+                                                                                                                        </CardContent>
+                                                                                                                </Card>
+                                                                                                        ))}
+                                                                                                </div>
+                                                                                        )}
                                                                                 </CardContent>
                                                                         </Card>
                                                                 </TabsContent>
@@ -440,6 +522,13 @@ export function SkillLibraryPage() {
                                                                                                 })}
                                                                                         </Badge>
                                                                                 </div>
+                                                                                <div className="flex flex-wrap gap-2">
+                                                                                        <Badge variant="outline">
+                                                                                                {t('settings.skillLibrary.version.versionBadge', {
+                                                                                                        version: skill.version_number,
+                                                                                                })}
+                                                                                        </Badge>
+                                                                                </div>
                                                                                 <div className="text-xs break-all text-muted-foreground">
                                                                                         {skill.content_hash}
                                                                                 </div>
@@ -485,6 +574,23 @@ export function SkillLibraryPage() {
                                         </div>
                                 )}
                         </div>
+
+                        {selectedSkillName ? (
+                                <SkillVersionDetailDrawer
+                                        skillName={selectedSkillName}
+                                        versionId={activeVersionId}
+                                        open={versionDrawerOpen}
+                                        onOpenChange={setVersionDrawerOpen}
+                                        onRollback={(record) => {
+                                                setDetail(record);
+                                                void loadVersions(selectedSkillName);
+                                                void loadSkills(query);
+                                        }}
+                                        onDeleted={() => {
+                                                void loadVersions(selectedSkillName);
+                                        }}
+                                />
+                        ) : null}
 
                         <DeleteDialog
                                 open={!!deleteTarget}

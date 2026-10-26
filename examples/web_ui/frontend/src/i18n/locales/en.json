@@ -835,7 +835,9 @@
                         "deleteDescription": "This removes the skill metadata, index entries, and stored files.",
                         "toast": {
                                 "uploadSuccess": "Skill {{name}} uploaded",
-                                "deleteSuccess": "Skill {{name}} deleted"
+                                "deleteSuccess": "Skill {{name}} deleted",
+                                "rollbackSuccess": "Created a new current version v{{version}}",
+                                "deleteVersionSuccess": "Deleted historical version v{{version}}"
                         },
                         "card": {
                                 "fileCount": "{{count}} files",
@@ -850,8 +852,19 @@
                                 "updatedAt": "Updated: {{value}}",
                                 "tabs": {
                                         "skillMd": "SKILL.md",
-                                        "files": "Files"
+                                        "files": "Files",
+                                        "history": "Version History"
                                 }
+                        },
+                        "version": {
+                                "loading": "Loading version details…",
+                                "current": "Current Version",
+                                "history": "Historical Version",
+                                "rollback": "Roll Back to This Version",
+                                "versionTitle": "Version v{{version}}",
+                                "versionBadge": "v{{version}}",
+                                "deleteTitle": "Delete historical version v{{version}}?",
+                                "deleteDescription": "This removes only the selected historical version and does not affect the current version."
                         }
                 }
         },

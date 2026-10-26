@@ -736,7 +736,15 @@ class StorageBase(ABC):
         user_id: str,
         skill_name: str,
     ) -> SkillLibraryRecord | None:
-        """Fetch one skill library record by user and skill name."""
+        """Fetch the current skill library record by user and skill name."""
+
+    @abstractmethod
+    async def list_skill_versions(
+        self,
+        user_id: str,
+        skill_name: str,
+    ) -> list[SkillLibraryRecord]:
+        """List all versions for one user-owned skill name."""
 
     @abstractmethod
     async def list_skills(
@@ -763,7 +771,15 @@ class StorageBase(ABC):
         user_id: str,
         skill_name: str,
     ) -> bool:
-        """Delete one skill library record by user and skill name."""
+        """Delete all versions for one skill library record by user and skill name."""
+
+    @abstractmethod
+    async def delete_skill_version(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> bool:
+        """Delete one skill library version by owner and record id."""
 
     # ------------------------------------------------------------------
     # Team persistence

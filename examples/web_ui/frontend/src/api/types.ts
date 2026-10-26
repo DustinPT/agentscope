@@ -555,6 +555,8 @@ export interface SkillLibraryFileRecord {
 export interface SkillLibraryRecord extends RecordBase {
         user_id: string;
         name: string;
+        version_number: number;
+        is_current: boolean;
         description: string;
         archive_name: string;
         dir: string;

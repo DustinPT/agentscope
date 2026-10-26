@@ -34,13 +34,14 @@ class _UploadSkillToLibraryParams(ParamsBase):
 
 
 class UploadSkillToLibrary(ToolBase):
-    """Upload or replace one skill package in the current user's library."""
+    """Upload one skill package and preserve older versions in the library."""
 
     name = "UploadSkillToLibrary"
     description = (
         "Upload a skill ZIP from the current workspace into the skill "
         "library. If the library already contains a skill with the same "
-        "declared name, replace it with the new package."
+        "declared name, create a new current version while preserving "
+        "the older versions in history."
     )
     input_schema: dict[str, Any] = _UploadSkillToLibraryParams.model_json_schema()
     is_concurrency_safe: bool = False
@@ -198,6 +199,7 @@ class UploadSkillToLibrary(ToolBase):
                     "skill": record.name,
                     "description": record.description,
                     "action": action,
+                    "version_number": record.version_number,
                 },
             )
         except Exception as exc:  # noqa: BLE001

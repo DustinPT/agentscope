@@ -32,6 +32,15 @@ class SkillLibraryRecord(_RecordBase):
         description="Unique skill name within one user scope.",
         min_length=1,
     )
+    version_number: int = Field(
+        default=1,
+        description="Monotonic version number within one user-owned skill.",
+        ge=1,
+    )
+    is_current: bool = Field(
+        default=True,
+        description="Whether this record is the current version for the skill name.",
+    )
     description: str = Field(
         description="Skill description from SKILL.md front matter.",
         default="",

@@ -24,12 +24,12 @@ class _DeleteSkillFromLibraryParams(ParamsBase):
 
 
 class DeleteSkillFromLibrary(ToolBase):
-    """Delete one user-owned skill from the skill library."""
+    """Delete one user-owned skill and all of its versions from the skill library."""
 
     name = "DeleteSkillFromLibrary"
     description = (
         "Delete a skill from the current user's skill library by its exact "
-        "name. Use this to remove obsolete or unwanted skills."
+        "name. This removes the current version and all historical versions."
     )
     input_schema: dict[str, Any] = _DeleteSkillFromLibraryParams.model_json_schema()
     is_concurrency_safe: bool = False

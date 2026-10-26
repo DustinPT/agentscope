@@ -175,6 +175,8 @@ class RedisStorage(StorageBase):
         self._skill_index: AsyncSearchIndex | None = None
         self._skill_index_ready = False
         self._skill_index_lock = asyncio.Lock()
+        self._skill_record_defaults_ready = False
+        self._skill_record_defaults_lock = asyncio.Lock()
 
     def _key(self, template: str, **kwargs: str) -> str:
         """Format a key template with the given keyword arguments."""
@@ -244,6 +246,7 @@ class RedisStorage(StorageBase):
         """
         self._skill_index = None
         self._skill_index_ready = False
+        self._skill_record_defaults_ready = False
         if self._owned_pool is not None:
             await self._owned_pool.aclose()
             self._owned_pool = None
@@ -345,8 +348,58 @@ class RedisStorage(StorageBase):
         """Return the configured skill embedding dimensions for the current model."""
         return int(getattr(self._skill_embedding_model, "dimensions", None) or 1024)
 
-    async def _get_existing_skill_index_dimensions(self) -> int | None:
-        """Read the current Redis skill index vector dimensions, if the index exists."""
+    @staticmethod
+    def _extract_skill_index_field_names(payload: Any) -> set[str]:
+        """Extract indexed field names from FT.INFO payloads."""
+        field_names: set[str] = set()
+        if isinstance(payload, dict):
+            attributes = payload.get("attributes", payload)
+            if isinstance(attributes, list):
+                for item in attributes:
+                    field_names.update(
+                        RedisStorage._extract_skill_index_field_names(item),
+                    )
+            return field_names
+        if isinstance(payload, (list, tuple)):
+            if payload and all(isinstance(item, dict) for item in payload):
+                for item in payload:
+                    name = item.get("identifier") or item.get("attribute")
+                    if isinstance(name, str) and name:
+                        field_names.add(name.lstrip("$."))
+                return field_names
+
+            decoded: list[Any] = []
+            for item in payload:
+                if isinstance(item, bytes):
+                    try:
+                        decoded.append(item.decode("utf-8"))
+                    except UnicodeDecodeError:
+                        decoded.append(item)
+                else:
+                    decoded.append(item)
+
+            for index in range(len(decoded) - 1):
+                key = decoded[index]
+                if isinstance(key, (dict, list, tuple)):
+                    field_names.update(
+                        RedisStorage._extract_skill_index_field_names(key),
+                    )
+                    continue
+                if str(key).lower() not in {"identifier", "attribute"}:
+                    continue
+                value = decoded[index + 1]
+                if isinstance(value, str) and value:
+                    field_names.add(value.lstrip("$."))
+
+            for item in decoded:
+                if isinstance(item, (dict, list, tuple)):
+                    field_names.update(
+                        RedisStorage._extract_skill_index_field_names(item),
+                    )
+        return field_names
+
+    async def _get_existing_skill_index_metadata(self) -> tuple[int | None, set[str] | None]:
+        """Read the current Redis skill index metadata, if the index exists."""
         try:
             info = await self._client.ft(
                 self.key_config.skill_library_index_name,
@@ -354,12 +407,19 @@ class RedisStorage(StorageBase):
         except Exception as exc:  # pragma: no cover - backend-specific wording
             message = str(exc).lower()
             if "unknown index name" in message or "no such index" in message:
-                return None
+                return None, None
             raise
 
         if isinstance(info, dict):
-            return self._extract_skill_index_dimensions(info.get("attributes", info))
-        return self._extract_skill_index_dimensions(info)
+            attributes = info.get("attributes", info)
+            return (
+                self._extract_skill_index_dimensions(attributes),
+                self._extract_skill_index_field_names(attributes),
+            )
+        return (
+            self._extract_skill_index_dimensions(info),
+            self._extract_skill_index_field_names(info),
+        )
 
     async def _ensure_skill_index(self) -> None:
         """Create the RedisVL JSON index for skill records lazily."""
@@ -407,6 +467,12 @@ class RedisStorage(StorageBase):
                         "path": "$.name",
                         "attrs": {"case_sensitive": True},
                     },
+                    {
+                        "name": "is_current",
+                        "type": "tag",
+                        "path": "$.is_current",
+                        "attrs": {"case_sensitive": True},
+                    },
                     {"name": "description", "type": "text", "path": "$.description"},
                     {
                         "name": "content_hash",
@@ -423,6 +489,12 @@ class RedisStorage(StorageBase):
                         "name": "updated_at",
                         "type": "text",
                         "path": "$.updated_at",
+                        "attrs": {"sortable": True},
+                    },
+                    {
+                        "name": "version_number",
+                        "type": "numeric",
+                        "path": "$.version_number",
                         "attrs": {"sortable": True},
                     },
                     {
@@ -444,12 +516,28 @@ class RedisStorage(StorageBase):
                 validate_on_load=True,
             )
             if await self._skill_index.exists():
-                current_dimensions = await self._get_existing_skill_index_dimensions()
+                current_dimensions, current_fields = (
+                    await self._get_existing_skill_index_metadata()
+                )
                 expected_dimensions = self._expected_skill_embedding_dimensions()
+                required_fields = {
+                    "id",
+                    "user_id",
+                    "name",
+                    "is_current",
+                    "description",
+                    "content_hash",
+                    "created_at",
+                    "updated_at",
+                    "version_number",
+                    "embedding",
+                }
                 if (
                     current_dimensions is not None
                     and current_dimensions != expected_dimensions
                 ):
+                    await self._skill_index.delete(drop=False)
+                elif current_fields is not None and not required_fields.issubset(current_fields):
                     await self._skill_index.delete(drop=False)
             try:
                 await self._skill_index.create(overwrite=False)
@@ -497,6 +585,34 @@ class RedisStorage(StorageBase):
                 records.append(record)
         return records
 
+    async def _ensure_skill_record_defaults(self) -> None:
+        """Backfill version fields for pre-version skill records."""
+        if self._skill_record_defaults_ready:
+            return
+
+        async with self._skill_record_defaults_lock:
+            if self._skill_record_defaults_ready:
+                return
+
+            prefix = f"{self._skill_key_prefix()}*"
+            async for key in self._client.scan_iter(match=prefix):
+                if isinstance(key, bytes):
+                    key = key.decode("utf-8")
+                raw = await self._client.json().get(key)
+                record = self._parse_skill_record(raw)
+                if record is None:
+                    continue
+                changed = False
+                if "version_number" not in record.model_fields_set:
+                    record.version_number = 1
+                    changed = True
+                if "is_current" not in record.model_fields_set:
+                    record.is_current = True
+                    changed = True
+                if changed:
+                    await self._write_skill_json(record)
+            self._skill_record_defaults_ready = True
+
     @staticmethod
     async def _embed_skill_query(
         embedding_model: EmbeddingModelBase[Any],
@@ -542,6 +658,7 @@ class RedisStorage(StorageBase):
         limit: int,
         offset: int = 0,
         sort_by_updated_at: bool = False,
+        sort_by_version_number: bool = False,
     ) -> tuple[list[str], int]:
         """Run one raw RediSearch query against the skill index."""
         from redis.commands.search.query import Query
@@ -549,6 +666,8 @@ class RedisStorage(StorageBase):
         redis_query = Query(query_string).paging(offset, limit).no_content()
         if sort_by_updated_at:
             redis_query = redis_query.sort_by("updated_at", asc=False)
+        if sort_by_version_number:
+            redis_query = redis_query.sort_by("version_number", asc=False)
 
         result = await self._client.ft(
             self.key_config.skill_library_index_name,
@@ -563,6 +682,18 @@ class RedisStorage(StorageBase):
         ]
         return skill_ids, int(getattr(result, "total", 0))
 
+    def _build_current_skill_clause(
+        self,
+        *,
+        user_id: str,
+    ) -> str:
+        """Build the shared RediSearch clause for current skill versions."""
+        from redisvl.query.filter import Tag
+
+        return str(
+            (Tag("user_id") == user_id) & (Tag("is_current") == "true"),
+        )
+
     def _build_skill_list_query(
         self,
         *,
@@ -573,7 +704,7 @@ class RedisStorage(StorageBase):
         from redisvl.query.filter import Tag
         from redisvl.utils.token_escaper import TokenEscaper
 
-        base_clause = str(Tag("user_id") == user_id)
+        base_clause = self._build_current_skill_clause(user_id=user_id)
         normalized_keyword = (keyword or "").strip()
         if not normalized_keyword:
             return base_clause
@@ -1952,23 +2083,12 @@ class RedisStorage(StorageBase):
     ) -> SkillLibraryRecord:
         """Create or update one skill library record."""
         existing = await self.get_skill(record.id)
-        same_name_records = await self._list_skill_records_by_name(
-            user_id,
-            record.name,
-        )
-        canonical = next(
-            (item for item in same_name_records if item.id == record.id),
-            None,
-        )
-        if canonical is None and same_name_records:
-            canonical = same_name_records[0]
-        if canonical is None:
-            canonical = existing
-
-        if canonical is not None:
-            persisted = canonical.model_copy(deep=True)
+        if existing is not None:
+            persisted = existing.model_copy(deep=True)
             persisted.user_id = user_id
             persisted.name = record.name
+            persisted.version_number = record.version_number
+            persisted.is_current = record.is_current
             persisted.description = record.description
             persisted.archive_name = record.archive_name
             persisted.dir = record.dir
@@ -1982,14 +2102,8 @@ class RedisStorage(StorageBase):
             persisted.user_id = user_id
         self._validate_skill_embedding(persisted.embedding)
         await self._ensure_skill_index()
+        await self._ensure_skill_record_defaults()
         await self._write_skill_json(persisted)
-        duplicate_ids = [
-            item.id
-            for item in same_name_records
-            if item.id != persisted.id
-        ]
-        if duplicate_ids:
-            await self._delete_skill_records_by_ids(duplicate_ids)
         return persisted
 
     async def get_skill(
@@ -2005,8 +2119,12 @@ class RedisStorage(StorageBase):
         user_id: str,
         skill_name: str,
     ) -> SkillLibraryRecord | None:
-        """Fetch one skill library record by user and skill name."""
-        records = await self._list_skill_records_by_name(user_id, skill_name)
+        """Fetch the current skill library record by user and skill name."""
+        records = await self._list_skill_records_by_name(
+            user_id,
+            skill_name,
+            current_only=True,
+        )
         if not records:
             return None
         return records[0]
@@ -2015,17 +2133,22 @@ class RedisStorage(StorageBase):
         self,
         user_id: str,
         skill_name: str,
+        *,
+        current_only: bool = False,
     ) -> list[SkillLibraryRecord]:
         """Load all records sharing one user-scoped skill name."""
         await self._ensure_skill_index()
+        await self._ensure_skill_record_defaults()
         from redisvl.query import FilterQuery
         from redisvl.query.filter import Tag
 
         filter_expression = (Tag("user_id") == user_id) & (Tag("name") == skill_name)
+        if current_only:
+            filter_expression = filter_expression & (Tag("is_current") == "true")
         results = await self._skill_index.query(
             FilterQuery(
                 filter_expression=filter_expression,
-                num_results=100,
+                num_results=1000,
             ),
         )
         records = [
@@ -2037,10 +2160,27 @@ class RedisStorage(StorageBase):
             if record is not None
         ]
         records.sort(
-            key=lambda item: (item.updated_at, item.created_at, item.id),
+            key=lambda item: (
+                item.version_number,
+                item.updated_at,
+                item.created_at,
+                item.id,
+            ),
             reverse=True,
         )
         return records
+
+    async def list_skill_versions(
+        self,
+        user_id: str,
+        skill_name: str,
+    ) -> list[SkillLibraryRecord]:
+        """List all versions for one user-owned skill name."""
+        return await self._list_skill_records_by_name(
+            user_id,
+            skill_name,
+            current_only=False,
+        )
 
     async def list_skills(
         self,
@@ -2051,6 +2191,7 @@ class RedisStorage(StorageBase):
     ) -> tuple[list[SkillLibraryRecord], int]:
         """List skill library records with keyword filtering and pagination."""
         await self._ensure_skill_index()
+        await self._ensure_skill_record_defaults()
         page_ids, total = await self._run_skill_index_query(
             self._build_skill_list_query(user_id=user_id, keyword=keyword),
             limit=limit,
@@ -2067,6 +2208,7 @@ class RedisStorage(StorageBase):
     ) -> list[SkillLibraryRecord]:
         """Return the top-N most relevant skills for tool usage."""
         await self._ensure_skill_index()
+        await self._ensure_skill_record_defaults()
         from redisvl.query import HybridQuery
         from redisvl.query.filter import Tag
 
@@ -2084,7 +2226,10 @@ class RedisStorage(StorageBase):
             text_field_name="description",
             vector=vector,
             vector_field_name="embedding",
-            filter_expression=Tag("user_id") == user_id,
+            filter_expression=(
+                (Tag("user_id") == user_id)
+                & (Tag("is_current") == "true")
+            ),
             return_fields=["id"],
             combination_method="LINEAR",
             linear_alpha=0.6,
@@ -2117,11 +2262,23 @@ class RedisStorage(StorageBase):
         user_id: str,
         skill_name: str,
     ) -> bool:
-        """Delete one skill library record by user and skill name."""
-        records = await self._list_skill_records_by_name(user_id, skill_name)
+        """Delete all versions for one skill library record by user and skill name."""
+        records = await self.list_skill_versions(user_id, skill_name)
         if not records:
             return False
         await self._delete_skill_records_by_ids([record.id for record in records])
+        return True
+
+    async def delete_skill_version(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> bool:
+        """Delete one skill library version by owner and record id."""
+        record = await self.get_skill(skill_id)
+        if record is None or record.user_id != user_id:
+            return False
+        await self._delete_skill_records_by_ids([skill_id])
         return True
 
     async def _delete_skill_records_by_ids(

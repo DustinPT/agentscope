@@ -56,14 +56,46 @@ class SkillLibraryService:
     def _user_root(self, user_id: str) -> str:
         return os.path.join(self._root_dir, user_id)
 
-    def _skill_dir(self, user_id: str, skill_name: str) -> str:
+    def _skill_container_dir(self, user_id: str, skill_name: str) -> str:
         return os.path.join(self._user_root(user_id), skill_name)
 
-    def _relative_dir(self, user_id: str, skill_name: str) -> str:
+    def _skill_versions_dir(self, user_id: str, skill_name: str) -> str:
+        return os.path.join(
+            self._skill_container_dir(user_id, skill_name),
+            "versions",
+        )
+
+    def _skill_version_dir(
+        self,
+        user_id: str,
+        skill_name: str,
+        version_id: str,
+    ) -> str:
+        return os.path.join(
+            self._skill_versions_dir(user_id, skill_name),
+            version_id,
+        )
+
+    def _relative_path(self, absolute_path: str) -> str:
         return os.path.relpath(
-            self._skill_dir(user_id, skill_name),
+            absolute_path,
             self._root_dir,
         ).replace(os.sep, "/")
+
+    def _record_abs_dir(self, record: SkillLibraryRecord) -> str:
+        return os.path.abspath(os.path.join(self._root_dir, record.dir))
+
+    def _expected_record_relative_dir(self, record: SkillLibraryRecord) -> str:
+        """Return the canonical relative directory for one versioned record."""
+        return self._relative_path(
+            self._skill_version_dir(record.user_id, record.name, record.id),
+        )
+
+    @staticmethod
+    def _next_version_number(records: list[SkillLibraryRecord]) -> int:
+        if not records:
+            return 1
+        return max(record.version_number for record in records) + 1
 
     async def _embed_text(self, text: str) -> list[float]:
         """Generate one embedding vector for storage-managed search."""
@@ -178,6 +210,178 @@ class SkillLibraryService:
 
         return await asyncio.to_thread(_stage)
 
+    async def _deactivate_current_version(
+        self,
+        *,
+        user_id: str,
+        skill_name: str,
+    ) -> SkillLibraryRecord | None:
+        current = await self._storage.get_skill_by_name(user_id, skill_name)
+        if current is None:
+            return None
+        if not current.is_current:
+            return current
+        updated = current.model_copy(deep=True)
+        updated.is_current = False
+        return await self._storage.upsert_skill(user_id, updated)
+
+    async def _cleanup_empty_dirs(self, skill_name: str, user_id: str) -> None:
+        versions_dir = self._skill_versions_dir(user_id, skill_name)
+        if os.path.isdir(versions_dir) and not os.listdir(versions_dir):
+            await asyncio.to_thread(shutil.rmtree, versions_dir, True)
+        container_dir = self._skill_container_dir(user_id, skill_name)
+        if os.path.isdir(container_dir) and not os.listdir(container_dir):
+            await asyncio.to_thread(shutil.rmtree, container_dir, True)
+        user_root = self._user_root(user_id)
+        if os.path.isdir(user_root) and not os.listdir(user_root):
+            await asyncio.to_thread(shutil.rmtree, user_root, True)
+
+    async def _remove_record_dir(self, record: SkillLibraryRecord) -> None:
+        await asyncio.to_thread(shutil.rmtree, self._record_abs_dir(record), True)
+
+    async def _ensure_record_version_dir(
+        self,
+        record: SkillLibraryRecord,
+    ) -> SkillLibraryRecord:
+        """Migrate legacy container-root records into dedicated version folders."""
+        expected_relative_dir = self._expected_record_relative_dir(record)
+        if record.dir == expected_relative_dir:
+            return record
+
+        current_dir = self._record_abs_dir(record)
+        target_dir = self._skill_version_dir(record.user_id, record.name, record.id)
+        container_dir = self._skill_container_dir(record.user_id, record.name)
+
+        if os.path.abspath(current_dir) == os.path.abspath(target_dir):
+            updated = record.model_copy(deep=True)
+            updated.dir = expected_relative_dir
+            return await self._storage.upsert_skill(record.user_id, updated)
+
+        os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+
+        if os.path.abspath(current_dir) == os.path.abspath(container_dir):
+            os.makedirs(target_dir, exist_ok=True)
+
+            def _migrate_container_root() -> None:
+                for entry in os.scandir(container_dir):
+                    if entry.name == "versions":
+                        continue
+                    shutil.move(entry.path, os.path.join(target_dir, entry.name))
+
+            await asyncio.to_thread(_migrate_container_root)
+        else:
+            await asyncio.to_thread(shutil.move, current_dir, target_dir)
+
+        updated = record.model_copy(deep=True)
+        updated.dir = expected_relative_dir
+        return await self._storage.upsert_skill(record.user_id, updated)
+
+    async def _list_files_for_record(
+        self,
+        *,
+        record: SkillLibraryRecord,
+        relative_path: str = "",
+    ) -> list[dict[str, Any]]:
+        skill_dir = self._record_abs_dir(record)
+        target_dir = self._resolve_relative_path(
+            skill_dir=skill_dir,
+            relative_path=relative_path,
+        )
+        if not os.path.exists(target_dir):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Skill file path not found.",
+            )
+        if not os.path.isdir(target_dir):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The requested path is not a directory.",
+            )
+
+        def _list() -> list[dict[str, Any]]:
+            items: list[dict[str, Any]] = []
+            for entry in sorted(
+                os.scandir(target_dir),
+                key=lambda item: (not item.is_dir(), item.name.lower()),
+            ):
+                rel_path = os.path.relpath(entry.path, skill_dir).replace(os.sep, "/")
+                stat_result = entry.stat()
+                mime_type = None if entry.is_dir() else mimetypes.guess_type(entry.name)[0]
+                items.append(
+                    {
+                        "name": entry.name,
+                        "path": "" if rel_path == "." else rel_path,
+                        "is_dir": entry.is_dir(),
+                        "mime_type": mime_type,
+                        "size_bytes": None if entry.is_dir() else stat_result.st_size,
+                        "mtime": stat_result.st_mtime,
+                    },
+                )
+            return items
+
+        return await asyncio.to_thread(_list)
+
+    async def _read_file_for_record(
+        self,
+        *,
+        record: SkillLibraryRecord,
+        relative_path: str,
+    ) -> tuple[str, bytes]:
+        skill_dir = self._record_abs_dir(record)
+        target_path = self._resolve_relative_path(
+            skill_dir=skill_dir,
+            relative_path=relative_path,
+        )
+        if not os.path.isfile(target_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Skill file not found.",
+            )
+        return target_path, await asyncio.to_thread(Path(target_path).read_bytes)
+
+    async def _zip_record(
+        self,
+        *,
+        record: SkillLibraryRecord,
+    ) -> tuple[str, bytes]:
+        skill_dir = self._record_abs_dir(record)
+
+        def _zip() -> tuple[str, bytes]:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(
+                buf,
+                "w",
+                compression=zipfile.ZIP_DEFLATED,
+                strict_timestamps=False,
+            ) as zip_file:
+                for root, _dirs, files in os.walk(skill_dir):
+                    files.sort()
+                    for file_name in files:
+                        abs_path = os.path.join(root, file_name)
+                        rel_path = os.path.relpath(abs_path, skill_dir)
+                        zip_file.write(
+                            abs_path,
+                            arcname=os.path.join(record.name, rel_path),
+                        )
+            return f"{record.name}.zip", buf.getvalue()
+
+        return await asyncio.to_thread(_zip)
+
+    async def get_skill_version(
+        self,
+        user_id: str,
+        skill_name: str,
+        version_id: str,
+    ) -> SkillLibraryRecord:
+        """Load one owned skill version record or raise 404."""
+        record = await self._storage.get_skill(version_id)
+        if record is None or record.user_id != user_id or record.name != skill_name:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Skill version '{version_id}' not found.",
+            )
+        return await self._ensure_record_version_dir(record)
+
     async def get_skill(self, user_id: str, skill_name: str) -> SkillLibraryRecord:
         """Load one owned skill record or raise 404."""
         record = await self._storage.get_skill_by_name(user_id, skill_name)
@@ -195,19 +399,16 @@ class SkillLibraryService:
         file: UploadFile,
         overwrite: bool = False,
     ) -> SkillLibraryRecord:
-        """Upload one ZIP skill package into the managed user library."""
+        """Upload one ZIP skill package as a new current version."""
         skill_root, name, description, markdown = await self._stage_skill_zip(file)
-        existing = await self._storage.get_skill_by_name(user_id, name)
-        if existing is not None and not overwrite:
-            shutil.rmtree(os.path.dirname(skill_root), ignore_errors=True)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Skill '{name}' already exists.",
-            )
-
-        target_dir = self._skill_dir(user_id, name)
-        os.makedirs(self._user_root(user_id), exist_ok=True)
-        if os.path.exists(target_dir) and not overwrite:
+        existing_versions = await self._storage.list_skill_versions(user_id, name)
+        current = next(
+            (record for record in existing_versions if record.is_current),
+            None,
+        )
+        if current is not None:
+            current = await self._ensure_record_version_dir(current)
+        if current is not None and not overwrite:
             shutil.rmtree(os.path.dirname(skill_root), ignore_errors=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -217,26 +418,36 @@ class SkillLibraryService:
         manifest = await asyncio.to_thread(self._list_files, skill_root)
         content_hash = await asyncio.to_thread(_hash_directory, skill_root)
         embedding = await self._embed_text(description)
-        if overwrite and os.path.exists(target_dir):
-            await asyncio.to_thread(shutil.rmtree, target_dir, True)
-        await asyncio.to_thread(shutil.move, skill_root, target_dir)
-        await asyncio.to_thread(
-            shutil.rmtree,
-            os.path.dirname(skill_root),
-            True,
-        )
         record = SkillLibraryRecord(
             user_id=user_id,
             name=name,
+            version_number=self._next_version_number(existing_versions),
+            is_current=True,
             description=description,
             archive_name=file.filename or f"{name}.zip",
-            dir=self._relative_dir(user_id, name),
+            dir="",
             content_hash=content_hash,
             skill_markdown=markdown,
             file_manifest=manifest,
             embedding=embedding,
         )
-        return await self._storage.upsert_skill(user_id, record)
+        target_dir = self._skill_version_dir(user_id, name, record.id)
+        record.dir = self._relative_path(target_dir)
+        os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+        try:
+            await asyncio.to_thread(shutil.move, skill_root, target_dir)
+            if current is not None:
+                await self._deactivate_current_version(
+                    user_id=user_id,
+                    skill_name=name,
+                )
+            return await self._storage.upsert_skill(user_id, record)
+        finally:
+            await asyncio.to_thread(
+                shutil.rmtree,
+                os.path.dirname(skill_root),
+                True,
+            )
 
     async def list_skills(
         self,
@@ -254,20 +465,33 @@ class SkillLibraryService:
             offset=offset,
         )
 
+    async def list_skill_versions(
+        self,
+        *,
+        user_id: str,
+        skill_name: str,
+    ) -> list[SkillLibraryRecord]:
+        """List all versions for one owned skill."""
+        records = await self._storage.list_skill_versions(user_id, skill_name)
+        if not records:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Skill '{skill_name}' not found.",
+            )
+        return records
+
     async def delete_skill(self, *, user_id: str, skill_name: str) -> None:
-        """Delete one owned skill and its managed file directory."""
-        record = await self.get_skill(user_id, skill_name)
+        """Delete one owned skill and all its managed version directories."""
+        records = await self.list_skill_versions(user_id=user_id, skill_name=skill_name)
         deleted = await self._storage.delete_skill(user_id, skill_name)
         if not deleted:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Skill '{skill_name}' not found.",
             )
-        skill_dir = self._skill_dir(user_id, record.name)
-        await asyncio.to_thread(shutil.rmtree, skill_dir, True)
-        user_root = self._user_root(user_id)
-        if os.path.isdir(user_root) and not os.listdir(user_root):
-            await asyncio.to_thread(shutil.rmtree, user_root, True)
+        for record in records:
+            await self._remove_record_dir(record)
+        await self._cleanup_empty_dirs(skill_name, user_id)
 
     async def search_skills(
         self,
@@ -348,44 +572,25 @@ class SkillLibraryService:
     ) -> list[dict[str, Any]]:
         """List one directory inside the stored skill package."""
         record = await self.get_skill(user_id, skill_name)
-        skill_dir = self._skill_dir(user_id, record.name)
-        target_dir = self._resolve_relative_path(
-            skill_dir=skill_dir,
+        return await self._list_files_for_record(
+            record=record,
             relative_path=relative_path,
         )
-        if not os.path.exists(target_dir):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Skill file path not found.",
-            )
-        if not os.path.isdir(target_dir):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The requested path is not a directory.",
-            )
 
-        def _list() -> list[dict[str, Any]]:
-            items: list[dict[str, Any]] = []
-            for entry in sorted(
-                os.scandir(target_dir),
-                key=lambda item: (not item.is_dir(), item.name.lower()),
-            ):
-                rel_path = os.path.relpath(entry.path, skill_dir).replace(os.sep, "/")
-                stat_result = entry.stat()
-                mime_type = None if entry.is_dir() else mimetypes.guess_type(entry.name)[0]
-                items.append(
-                    {
-                        "name": entry.name,
-                        "path": "" if rel_path == "." else rel_path,
-                        "is_dir": entry.is_dir(),
-                        "mime_type": mime_type,
-                        "size_bytes": None if entry.is_dir() else stat_result.st_size,
-                        "mtime": stat_result.st_mtime,
-                    },
-                )
-            return items
-
-        return await asyncio.to_thread(_list)
+    async def list_skill_version_files(
+        self,
+        *,
+        user_id: str,
+        skill_name: str,
+        version_id: str,
+        relative_path: str = "",
+    ) -> list[dict[str, Any]]:
+        """List one directory inside a stored historical skill version."""
+        record = await self.get_skill_version(user_id, skill_name, version_id)
+        return await self._list_files_for_record(
+            record=record,
+            relative_path=relative_path,
+        )
 
     async def read_skill_file(
         self,
@@ -396,17 +601,25 @@ class SkillLibraryService:
     ) -> tuple[str, bytes]:
         """Read one file within a stored skill package."""
         record = await self.get_skill(user_id, skill_name)
-        skill_dir = self._skill_dir(user_id, record.name)
-        target_path = self._resolve_relative_path(
-            skill_dir=skill_dir,
+        return await self._read_file_for_record(
+            record=record,
             relative_path=relative_path,
         )
-        if not os.path.isfile(target_path):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Skill file not found.",
-            )
-        return target_path, await asyncio.to_thread(Path(target_path).read_bytes)
+
+    async def read_skill_version_file(
+        self,
+        *,
+        user_id: str,
+        skill_name: str,
+        version_id: str,
+        relative_path: str,
+    ) -> tuple[str, bytes]:
+        """Read one file within a stored historical skill version."""
+        record = await self.get_skill_version(user_id, skill_name, version_id)
+        return await self._read_file_for_record(
+            record=record,
+            relative_path=relative_path,
+        )
 
     async def zip_skill(
         self,
@@ -416,28 +629,81 @@ class SkillLibraryService:
     ) -> tuple[str, bytes]:
         """Create a ZIP archive for one stored skill package."""
         record = await self.get_skill(user_id, skill_name)
-        skill_dir = self._skill_dir(user_id, record.name)
+        return await self._zip_record(record=record)
 
-        def _zip() -> tuple[str, bytes]:
-            buf = io.BytesIO()
-            with zipfile.ZipFile(
-                buf,
-                "w",
-                compression=zipfile.ZIP_DEFLATED,
-                strict_timestamps=False,
-            ) as zip_file:
-                for root, _dirs, files in os.walk(skill_dir):
-                    files.sort()
-                    for file_name in files:
-                        abs_path = os.path.join(root, file_name)
-                        rel_path = os.path.relpath(abs_path, skill_dir)
-                        zip_file.write(
-                            abs_path,
-                            arcname=os.path.join(record.name, rel_path),
-                        )
-            return f"{record.name}.zip", buf.getvalue()
+    async def zip_skill_version(
+        self,
+        *,
+        user_id: str,
+        skill_name: str,
+        version_id: str,
+    ) -> tuple[str, bytes]:
+        """Create a ZIP archive for one stored historical skill version."""
+        record = await self.get_skill_version(user_id, skill_name, version_id)
+        return await self._zip_record(record=record)
 
-        return await asyncio.to_thread(_zip)
+    async def rollback_skill_version(
+        self,
+        *,
+        user_id: str,
+        skill_name: str,
+        version_id: str,
+    ) -> SkillLibraryRecord:
+        """Create a new current version from one historical skill version."""
+        source_record = await self.get_skill_version(user_id, skill_name, version_id)
+        if source_record.is_current:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The selected version is already current.",
+            )
+
+        existing_versions = await self._storage.list_skill_versions(user_id, skill_name)
+        new_record = SkillLibraryRecord(
+            user_id=user_id,
+            name=source_record.name,
+            version_number=self._next_version_number(existing_versions),
+            is_current=True,
+            description=source_record.description,
+            archive_name=source_record.archive_name,
+            dir="",
+            content_hash=source_record.content_hash,
+            skill_markdown=source_record.skill_markdown,
+            file_manifest=source_record.file_manifest,
+            embedding=source_record.embedding,
+        )
+        target_dir = self._skill_version_dir(user_id, skill_name, new_record.id)
+        new_record.dir = self._relative_path(target_dir)
+        os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+        await asyncio.to_thread(
+            shutil.copytree,
+            self._record_abs_dir(source_record),
+            target_dir,
+        )
+        await self._deactivate_current_version(user_id=user_id, skill_name=skill_name)
+        return await self._storage.upsert_skill(user_id, new_record)
+
+    async def delete_skill_version(
+        self,
+        *,
+        user_id: str,
+        skill_name: str,
+        version_id: str,
+    ) -> None:
+        """Delete one non-current historical skill version."""
+        record = await self.get_skill_version(user_id, skill_name, version_id)
+        if record.is_current:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The current version cannot be deleted from history.",
+            )
+        deleted = await self._storage.delete_skill_version(user_id, version_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Skill version '{version_id}' not found.",
+            )
+        await self._remove_record_dir(record)
+        await self._cleanup_empty_dirs(skill_name, user_id)
 
     async def get_skill_local_dir(
         self,
@@ -447,4 +713,4 @@ class SkillLibraryService:
     ) -> tuple[SkillLibraryRecord, str]:
         """Return one skill record and its managed local directory."""
         record = await self.get_skill(user_id, skill_name)
-        return record, self._skill_dir(user_id, record.name)
+        return record, self._record_abs_dir(record)

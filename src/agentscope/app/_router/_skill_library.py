@@ -71,7 +71,7 @@ async def upload_skill(
     user_id: str = Depends(get_current_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> SkillLibraryRecord:
-    """Upload or replace one ZIP skill package in the caller's skill library."""
+    """Upload one ZIP skill package as a new current version."""
     return await service.upload_skill(
         user_id=user_id,
         file=file,
@@ -154,8 +154,74 @@ async def delete_skill(
     user_id: str = Depends(get_current_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> None:
-    """Delete one skill and its associated metadata."""
+    """Delete one skill and all of its associated versions."""
     await service.delete_skill(user_id=user_id, skill_name=skill_name)
+
+
+@skill_library_router.get(
+    "/{skill_name}/versions",
+    response_model=list[SkillLibraryRecord],
+)
+async def list_skill_versions(
+    skill_name: str,
+    user_id: str = Depends(get_current_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> list[SkillLibraryRecord]:
+    """List all versions for one stored skill."""
+    return await service.list_skill_versions(
+        user_id=user_id,
+        skill_name=skill_name,
+    )
+
+
+@skill_library_router.get(
+    "/{skill_name}/versions/{version_id}",
+    response_model=SkillLibraryRecord,
+)
+async def get_skill_version_detail(
+    skill_name: str,
+    version_id: str,
+    user_id: str = Depends(get_current_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> SkillLibraryRecord:
+    """Return one stored skill version detail record."""
+    return await service.get_skill_version(user_id, skill_name, version_id)
+
+
+@skill_library_router.post(
+    "/{skill_name}/versions/{version_id}/rollback",
+    response_model=SkillLibraryRecord,
+)
+async def rollback_skill_version(
+    skill_name: str,
+    version_id: str,
+    user_id: str = Depends(get_current_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> SkillLibraryRecord:
+    """Create a new current version from one historical skill version."""
+    return await service.rollback_skill_version(
+        user_id=user_id,
+        skill_name=skill_name,
+        version_id=version_id,
+    )
+
+
+@skill_library_router.delete(
+    "/{skill_name}/versions/{version_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_skill_version(
+    skill_name: str,
+    version_id: str,
+    user_id: str = Depends(get_current_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> None:
+    """Delete one historical skill version."""
+    await service.delete_skill_version(
+        user_id=user_id,
+        skill_name=skill_name,
+        version_id=version_id,
+    )
 
 
 @skill_library_router.get(
@@ -166,10 +232,38 @@ async def download_skill_archive(
     user_id: str = Depends(get_skill_download_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> StreamingResponse:
-    """Download one stored skill as a ZIP archive."""
+    """Download the current stored skill version as a ZIP archive."""
     filename, payload = await service.zip_skill(
         user_id=user_id,
         skill_name=skill_name,
+    )
+    quoted = quote(filename)
+    headers = {
+        "Content-Disposition": (
+            f"attachment; filename={filename!r}; filename*=UTF-8''{quoted}"
+        ),
+    }
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/zip",
+        headers=headers,
+    )
+
+
+@skill_library_router.get(
+    "/{skill_name}/versions/{version_id}/download",
+)
+async def download_skill_version_archive(
+    skill_name: str,
+    version_id: str,
+    user_id: str = Depends(get_skill_download_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> StreamingResponse:
+    """Download one stored historical skill version as a ZIP archive."""
+    filename, payload = await service.zip_skill_version(
+        user_id=user_id,
+        skill_name=skill_name,
+        version_id=version_id,
     )
     quoted = quote(filename)
     headers = {
@@ -194,10 +288,31 @@ async def list_skill_files(
     user_id: str = Depends(get_current_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> list[SkillLibraryFileEntry]:
-    """List one directory inside the skill package."""
+    """List one directory inside the current skill version."""
     entries = await service.list_skill_files(
         user_id=user_id,
         skill_name=skill_name,
+        relative_path=path,
+    )
+    return [SkillLibraryFileEntry.model_validate(entry) for entry in entries]
+
+
+@skill_library_router.get(
+    "/{skill_name}/versions/{version_id}/files",
+    response_model=list[SkillLibraryFileEntry],
+)
+async def list_skill_version_files(
+    skill_name: str,
+    version_id: str,
+    path: str = Query(default="", description="Directory path relative to the skill root."),
+    user_id: str = Depends(get_current_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> list[SkillLibraryFileEntry]:
+    """List one directory inside a historical skill version."""
+    entries = await service.list_skill_version_files(
+        user_id=user_id,
+        skill_name=skill_name,
+        version_id=version_id,
         relative_path=path,
     )
     return [SkillLibraryFileEntry.model_validate(entry) for entry in entries]
@@ -213,10 +328,31 @@ async def preview_skill_file_text(
     user_id: str = Depends(get_skill_download_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> PlainTextResponse:
-    """Return one file as decoded text for preview panes."""
+    """Return one current-version file as decoded text for preview panes."""
     _abs_path, payload = await service.read_skill_file(
         user_id=user_id,
         skill_name=skill_name,
+        relative_path=path,
+    )
+    return PlainTextResponse(payload.decode("utf-8", errors="replace"))
+
+
+@skill_library_router.get(
+    "/{skill_name}/versions/{version_id}/files/content",
+    response_class=PlainTextResponse,
+)
+async def preview_skill_version_file_text(
+    skill_name: str,
+    version_id: str,
+    path: str = Query(..., description="File path relative to the skill root."),
+    user_id: str = Depends(get_skill_download_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> PlainTextResponse:
+    """Return one historical-version file as decoded text for preview panes."""
+    _abs_path, payload = await service.read_skill_version_file(
+        user_id=user_id,
+        skill_name=skill_name,
+        version_id=version_id,
         relative_path=path,
     )
     return PlainTextResponse(payload.decode("utf-8", errors="replace"))
@@ -231,10 +367,31 @@ async def preview_skill_file_raw(
     user_id: str = Depends(get_skill_download_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> StreamingResponse:
-    """Return one raw file for inline preview."""
+    """Return one current-version raw file for inline preview."""
     abs_path, payload = await service.read_skill_file(
         user_id=user_id,
         skill_name=skill_name,
+        relative_path=path,
+    )
+    media_type = mimetypes.guess_type(abs_path)[0] or "application/octet-stream"
+    return StreamingResponse(iter([payload]), media_type=media_type)
+
+
+@skill_library_router.get(
+    "/{skill_name}/versions/{version_id}/files/raw",
+)
+async def preview_skill_version_file_raw(
+    skill_name: str,
+    version_id: str,
+    path: str = Query(..., description="File path relative to the skill root."),
+    user_id: str = Depends(get_skill_download_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> StreamingResponse:
+    """Return one historical-version raw file for inline preview."""
+    abs_path, payload = await service.read_skill_version_file(
+        user_id=user_id,
+        skill_name=skill_name,
+        version_id=version_id,
         relative_path=path,
     )
     media_type = mimetypes.guess_type(abs_path)[0] or "application/octet-stream"
@@ -250,10 +407,41 @@ async def download_skill_file(
     user_id: str = Depends(get_skill_download_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> StreamingResponse:
-    """Download one file from the stored skill package."""
+    """Download one file from the current stored skill version."""
     _abs_path, payload = await service.read_skill_file(
         user_id=user_id,
         skill_name=skill_name,
+        relative_path=path,
+    )
+    filename = path.rsplit("/", 1)[-1]
+    quoted = quote(filename)
+    headers = {
+        "Content-Disposition": (
+            f"attachment; filename={filename!r}; filename*=UTF-8''{quoted}"
+        ),
+    }
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/octet-stream",
+        headers=headers,
+    )
+
+
+@skill_library_router.get(
+    "/{skill_name}/versions/{version_id}/files/download",
+)
+async def download_skill_version_file(
+    skill_name: str,
+    version_id: str,
+    path: str = Query(..., description="File path relative to the skill root."),
+    user_id: str = Depends(get_skill_download_user_id),
+    service: SkillLibraryService = Depends(get_skill_library_service),
+) -> StreamingResponse:
+    """Download one file from a historical stored skill version."""
+    _abs_path, payload = await service.read_skill_version_file(
+        user_id=user_id,
+        skill_name=skill_name,
+        version_id=version_id,
         relative_path=path,
     )
     filename = path.rsplit("/", 1)[-1]

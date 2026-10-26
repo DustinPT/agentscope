@@ -835,7 +835,9 @@
                         "deleteDescription": "删除后会同步移除技能元数据、索引和文件内容。",
                         "toast": {
                                 "uploadSuccess": "技能 {{name}} 上传成功",
-                                "deleteSuccess": "技能 {{name}} 已删除"
+                                "deleteSuccess": "技能 {{name}} 已删除",
+                                "rollbackSuccess": "已生成新的当前版本 v{{version}}",
+                                "deleteVersionSuccess": "历史版本 v{{version}} 已删除"
                         },
                         "card": {
                                 "fileCount": "{{count}} 个文件",
@@ -850,8 +852,19 @@
                                 "updatedAt": "更新时间：{{value}}",
                                 "tabs": {
                                         "skillMd": "SKILL.md",
-                                        "files": "文件列表"
+                                        "files": "文件列表",
+                                        "history": "版本历史"
                                 }
+                        },
+                        "version": {
+                                "loading": "正在加载版本详情…",
+                                "current": "当前版本",
+                                "history": "历史版本",
+                                "rollback": "回滚到此版本",
+                                "versionTitle": "版本 v{{version}}",
+                                "versionBadge": "v{{version}}",
+                                "deleteTitle": "删除历史版本 v{{version}}？",
+                                "deleteDescription": "删除后只会移除这个历史版本，不会影响当前版本。"
                         }
                 }
         },
