@@ -13,11 +13,10 @@ from .._reply_state import get_current_reply_msg, is_reply_awaiting_tool_interac
 from ..message_bus import MessageBus
 from ..storage import SessionRecord, StorageBase, SubAgentTaskRecord
 from ...event import ExceedMaxItersEvent
-from ...message import DataBlock, HintBlock, Msg, TextBlock, ToolCallState
+from ...message import ContentBlock, DataBlock, HintBlock, Msg, TextBlock, ToolCallState
 from ...middleware import MiddlewareBase
 
 
-_FINAL_RESULT_MARKER = "[[FINAL_RESULT]]"
 _TERMINAL_PARENT_INVOCATION_STATUSES = {
     "final_delivered",
     "protocol_failed",
@@ -28,26 +27,25 @@ How to handle delegated sub-agent tasks:
 - When you receive a message wrapped in `<subagent-task ...>...</subagent-task>`,
   the content inside that message is the delegated task from the parent agent.
 - Complete that delegated task directly.
-- Make your final result self-contained. Do not refer to earlier messages with
-  phrases like "as explained above" or "see previous analysis" when the
-  missing context can be restated directly in the final result.
-- The parent agent will receive only the content after [[FINAL_RESULT]], so
-  everything needed to understand and use the result must be included there.
-- Your final reply MUST start with [[FINAL_RESULT]].
-- [[FINAL_RESULT]] is the terminal handoff marker for this task. After you
-  output it, do not call tools, do not continue reasoning, and do not send any
-  additional assistant message.
+- When you are done, end your turn with one complete, self-contained final
+  answer.
+- The parent agent will receive your last assistant reply as the delegated
+  task result. Treat your final answer as that last assistant reply.
+- Do not refer to earlier messages with phrases like "as explained above" or
+  "see previous analysis" when the missing context can be restated directly in
+  the final answer.
+- After sending the final answer, do not call tools, do not continue
+  reasoning, and do not send any additional assistant message.
 - If another instruction asks you to do post-task housekeeping such as version
   checks, telemetry, or optional follow-up actions, do that before
-  [[FINAL_RESULT]] when possible.
-- If such housekeeping would require acting after [[FINAL_RESULT]], skip it
-  instead of sending a second final result.
-- If the final result includes attachments or other data blocks, place them
-  after the [[FINAL_RESULT]] marker.
+  the final answer when possible.
+- If such housekeeping would require acting after the final answer, skip it
+  instead of sending a second assistant message.
+- If the final answer includes attachments or other data blocks, include them
+  in the same last assistant reply.
 
-Use this format in your final reply:
-[[FINAL_RESULT]]
-(complete, self-contained result)
+Use a single complete, self-contained final answer as your last assistant
+reply.
 """.strip()
 
 
@@ -66,18 +64,6 @@ def is_msg_awaiting_tool_interaction(msg: Msg | None) -> bool:
     )
 
 
-def _reply_contains_final_result_marker(
-    reply_content: str | list[TextBlock | DataBlock],
-) -> bool:
-    """Return whether the reply explicitly contains the final marker."""
-    if isinstance(reply_content, str):
-        return _FINAL_RESULT_MARKER in reply_content
-    return any(
-        isinstance(block, TextBlock) and _FINAL_RESULT_MARKER in block.text
-        for block in reply_content
-    )
-
-
 def _has_result_content(blocks: list[TextBlock | DataBlock]) -> bool:
     """Return whether extracted result blocks contain usable content."""
     for block in blocks:
@@ -88,45 +74,28 @@ def _has_result_content(blocks: list[TextBlock | DataBlock]) -> bool:
     return False
 
 
-def _extract_marked_result_blocks(
-    reply_content: str | list[TextBlock | DataBlock],
+def _extract_result_blocks(
+    reply_content: str | list[ContentBlock],
 ) -> list[TextBlock | DataBlock]:
-    """Extract result blocks after the explicit final result marker."""
+    """Extract the last assistant reply as the parent-visible result."""
     if isinstance(reply_content, str):
-        marker_index = reply_content.find(_FINAL_RESULT_MARKER)
-        if marker_index < 0:
+        if not reply_content.strip():
             return []
-        result_text = reply_content[
-            marker_index + len(_FINAL_RESULT_MARKER) :
-        ].lstrip()
-        if not result_text.strip():
-            return []
-        return [TextBlock(text=result_text)]
+        return [TextBlock(text=reply_content)]
 
-    extracted_blocks: list[TextBlock | DataBlock] = []
+    extracted_blocks_reversed: list[TextBlock | DataBlock] = []
     collecting = False
-    for block in reply_content:
-        if not collecting:
-            if not isinstance(block, TextBlock):
-                continue
-            marker_index = block.text.find(_FINAL_RESULT_MARKER)
-            if marker_index < 0:
-                continue
+    for block in reversed(reply_content):
+        if isinstance(block, (TextBlock, DataBlock)):
+            extracted_blocks_reversed.append(deepcopy(block))
             collecting = True
-            remaining_text = block.text[
-                marker_index + len(_FINAL_RESULT_MARKER) :
-            ].lstrip()
-            if remaining_text:
-                copied_block = deepcopy(block)
-                copied_block.text = remaining_text
-                extracted_blocks.append(copied_block)
             continue
-
-        if not isinstance(block, (TextBlock, DataBlock)):
+        if collecting:
             break
-        extracted_blocks.append(deepcopy(block))
 
-    if not collecting or not _has_result_content(extracted_blocks):
+    extracted_blocks = list(reversed(extracted_blocks_reversed))
+
+    if not _has_result_content(extracted_blocks):
         return []
     return extracted_blocks
 
@@ -443,46 +412,6 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             )
             return
 
-        reply_content = final_msg.content
-        if _reply_contains_final_result_marker(reply_content):
-            content_blocks = _extract_marked_result_blocks(reply_content)
-            if content_blocks and not _has_result_content(content_blocks):
-                content_blocks = []
-            if not content_blocks:
-                await self._deliver_terminal_result(
-                    task=task,
-                    terminal_status="protocol_failed",
-                    terminal_reason="empty_final_result",
-                    hint_content=_build_error_hint_content(
-                        agent_id=self._agent_id,
-                        agent_name=child_agent.data.name,
-                        session_id=self._session_id,
-                        session_name=child_session.config.name,
-                        error_text=(
-                            "The child session returned an empty final reply."
-                        ),
-                    ),
-                    hint_label="subagent_error",
-                    hint_state="error",
-                )
-                return
-
-            await self._deliver_terminal_result(
-                task=task,
-                terminal_status="final_delivered",
-                terminal_reason="final_result",
-                hint_content=_build_success_hint_content(
-                    agent_id=self._agent_id,
-                    agent_name=child_agent.data.name,
-                    session_id=self._session_id,
-                    session_name=child_session.config.name,
-                    content_blocks=content_blocks,
-                ),
-                hint_label="subagent_message",
-                hint_state="success",
-            )
-            return
-
         if is_reply_awaiting_tool_interaction(agent):
             task.status = "running"
             await self._persist_task(task)
@@ -505,17 +434,35 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             await self._persist_task(task)
             return
 
+        content_blocks = _extract_result_blocks(final_msg.content)
+        if content_blocks:
+            await self._deliver_terminal_result(
+                task=task,
+                terminal_status="final_delivered",
+                terminal_reason="final_reply",
+                hint_content=_build_success_hint_content(
+                    agent_id=self._agent_id,
+                    agent_name=child_agent.data.name,
+                    session_id=self._session_id,
+                    session_name=child_session.config.name,
+                    content_blocks=content_blocks,
+                ),
+                hint_label="subagent_message",
+                hint_state="success",
+            )
+            return
+
         await self._deliver_terminal_result(
             task=task,
             terminal_status="protocol_failed",
-            terminal_reason="missing_final_result",
+            terminal_reason="empty_final_reply",
             hint_content=_build_error_hint_content(
                 agent_id=self._agent_id,
                 agent_name=child_agent.data.name,
                 session_id=self._session_id,
                 session_name=child_session.config.name,
                 error_text=(
-                    "The child session did not produce a valid final reply."
+                    "The child session returned an empty final reply."
                 ),
             ),
             hint_label="subagent_error",
