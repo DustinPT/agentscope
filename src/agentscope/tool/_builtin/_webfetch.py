@@ -2,6 +2,7 @@
 """Builtin web content fetching tool backed by Jina Reader."""
 
 import asyncio
+import os
 from typing import Any
 import urllib.error
 import urllib.request
@@ -20,6 +21,8 @@ from ._web_utils import normalize_public_http_url
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 _ANTIBOT_SCAN_BYTES = 4096
+_JINA_READER_BASE_URL_ENV = "AGENTSCOPE_WEBFETCH_JINA_BASE_URL"
+_DEFAULT_JINA_READER_BASE_URL = "https://r.jina.ai"
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36"
@@ -47,10 +50,20 @@ def _is_antibot_page(body: bytes) -> bool:
     return (jina_captcha_warning and challenge_structure) or cloudflare_block
 
 
+def _get_jina_reader_base_url() -> str:
+    """Return the configured Jina Reader base URL."""
+    configured = os.getenv(_JINA_READER_BASE_URL_ENV, "").strip()
+    if not configured:
+        return _DEFAULT_JINA_READER_BASE_URL
+    if "://" not in configured:
+        configured = f"https://{configured}"
+    return configured.rstrip("/")
+
+
 def _fetch_via_jina(url: str) -> bytes:
     """Fetch one page through Jina Reader using Python's stdlib HTTP client."""
     request = urllib.request.Request(
-        f"https://r.jina.ai/{url}",
+        f"{_get_jina_reader_base_url()}/{url}",
         headers={
             "User-Agent": _USER_AGENT,
             "Accept": "text/plain",
