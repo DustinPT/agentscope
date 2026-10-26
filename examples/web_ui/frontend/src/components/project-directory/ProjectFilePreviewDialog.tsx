@@ -2,6 +2,12 @@ import { Copy, Download } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
+import {
+        isImagePreviewable,
+        isJsonPreviewable,
+        isMarkdownPreviewable,
+        isTextPreviewable,
+} from './filePreview';
 import type { WorkspaceFileEntry } from '@/api';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { Button } from '@/components/ui/button';
@@ -21,6 +27,7 @@ interface ProjectFilePreviewDialogProps {
         onOpenChange: (open: boolean) => void;
         entry: WorkspaceFileEntry | null;
         buildWorkspaceFilePreviewUrl: (path: string) => string | null;
+        buildWorkspaceFileTextPreviewUrl?: (path: string) => string | null;
         buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
 }
 
@@ -29,6 +36,7 @@ export function ProjectFilePreviewDialog({
         onOpenChange,
         entry,
         buildWorkspaceFilePreviewUrl,
+        buildWorkspaceFileTextPreviewUrl,
         buildWorkspaceFileDownloadUrl,
 }: ProjectFilePreviewDialogProps) {
         const { t } = useTranslation();
@@ -36,29 +44,27 @@ export function ProjectFilePreviewDialog({
         const [previewLoading, setPreviewLoading] = useState(false);
         const [previewError, setPreviewError] = useState<string | null>(null);
 
-        const previewUrl = useMemo(
-                () => (entry ? buildWorkspaceFilePreviewUrl(entry.path) : null),
-                [buildWorkspaceFilePreviewUrl, entry],
+        const isImagePreview = isImagePreviewable(entry);
+        const isMarkdownPreview = isMarkdownPreviewable(entry);
+        const isJsonPreview = isJsonPreviewable(entry);
+        const isTextPreview = isTextPreviewable(entry);
+
+        const imagePreviewUrl = useMemo(
+                () => (entry && isImagePreview ? buildWorkspaceFilePreviewUrl(entry.path) : null),
+                [buildWorkspaceFilePreviewUrl, entry, isImagePreview],
+        );
+        const textPreviewUrl = useMemo(
+                () =>
+                        entry && isTextPreview
+                                ? (buildWorkspaceFileTextPreviewUrl?.(entry.path) ??
+                                  buildWorkspaceFilePreviewUrl(entry.path))
+                                : null,
+                [buildWorkspaceFilePreviewUrl, buildWorkspaceFileTextPreviewUrl, entry, isTextPreview],
         );
         const downloadUrl = useMemo(
                 () => (entry ? buildWorkspaceFileDownloadUrl(entry.path) : null),
                 [buildWorkspaceFileDownloadUrl, entry],
         );
-
-        const isImagePreview = !!entry?.mime_type?.startsWith('image/');
-        const isMarkdownPreview =
-                entry?.mime_type === 'text/markdown' ||
-                entry?.name.toLowerCase().endsWith('.md') === true ||
-                entry?.name.toLowerCase().endsWith('.markdown') === true;
-        const isJsonPreview =
-                entry?.mime_type === 'application/json' ||
-                entry?.mime_type?.endsWith('+json') === true ||
-                entry?.name.toLowerCase().endsWith('.json') === true ||
-                entry?.name.toLowerCase().endsWith('.jsonl') === true;
-        const isTextPreview =
-                !!entry?.mime_type?.startsWith('text/') ||
-                entry?.mime_type === 'application/json' ||
-                entry?.mime_type?.endsWith('+json') === true;
 
         const prettyPreviewText = useMemo(() => {
                 if (!isJsonPreview) {
@@ -77,7 +83,7 @@ export function ProjectFilePreviewDialog({
         );
 
         useEffect(() => {
-                if (!open || !entry || !isTextPreview || !previewUrl) {
+                if (!open || !entry || !isTextPreview || !textPreviewUrl) {
                         setPreviewText('');
                         setPreviewError(null);
                         setPreviewLoading(false);
@@ -89,7 +95,7 @@ export function ProjectFilePreviewDialog({
                 setPreviewError(null);
                 setPreviewText('');
 
-                fetch(previewUrl, { signal: controller.signal })
+                fetch(textPreviewUrl, { signal: controller.signal })
                         .then(async (response) => {
                                 if (!response.ok) {
                                         throw new Error(await response.text());
@@ -112,7 +118,7 @@ export function ProjectFilePreviewDialog({
                         });
 
                 return () => controller.abort();
-        }, [entry, isTextPreview, open, previewUrl]);
+        }, [entry, isTextPreview, open, textPreviewUrl]);
 
         const handleCopyPreview = useCallback(async () => {
                 if (!isTextPreview || previewLoading || previewError || !copyablePreviewText) {
@@ -186,10 +192,10 @@ export function ProjectFilePreviewDialog({
                                         </div>
                                 </DialogHeader>
                                 {entry ? (
-                                        isImagePreview && previewUrl ? (
+                                        isImagePreview && imagePreviewUrl ? (
                                                 <div className="max-h-[70vh] overflow-auto rounded-md border bg-muted/20 p-2">
                                                         <img
-                                                                src={previewUrl}
+                                                                src={imagePreviewUrl}
                                                                 alt={entry.name}
                                                                 className="mx-auto max-h-[65vh] max-w-full rounded-md object-contain"
                                                         />

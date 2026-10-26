@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
+import { isFilePreviewable } from './filePreview';
 import { ProjectFilePreviewDialog } from './ProjectFilePreviewDialog';
 import type { WorkspaceFileEntry } from '@/api';
 import { Button } from '@/components/ui/button';
@@ -21,6 +22,7 @@ interface ProjectDirectoryBrowserProps {
         listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
         buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
         buildWorkspaceFilePreviewUrl: (path: string) => string | null;
+        buildWorkspaceFileTextPreviewUrl?: (path: string) => string | null;
         showDescription?: boolean;
 }
 
@@ -54,6 +56,7 @@ export function ProjectDirectoryBrowser({
         listWorkspaceFiles,
         buildWorkspaceFileDownloadUrl,
         buildWorkspaceFilePreviewUrl,
+        buildWorkspaceFileTextPreviewUrl,
         showDescription = true,
 }: ProjectDirectoryBrowserProps) {
         const { t } = useTranslation();
@@ -70,18 +73,6 @@ export function ProjectDirectoryBrowser({
                 () => buildWorkspaceFileDownloadUrl(initialPath),
                 [buildWorkspaceFileDownloadUrl, initialPath],
         );
-
-        const isPreviewable = useCallback((entry: WorkspaceFileEntry): boolean => {
-                if (entry.is_dir || !entry.mime_type) {
-                        return false;
-                }
-                return (
-                        entry.mime_type.startsWith('image/') ||
-                        entry.mime_type.startsWith('text/') ||
-                        entry.mime_type === 'application/json' ||
-                        entry.mime_type.endsWith('+json')
-                );
-        }, []);
 
         const handleDownload = useCallback(
                 (path = initialPath) => {
@@ -210,8 +201,8 @@ export function ProjectDirectoryBrowser({
                                                                 variant="ghost"
                                                                 tooltip={t('workspace-drawer.file.preview')}
                                                                 onClick={() => setPreviewEntry(entry)}
-                                                                disabled={!isPreviewable(entry)}
-                                                                className={cn(!isPreviewable(entry) && 'invisible')}
+                                                                disabled={!isFilePreviewable(entry)}
+                                                                className={cn(!isFilePreviewable(entry) && 'invisible')}
                                                         >
                                                                 <Eye />
                                                         </Button>
@@ -271,7 +262,6 @@ export function ProjectDirectoryBrowser({
                         expandedPaths,
                         handleDownload,
                         handleToggleDirectory,
-                        isPreviewable,
                         loadingPaths,
                         t,
                 ],
@@ -330,6 +320,7 @@ export function ProjectDirectoryBrowser({
                                 }}
                                 entry={previewEntry}
                                 buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
+                                buildWorkspaceFileTextPreviewUrl={buildWorkspaceFileTextPreviewUrl}
                                 buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
                         />
                 </div>

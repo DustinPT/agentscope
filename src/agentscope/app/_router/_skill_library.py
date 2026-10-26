@@ -210,7 +210,7 @@ async def list_skill_files(
 async def preview_skill_file_text(
     skill_name: str,
     path: str = Query(..., description="File path relative to the skill root."),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_skill_download_user_id),
     service: SkillLibraryService = Depends(get_skill_library_service),
 ) -> PlainTextResponse:
     """Return one file as decoded text for preview panes."""

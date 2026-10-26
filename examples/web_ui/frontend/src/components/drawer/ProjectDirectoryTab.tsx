@@ -5,18 +5,21 @@ interface ProjectDirectoryTabProps {
         listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
         buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
         buildWorkspaceFilePreviewUrl: (path: string) => string | null;
+        buildWorkspaceFileTextPreviewUrl?: (path: string) => string | null;
 }
 
 export function ProjectDirectoryTab({
         listWorkspaceFiles,
         buildWorkspaceFileDownloadUrl,
         buildWorkspaceFilePreviewUrl,
+        buildWorkspaceFileTextPreviewUrl,
 }: ProjectDirectoryTabProps) {
         return (
                 <ProjectDirectoryBrowser
                         listWorkspaceFiles={listWorkspaceFiles}
                         buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
                         buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
+                        buildWorkspaceFileTextPreviewUrl={buildWorkspaceFileTextPreviewUrl}
                 />
         );
 }

@@ -1,5 +1,5 @@
 import { ArrowLeft, Download, FileArchive, FileText, Hash, Search, Trash2, Upload } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -43,7 +43,7 @@ export function SkillLibraryPage() {
 
         const selectedSkillName = skillName ? decodeURIComponent(skillName) : null;
 
-        const loadSkills = async (keyword = query) => {
+        const loadSkills = useCallback(async (keyword = '') => {
                 setSkillsLoading(true);
                 try {
                         const response = await skillLibraryApi.list({
@@ -56,9 +56,9 @@ export function SkillLibraryPage() {
                 } finally {
                         setSkillsLoading(false);
                 }
-        };
+        }, []);
 
-        const loadDetail = async (name: string) => {
+        const loadDetail = useCallback(async (name: string) => {
                 setDetailLoading(true);
                 try {
                         const response = await skillLibraryApi.get(name);
@@ -66,12 +66,11 @@ export function SkillLibraryPage() {
                 } finally {
                         setDetailLoading(false);
                 }
-        };
+        }, []);
 
         useEffect(() => {
                         void loadSkills('');
-                // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, []);
+        }, [loadSkills]);
 
         useEffect(() => {
                 if (selectedSkillName) {
@@ -79,8 +78,7 @@ export function SkillLibraryPage() {
                 } else {
                         setDetail(null);
                 }
-                // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [selectedSkillName]);
+        }, [loadDetail, selectedSkillName]);
 
         const handleUploadClick = () => {
                 fileInputRef.current?.click();
@@ -276,6 +274,12 @@ export function SkillLibraryPage() {
                                                                                                 }
                                                                                                 buildWorkspaceFilePreviewUrl={(path) =>
                                                                                                         skillLibraryApi.buildFilePreviewUrl(
+                                                                                                                detail.name,
+                                                                                                                path,
+                                                                                                        )
+                                                                                                }
+                                                                                                buildWorkspaceFileTextPreviewUrl={(path) =>
+                                                                                                        skillLibraryApi.buildFileTextPreviewUrl(
                                                                                                                 detail.name,
                                                                                                                 path,
                                                                                                         )

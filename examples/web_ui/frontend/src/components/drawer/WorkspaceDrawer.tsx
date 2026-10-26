@@ -52,6 +52,7 @@ interface WorkspaceDrawerProps {
         listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
         buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
         buildWorkspaceFilePreviewUrl: (path: string) => string | null;
+        buildWorkspaceFileTextPreviewUrl?: (path: string) => string | null;
 }
 
 export function WorkspaceDrawer({
@@ -72,6 +73,7 @@ export function WorkspaceDrawer({
         listWorkspaceFiles,
         buildWorkspaceFileDownloadUrl,
         buildWorkspaceFilePreviewUrl,
+        buildWorkspaceFileTextPreviewUrl,
 }: WorkspaceDrawerProps) {
 	const { t } = useTranslation();
 	const [search, setSearch] = useState('');
@@ -257,6 +259,9 @@ export function WorkspaceDrawer({
                                                                 listWorkspaceFiles={listWorkspaceFiles}
                                                                 buildWorkspaceFileDownloadUrl={buildWorkspaceFileDownloadUrl}
                                                                 buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
+                                                                buildWorkspaceFileTextPreviewUrl={
+                                                                        buildWorkspaceFileTextPreviewUrl
+                                                                }
                                                         />
                                                 </TabsContent>
 					</Tabs>

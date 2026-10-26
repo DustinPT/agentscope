@@ -16,6 +16,7 @@ interface ProjectDirectoryDialogProps {
         listWorkspaceFiles: (path?: string) => Promise<WorkspaceFileEntry[]>;
         buildWorkspaceFileDownloadUrl: (path?: string) => string | null;
         buildWorkspaceFilePreviewUrl: (path: string) => string | null;
+        buildWorkspaceFileTextPreviewUrl?: (path: string) => string | null;
 }
 
 export function ProjectDirectoryDialog({
@@ -25,6 +26,7 @@ export function ProjectDirectoryDialog({
         listWorkspaceFiles,
         buildWorkspaceFileDownloadUrl,
         buildWorkspaceFilePreviewUrl,
+        buildWorkspaceFileTextPreviewUrl,
 }: ProjectDirectoryDialogProps) {
         const { t } = useTranslation();
         const title = initialPath || t('workspace-drawer.file.rootDirectory');
@@ -46,6 +48,9 @@ export function ProjectDirectoryDialog({
                                                         buildWorkspaceFileDownloadUrl
                                                 }
                                                 buildWorkspaceFilePreviewUrl={buildWorkspaceFilePreviewUrl}
+                                                buildWorkspaceFileTextPreviewUrl={
+                                                        buildWorkspaceFileTextPreviewUrl
+                                                }
                                                 showDescription={false}
                                         />
                                 </div>
