@@ -66,7 +66,13 @@ export function LlmSelect({
 	}, [refetchTrigger, refetch]);
 
 	const handleSelect = (type: string, credentialId: string, model: string) => {
-		onChange?.({ type, credential_id: credentialId, model, parameters: {} });
+                onChange?.({
+                        type,
+                        credential_id: credentialId,
+                        model,
+                        parameters: {},
+                        context_size: null,
+                });
 	};
 
 	const displayLabel = value?.model

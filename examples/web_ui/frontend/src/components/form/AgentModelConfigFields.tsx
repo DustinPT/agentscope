@@ -46,7 +46,6 @@ export function AgentModelConfigFields({ value, onChange }: Props) {
 		() => resolveModelCard(groups, value.default_chat_model_config),
 		[groups, value.default_chat_model_config],
 	);
-
 	return (
 		<>
 			<FieldSeparator className="my-0" />
@@ -59,9 +58,15 @@ export function AgentModelConfigFields({ value, onChange }: Props) {
 						<div className="flex items-center gap-2">
 							<LlmSelect
 								value={value.default_chat_model_config}
-								onChange={(next) =>
-									onChange({ ...value, default_chat_model_config: next })
-								}
+                                                                onChange={(next) =>
+                                                                        onChange({
+                                                                                ...value,
+                                                                                default_chat_model_config: next,
+                                                                                default_fallback_chat_model_config: next
+                                                                                        ? value.default_fallback_chat_model_config
+                                                                                        : null,
+                                                                        })
+                                                                }
 								onAddCredential={() => setCredentialDialogOpen(true)}
 								refetchTrigger={credentialRefetchTrigger}
 								allowClear
@@ -81,8 +86,25 @@ export function AgentModelConfigFields({ value, onChange }: Props) {
 										},
 									});
 								}}
-								selectedFallbackModel={null}
-								onFallbackChange={() => {}}
+                                                                onContextSizeChange={(contextSize) => {
+                                                                        if (!value.default_chat_model_config) return;
+                                                                        onChange({
+                                                                                ...value,
+                                                                                default_chat_model_config: {
+                                                                                        ...value.default_chat_model_config,
+                                                                                        context_size: contextSize,
+                                                                                },
+                                                                        });
+                                                                }}
+                                                                selectedFallbackModel={
+                                                                        value.default_fallback_chat_model_config
+                                                                }
+                                                                onFallbackChange={(config) =>
+                                                                        onChange({
+                                                                                ...value,
+                                                                                default_fallback_chat_model_config: config,
+                                                                        })
+                                                                }
 							/>
 						</div>
 						<FieldDescription>

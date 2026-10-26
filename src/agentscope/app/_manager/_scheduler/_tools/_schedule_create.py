@@ -125,6 +125,7 @@ to complete the task independently.
         user_id: str,
         agent_id: str,
         chat_model_config: ChatModelConfig,
+        fallback_chat_model_config: ChatModelConfig | None,
         storage: Any,
         scheduler_manager: Any,
     ) -> None:
@@ -137,6 +138,9 @@ to complete the task independently.
                 The agent that will be executed on each trigger.
             chat_model_config (`ChatModelConfig`):
                 Model configuration inherited from the current session.
+            fallback_chat_model_config (`ChatModelConfig | None`):
+                Fallback model configuration inherited from the current
+                session.
             storage (`Any`):
                 The storage backend used to persist the schedule record.
             scheduler_manager (`Any`):
@@ -146,6 +150,7 @@ to complete the task independently.
         self._user_id = user_id
         self._agent_id = agent_id
         self._chat_model_config = chat_model_config
+        self._fallback_chat_model_config = fallback_chat_model_config
         self._storage = storage
         self._scheduler_manager = scheduler_manager
 
@@ -229,6 +234,7 @@ to complete the task independently.
                 source=ScheduleSource.AGENT,
                 source_session_id=source_session_id,
                 chat_model_config=self._chat_model_config,
+                fallback_chat_model_config=self._fallback_chat_model_config,
             ),
         )
 

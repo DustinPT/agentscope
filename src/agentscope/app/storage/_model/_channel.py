@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from ._base import _RecordBase
+from ._session import ChatModelConfig
 from ....permission import PermissionMode
 
 
@@ -71,8 +72,8 @@ class RoutingConfig(BaseModel):
 class SessionSettings(BaseModel):
     """Settings applied when a channel creates an agent session."""
 
-    chat_model_config: dict[str, Any]
-    fallback_chat_model_config: dict[str, Any] | None = None
+    chat_model_config: ChatModelConfig
+    fallback_chat_model_config: ChatModelConfig | None = None
     permission_mode: str = PermissionMode.DEFAULT.value
 
     @field_validator("permission_mode")

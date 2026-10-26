@@ -11,6 +11,7 @@ export interface ChatModelConfig {
 	credential_id: string;
 	model: string;
 	parameters: Record<string, unknown>;
+        context_size?: number | null;
 }
 
 export interface TTSModelConfig {
@@ -38,15 +39,33 @@ export type GlobalModelCategoryKey =
         | 'unspecified_high'
         | 'writing';
 
+export type GlobalModelFallbackCategoryKey =
+        | 'visual_engineering_fallback_chat_model_config'
+        | 'ultrabrain_fallback_chat_model_config'
+        | 'deep_fallback_chat_model_config'
+        | 'artistry_fallback_chat_model_config'
+        | 'quick_fallback_chat_model_config'
+        | 'unspecified_low_fallback_chat_model_config'
+        | 'unspecified_high_fallback_chat_model_config'
+        | 'writing_fallback_chat_model_config';
+
 export interface UserModelDefaults {
         visual_engineering: ChatModelConfig | null;
+        visual_engineering_fallback_chat_model_config: ChatModelConfig | null;
         ultrabrain: ChatModelConfig | null;
+        ultrabrain_fallback_chat_model_config: ChatModelConfig | null;
         deep: ChatModelConfig | null;
+        deep_fallback_chat_model_config: ChatModelConfig | null;
         artistry: ChatModelConfig | null;
+        artistry_fallback_chat_model_config: ChatModelConfig | null;
         quick: ChatModelConfig | null;
+        quick_fallback_chat_model_config: ChatModelConfig | null;
         unspecified_low: ChatModelConfig | null;
+        unspecified_low_fallback_chat_model_config: ChatModelConfig | null;
         unspecified_high: ChatModelConfig | null;
+        unspecified_high_fallback_chat_model_config: ChatModelConfig | null;
         writing: ChatModelConfig | null;
+        writing_fallback_chat_model_config: ChatModelConfig | null;
 }
 
 export interface ContextConfig {
@@ -82,6 +101,7 @@ export interface AgentData {
 	context_config: ContextConfig;
 	react_config: ReActConfig;
 	default_chat_model_config: ChatModelConfig | null;
+        default_fallback_chat_model_config: ChatModelConfig | null;
 	allow_subagent_calls: boolean;
 	allowed_subagent_ids: string[];
 	mcps: MCPClient[];
@@ -101,6 +121,7 @@ export interface CreateAgentRequest {
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
 	default_chat_model_config?: ChatModelConfig | null;
+        default_fallback_chat_model_config?: ChatModelConfig | null;
 	allow_subagent_calls?: boolean;
 	allowed_subagent_ids?: string[];
 	mcps?: MCPClient[];
@@ -117,6 +138,7 @@ export interface UpdateAgentRequest {
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
 	default_chat_model_config?: ChatModelConfig | null;
+        default_fallback_chat_model_config?: ChatModelConfig | null;
 	allow_subagent_calls?: boolean;
 	allowed_subagent_ids?: string[];
 	mcps?: MCPClient[];
@@ -634,6 +656,7 @@ export interface ScheduleData {
 	started_at: string;
 	ended_at: string | null;
 	chat_model_config: ChatModelConfig;
+        fallback_chat_model_config: ChatModelConfig | null;
 	stateful: boolean;
 	permission_mode: PermissionMode;
 	source: ScheduleSource;
@@ -653,6 +676,7 @@ export interface CreateScheduleRequest {
 	timezone?: string;
 	agent_id: string;
 	chat_model_config: ChatModelConfig;
+        fallback_chat_model_config?: ChatModelConfig | null;
 	enabled?: boolean;
 	stateful?: boolean;
 	permission_mode?: PermissionMode;
@@ -667,6 +691,8 @@ export interface UpdateScheduleRequest {
 	description?: string;
 	cron_expression?: string;
 	timezone?: string;
+        chat_model_config?: ChatModelConfig;
+        fallback_chat_model_config?: ChatModelConfig | null;
 	enabled?: boolean;
 	stateful?: boolean;
 	permission_mode?: PermissionMode;

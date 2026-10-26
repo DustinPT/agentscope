@@ -33,6 +33,11 @@ class CreateScheduleRequest(BaseModel):
         description="Model configuration for the auto-created session.",
     )
 
+    fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model configuration for the auto-created session.",
+    )
+
     enabled: bool = Field(
         default=True,
         description="Whether the schedule is active immediately "
@@ -99,6 +104,16 @@ class UpdateScheduleRequest(BaseModel):
     permission_mode: PermissionMode | None = Field(
         default=None,
         description="New permission mode.",
+    )
+
+    chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="New model configuration for the auto-created session.",
+    )
+
+    fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="New fallback model configuration for the auto-created session.",
     )
 
 

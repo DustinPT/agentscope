@@ -2,7 +2,8 @@ import { format } from 'date-fns';
 import { ChevronDownIcon, CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import * as React from 'react';
 
-import type { ChatModelConfig, PermissionMode } from '@/api';
+import type { ChatModelConfig, ModelCard, PermissionMode } from '@/api';
+import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect';
 import { TimezoneSelect } from '@/components/select/TimezoneSelect';
@@ -29,6 +30,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useAgents } from '@/hooks/useAgents';
+import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useSchedules } from '@/hooks/useSchedules';
 import { useTranslation } from '@/i18n/useI18n';
 
@@ -39,6 +41,21 @@ interface Props {
 }
 
 type FreqType = 'once' | 'daily' | 'weekly' | 'monthly';
+
+function resolveModelCard(
+        groups: Record<string, Array<{ credential: { id: string }; models: ModelCard[] }>>,
+        selectedModel: ChatModelConfig | null,
+): ModelCard | null {
+        if (!selectedModel) return null;
+        const items = groups[selectedModel.type];
+        if (!items) return null;
+        for (const { credential, models } of items) {
+                if (credential.id !== selectedModel.credential_id) continue;
+                const match = models.find((model) => model.name === selectedModel.model);
+                if (match) return match;
+        }
+        return null;
+}
 
 function getDefaultForm() {
 	const now = new Date();
@@ -53,6 +70,7 @@ function getDefaultForm() {
 		endDate: undefined as Date | undefined,
 		agentId: '',
 		chatModelConfig: null as ChatModelConfig | null,
+                fallbackChatModelConfig: null as ChatModelConfig | null,
 		permissionMode: 'dont_ask' as PermissionMode,
 		timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
 		stateful: false,
@@ -117,6 +135,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 	const { t } = useTranslation();
 	const { create } = useSchedules();
 	const { agents } = useAgents();
+        const { groups } = useAvailableModels();
 	const [form, setForm] = React.useState(getDefaultForm);
 	const [loading, setLoading] = React.useState(false);
 	const [error, setError] = React.useState('');
@@ -139,6 +158,10 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 		value: ReturnType<typeof getDefaultForm>[K],
 	) => setForm((prev) => ({ ...prev, [key]: value }));
 
+        const selectedModelCard = React.useMemo(
+                () => resolveModelCard(groups, form.chatModelConfig),
+                [form.chatModelConfig, groups],
+        );
 	const isValid =
 		form.name.trim() && !!form.date && !!form.time && !!form.agentId && !!form.chatModelConfig;
 
@@ -166,6 +189,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 				timezone: form.timezone,
 				agent_id: form.agentId,
 				chat_model_config: form.chatModelConfig!,
+                                fallback_chat_model_config: form.fallbackChatModelConfig,
 				enabled: true,
 				stateful: form.stateful,
 				permission_mode: form.permissionMode,
@@ -294,10 +318,52 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 
 						<Field orientation={'horizontal'}>
 							<FieldLabel>{t('common.model')}</FieldLabel>
-							<LlmSelect
-								value={form.chatModelConfig}
-								onChange={(v) => set('chatModelConfig', v)}
-							/>
+                                                        <div className="flex w-full items-center gap-1">
+                                                                <LlmSelect
+                                                                        className="min-w-0 flex-1"
+                                                                        value={form.chatModelConfig}
+                                                                        onChange={(v) => {
+                                                                                set('chatModelConfig', v);
+                                                                                if (!v) {
+                                                                                        set('fallbackChatModelConfig', null);
+                                                                                }
+                                                                        }}
+                                                                />
+                                                                <ModelParametersPopover
+                                                                        selectedModel={form.chatModelConfig}
+                                                                        modelCard={selectedModelCard}
+                                                                        onChange={(parameters) =>
+                                                                                set('chatModelConfig',
+                                                                                        form.chatModelConfig
+                                                                                                ? {
+                                                                                                          ...form.chatModelConfig,
+                                                                                                          parameters,
+                                                                                                  }
+                                                                                                : form.chatModelConfig,
+                                                                                )
+                                                                        }
+                                                                        onContextSizeChange={(contextSize) =>
+                                                                                set(
+                                                                                        'chatModelConfig',
+                                                                                        form.chatModelConfig
+                                                                                                ? {
+                                                                                                          ...form.chatModelConfig,
+                                                                                                          context_size: contextSize,
+                                                                                                  }
+                                                                                                : form.chatModelConfig,
+                                                                                )
+                                                                        }
+                                                                        selectedFallbackModel={
+                                                                                form.fallbackChatModelConfig
+                                                                        }
+                                                                        onFallbackChange={(config) =>
+                                                                                set(
+                                                                                        'fallbackChatModelConfig',
+                                                                                        config,
+                                                                                )
+                                                                        }
+                                                                />
+                                                        </div>
 						</Field>
 
 						<Field orientation={'horizontal'}>

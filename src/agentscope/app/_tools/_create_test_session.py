@@ -51,8 +51,12 @@ class CreateTestSession(_SessionToolBase):
 
         user_record = await self._get_user_record()
         model_config = None
+        fallback_model_config = None
         if user_record is not None:
             model_config = user_record.global_default_models.unspecified_high
+            fallback_model_config = (
+                user_record.global_default_models.unspecified_high_fallback_chat_model_config
+            )
         if model_config is None:
             return self._result(
                 {
@@ -70,6 +74,7 @@ class CreateTestSession(_SessionToolBase):
                 workspace_id=self._workspace_id,
                 name=session_name,
                 chat_model_config=model_config,
+                fallback_chat_model_config=fallback_model_config,
                 permission_mode=PermissionMode.BYPASS,
             ),
             state=AgentState(
@@ -85,6 +90,11 @@ class CreateTestSession(_SessionToolBase):
                 "session_name": session.config.name,
                 "agent_id": agent_id,
                 "chat_model_config": model_config.model_dump(mode="json"),
+                "fallback_chat_model_config": (
+                    fallback_model_config.model_dump(mode="json")
+                    if fallback_model_config is not None
+                    else None
+                ),
                 "permission_mode": PermissionMode.BYPASS.value,
             },
         )

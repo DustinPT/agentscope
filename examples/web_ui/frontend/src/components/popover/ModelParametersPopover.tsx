@@ -89,6 +89,46 @@ function extractDefaults(schema: ParameterSchema | undefined): Record<string, un
 	return defaults;
 }
 
+function resolveModelCard(
+        groups: Record<string, Array<{ credential: CredentialView; models: ModelCard[] }>>,
+        selectedModel: ChatModelConfig | null,
+): ModelCard | null {
+        if (!selectedModel) return null;
+        const items = groups[selectedModel.type];
+        if (!items) return null;
+        for (const { credential, models } of items) {
+                if (credential.id !== selectedModel.credential_id) continue;
+                const match = models.find((model) => model.name === selectedModel.model);
+                if (match) return match;
+        }
+        return null;
+}
+
+function formatContextSizeValue(value: number | null | undefined): string {
+        return typeof value === 'number' && value > 0 ? String(value) : '';
+}
+
+function normalizeContextSizeInput(
+        raw: string,
+        max: number,
+): { value: number | null; displayValue: string } | null {
+        const trimmed = raw.trim();
+        if (trimmed === '') {
+                return { value: null, displayValue: '' };
+        }
+
+        const parsed = Number(trimmed);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+                return null;
+        }
+
+        const normalized = Math.min(parsed, max);
+        return {
+                value: normalized,
+                displayValue: String(normalized),
+        };
+}
+
 // ---------------------------------------------------------------------------
 // Field components
 // ---------------------------------------------------------------------------
@@ -212,6 +252,125 @@ function StringField({ id, label, required, prop, value, onChange }: FieldProps)
 	);
 }
 
+interface ModelParameterEditorContentProps {
+        title: string;
+        description: string;
+        schema: ParameterSchema | undefined;
+        values: Record<string, unknown>;
+        onChange: (key: string, value: unknown) => void;
+        contextSizeInputId?: string;
+        contextSizeText?: string;
+        contextSizeMax?: number;
+        onContextSizeTextChange?: (value: string) => void;
+        onContextSizeCommit?: (value: string) => void;
+}
+
+function ModelParameterEditorContent({
+        title,
+        description,
+        schema,
+        values,
+        onChange,
+        contextSizeInputId,
+        contextSizeText,
+        contextSizeMax,
+        onContextSizeTextChange,
+        onContextSizeCommit,
+}: ModelParameterEditorContentProps) {
+        const { t } = useTranslation();
+        const properties = schema?.properties ?? {};
+        const required = schema?.required ?? [];
+        const entries = Object.entries(properties);
+
+        return (
+                <>
+                        <div className="mb-3">
+                                <p className="text-sm font-medium">{title}</p>
+                                <p className="text-muted-foreground text-xs">{description}</p>
+                        </div>
+                        {contextSizeInputId && contextSizeMax !== undefined && onContextSizeTextChange && (
+                                <div
+                                        className="mb-4 space-y-2"
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onKeyDown={(e) => e.stopPropagation()}
+                                >
+                                        <Label htmlFor={contextSizeInputId} className="text-xs font-medium">
+                                                {t('model-parameters.contextSizeLabel')}
+                                        </Label>
+                                        <Input
+                                                id={contextSizeInputId}
+                                                type="number"
+                                                min={1}
+                                                max={contextSizeMax}
+                                                value={contextSizeText ?? ''}
+                                                placeholder={String(contextSizeMax)}
+                                                className="h-8 text-sm"
+                                                onChange={(e) => onContextSizeTextChange(e.target.value)}
+                                                onBlur={(e) => onContextSizeCommit?.(e.target.value)}
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                                {t('model-parameters.contextSizeDescription', {
+                                                        max: contextSizeMax,
+                                                })}
+                                        </p>
+                                </div>
+                        )}
+                        {entries.length === 0 ? (
+                                <p className="text-muted-foreground text-xs">{t('model-parameters.empty')}</p>
+                        ) : (
+                                <div
+                                        className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onKeyDown={(e) => e.stopPropagation()}
+                                >
+                                        {entries.map(([key, prop]) => {
+                                                const { type: effectiveType, enumValues } = resolveType(prop);
+                                                const label = prop.title ?? key;
+                                                const isRequired = required.includes(key);
+                                                const fieldProps: FieldProps = {
+                                                        id: `param-${contextSizeInputId ?? 'model'}-${key}`,
+                                                        label,
+                                                        required: isRequired,
+                                                        prop,
+                                                        value: values[key],
+                                                        onChange: (v) => onChange(key, v),
+                                                };
+
+                                                let field: React.ReactNode;
+                                                if (effectiveType === 'boolean') {
+                                                        field = <BooleanField {...fieldProps} />;
+                                                } else if (enumValues) {
+                                                        field = <EnumField {...fieldProps} />;
+                                                } else if (
+                                                        effectiveType === 'number' ||
+                                                        effectiveType === 'integer'
+                                                ) {
+                                                        field = <NumberField {...fieldProps} />;
+                                                } else {
+                                                        field = <StringField {...fieldProps} />;
+                                                }
+
+                                                return (
+                                                        <Tooltip key={key}>
+                                                                <TooltipTrigger asChild>
+                                                                        <div className="col-span-2 grid grid-cols-subgrid items-center">
+                                                                                {field}
+                                                                        </div>
+                                                                </TooltipTrigger>
+                                                                {prop.description && (
+                                                                        <TooltipContent side="left">
+                                                                                {prop.description}
+                                                                        </TooltipContent>
+                                                                )}
+                                                        </Tooltip>
+                                                );
+                                        })}
+                                </div>
+                        )}
+                </>
+        );
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -223,6 +382,8 @@ interface Props {
 	modelCard: ModelCard | null;
 	/** Called when the user edits the primary model's parameters. */
 	onChange: (parameters: Record<string, unknown>) => void;
+        /** Called when the user edits the primary model's context-size override. */
+        onContextSizeChange?: (contextSize: number | null) => void;
 	/** Currently selected fallback model. `null` means no fallback configured. `undefined` hides the section. */
 	selectedFallbackModel?: ChatModelConfig | null;
 	/** Called when the user picks a fallback model or clears the selection. */
@@ -252,6 +413,7 @@ export function ModelParametersPopover({
 	selectedModel,
 	modelCard,
 	onChange,
+        onContextSizeChange,
 	selectedFallbackModel,
 	onFallbackChange,
 	selectedTTSModel,
@@ -259,18 +421,41 @@ export function ModelParametersPopover({
 	disabled: locked = false,
 }: Props) {
 	const [values, setValues] = useState<Record<string, unknown>>({});
+        const [fallbackValues, setFallbackValues] = useState<Record<string, unknown>>({});
+        const [primaryContextSizeText, setPrimaryContextSizeText] = useState('');
+        const [fallbackContextSizeText, setFallbackContextSizeText] = useState('');
 	const { t } = useTranslation();
 	const { groups } = useAvailableModels();
 	const { groups: ttsGroups } = useAvailableTTSModels();
+        const selectedFallbackModelCard = resolveModelCard(
+                groups as Record<string, Array<{ credential: CredentialView; models: ModelCard[] }>>,
+                selectedFallbackModel ?? null,
+        );
+        const selectedModelKey = selectedModel
+                ? `${selectedModel.type}:${selectedModel.credential_id}:${selectedModel.model}`
+                : '';
+        const selectedFallbackModelKey = selectedFallbackModel
+                ? `${selectedFallbackModel.type}:${selectedFallbackModel.credential_id}:${selectedFallbackModel.model}`
+                : '';
 
 	const schema = modelCard?.parameter_schema as ParameterSchema | undefined;
-	const properties = schema?.properties ?? {};
-	const required = schema?.required ?? [];
-	const entries = Object.entries(properties);
+        const fallbackSchema = selectedFallbackModelCard?.parameter_schema as ParameterSchema | undefined;
 
 	useEffect(() => {
 		setValues(selectedModel?.parameters ?? {});
-	}, [selectedModel?.model]);
+        }, [selectedModelKey]);
+
+        useEffect(() => {
+                setFallbackValues(selectedFallbackModel?.parameters ?? {});
+        }, [selectedFallbackModelKey]);
+
+        useEffect(() => {
+                setPrimaryContextSizeText(formatContextSizeValue(selectedModel?.context_size));
+        }, [selectedModel?.model, selectedModel?.context_size]);
+
+        useEffect(() => {
+                setFallbackContextSizeText(formatContextSizeValue(selectedFallbackModel?.context_size));
+        }, [selectedFallbackModel?.model, selectedFallbackModel?.context_size]);
 
 	const handleChange = useCallback(
 		(key: string, value: unknown) => {
@@ -284,14 +469,64 @@ export function ModelParametersPopover({
 		[values, onChange],
 	);
 
+        const handleFallbackParameterChange = useCallback(
+                (key: string, value: unknown) => {
+                        if (!onFallbackChange || !selectedFallbackModel) return;
+                        const next = { ...fallbackValues, [key]: value };
+                        if (value === '' || value === undefined) {
+                                delete next[key];
+                        }
+                        setFallbackValues(next);
+                        onFallbackChange({
+                                ...selectedFallbackModel,
+                                parameters: next,
+                        });
+                },
+                [fallbackValues, onFallbackChange, selectedFallbackModel],
+        );
+
 	const handleSelectFallback = (type: string, credentialId: string, model: string) => {
 		onFallbackChange?.({
 			type,
 			credential_id: credentialId,
 			model,
 			parameters: {},
+                        context_size: null,
 		});
 	};
+
+        const commitPrimaryContextSize = useCallback(
+                (raw: string) => {
+                        if (!onContextSizeChange || !modelCard) return;
+                        const normalized = normalizeContextSizeInput(raw, modelCard.context_size);
+                        if (!normalized) {
+                                setPrimaryContextSizeText(formatContextSizeValue(selectedModel?.context_size));
+                                return;
+                        }
+                        setPrimaryContextSizeText(normalized.displayValue);
+                        onContextSizeChange(normalized.value);
+                },
+                [modelCard, onContextSizeChange, selectedModel?.context_size],
+        );
+
+        const commitFallbackContextSize = useCallback(
+                (raw: string) => {
+                        if (!onFallbackChange || !selectedFallbackModel || !selectedFallbackModelCard) return;
+                        const normalized = normalizeContextSizeInput(raw, selectedFallbackModelCard.context_size);
+                        if (!normalized) {
+                                setFallbackContextSizeText(
+                                        formatContextSizeValue(selectedFallbackModel.context_size),
+                                );
+                                return;
+                        }
+                        setFallbackContextSizeText(normalized.displayValue);
+                        onFallbackChange({
+                                ...selectedFallbackModel,
+                                context_size: normalized.value,
+                        });
+                },
+                [onFallbackChange, selectedFallbackModel, selectedFallbackModelCard],
+        );
 
 	const disabled = locked || !selectedModel;
 	// Credentials whose model list failed to load come back with an empty
@@ -418,6 +653,34 @@ export function ModelParametersPopover({
 							>
 								{t('llm-select.noFallback')}
 							</DropdownMenuCheckboxItem>
+                                                        {selectedFallbackModel && selectedFallbackModelCard && (
+                                                                <>
+                                                                        <DropdownMenuSeparator />
+                                                                        <DropdownMenuSub>
+                                                                                <DropdownMenuSubTrigger>
+                                                                                        {t('model-parameters.parametersLabel')}
+                                                                                </DropdownMenuSubTrigger>
+                                                                                <DropdownMenuSubContent className="w-80 max-h-96 overflow-y-auto p-3">
+                                                                                        <ModelParameterEditorContent
+                                                                                                title={t('model-parameters.title')}
+                                                                                                description={t('model-parameters.description')}
+                                                                                                schema={fallbackSchema}
+                                                                                                values={fallbackValues}
+                                                                                                onChange={handleFallbackParameterChange}
+                                                                                                contextSizeInputId="fallback-context-size"
+                                                                                                contextSizeText={fallbackContextSizeText}
+                                                                                                contextSizeMax={selectedFallbackModelCard.context_size}
+                                                                                                onContextSizeTextChange={
+                                                                                                        setFallbackContextSizeText
+                                                                                                }
+                                                                                                onContextSizeCommit={
+                                                                                                        commitFallbackContextSize
+                                                                                                }
+                                                                                        />
+                                                                                </DropdownMenuSubContent>
+                                                                        </DropdownMenuSub>
+                                                                </>
+                                                        )}
 						</DropdownMenuSubContent>
 					</DropdownMenuSub>
 				)}
@@ -428,66 +691,18 @@ export function ModelParametersPopover({
 						{t('model-parameters.parametersLabel')}
 					</DropdownMenuSubTrigger>
 					<DropdownMenuSubContent className="w-80 max-h-96 overflow-y-auto p-3">
-						<div className="mb-3">
-							<p className="text-sm font-medium">{t('model-parameters.title')}</p>
-							<p className="text-muted-foreground text-xs">
-								{t('model-parameters.description')}
-							</p>
-						</div>
-						{entries.length === 0 ? (
-							<p className="text-muted-foreground text-xs">
-								{t('model-parameters.empty')}
-							</p>
-						) : (
-							<div
-								className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
-								onPointerDown={(e) => e.stopPropagation()}
-								onKeyDown={(e) => e.stopPropagation()}
-							>
-								{entries.map(([key, prop]) => {
-									const { type: effectiveType, enumValues } = resolveType(prop);
-									const label = prop.title ?? key;
-									const isRequired = required.includes(key);
-									const fieldProps: FieldProps = {
-										id: `param-${key}`,
-										label,
-										required: isRequired,
-										prop,
-										value: values[key],
-										onChange: (v) => handleChange(key, v),
-									};
-
-									let field: React.ReactNode;
-									if (effectiveType === 'boolean') {
-										field = <BooleanField {...fieldProps} />;
-									} else if (enumValues) {
-										field = <EnumField {...fieldProps} />;
-									} else if (
-										effectiveType === 'number' ||
-										effectiveType === 'integer'
-									) {
-										field = <NumberField {...fieldProps} />;
-									} else {
-										field = <StringField {...fieldProps} />;
-									}
-
-									return (
-										<Tooltip key={key}>
-											<TooltipTrigger asChild>
-												<div className="col-span-2 grid grid-cols-subgrid items-center">
-													{field}
-												</div>
-											</TooltipTrigger>
-											{prop.description && (
-												<TooltipContent side="left">
-													{prop.description}
-												</TooltipContent>
-											)}
-										</Tooltip>
-									);
-								})}
-							</div>
-						)}
+                                                <ModelParameterEditorContent
+                                                        title={t('model-parameters.title')}
+                                                        description={t('model-parameters.description')}
+                                                        schema={schema}
+                                                        values={values}
+                                                        onChange={handleChange}
+                                                        contextSizeInputId="primary-context-size"
+                                                        contextSizeText={primaryContextSizeText}
+                                                        contextSizeMax={modelCard?.context_size}
+                                                        onContextSizeTextChange={setPrimaryContextSizeText}
+                                                        onContextSizeCommit={commitPrimaryContextSize}
+                                                />
 					</DropdownMenuSubContent>
 				</DropdownMenuSub>
 

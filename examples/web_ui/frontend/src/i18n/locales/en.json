@@ -625,6 +625,8 @@
 		"title": "Model Parameters",
 		"description": "Adjust inference parameters for the selected model.",
 		"empty": "No configurable parameters.",
+                "contextSizeLabel": "Context Size Limit",
+                "contextSizeDescription": "Leave empty to follow the model default, and do not exceed the model's max context size ({{max}}).",
 		"fallbackLabel": "Fallback model",
 		"fallbackLabelWithModel": "Fallback model ({{model}})",
                 "parametersLabel": "Parameters",

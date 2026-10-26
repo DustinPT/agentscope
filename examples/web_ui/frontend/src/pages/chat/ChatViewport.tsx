@@ -282,6 +282,7 @@ export function ChatViewport({
 			credential_id: firstItem.credential.id,
 			model: modelName,
 			parameters: {},
+                        context_size: null,
 		};
 	}, [groups]);
 
@@ -371,6 +372,19 @@ export function ChatViewport({
 		await sessionApi.update(sessionId, agentId, { chat_model_config: updated });
 		await refetchRelatedSessions();
 	};
+
+        /**
+         * Persist a context-size override change on the currently selected model.
+         *
+         * @param contextSize - New context-size override, or `null` to follow the model card.
+         */
+        const handleContextSizeChange = async (contextSize: number | null) => {
+                if (!selectedModel || !sessionId || !agentId) return;
+                const updated = { ...selectedModel, context_size: contextSize };
+                setSelectedModel(updated);
+                await sessionApi.update(sessionId, agentId, { chat_model_config: updated });
+                await refetchRelatedSessions();
+        };
 
 	/**
 	 * Persist a fallback-model change. `null` clears the fallback.
@@ -512,6 +526,7 @@ export function ChatViewport({
 								selectedModel={selectedModel}
 								modelCard={selectedModelCard}
 								onChange={handleParametersChange}
+                                                                onContextSizeChange={handleContextSizeChange}
 								selectedFallbackModel={selectedFallbackModel}
 								onFallbackChange={handleFallbackChange}
                                                                 selectedTTSModel={selectedTTSModel}

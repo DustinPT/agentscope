@@ -245,6 +245,13 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
                                                                 parameters,
                                                         })
                                                 }
+                                                onContextSizeChange={(contextSize) =>
+                                                        value.chatModelConfig &&
+                                                        set('chatModelConfig', {
+                                                                ...value.chatModelConfig,
+                                                                context_size: contextSize,
+                                                        })
+                                                }
                                                 selectedFallbackModel={value.fallbackChatModelConfig}
                                                 onFallbackChange={(config) =>
                                                         set('fallbackChatModelConfig', config)

@@ -60,6 +60,8 @@ async def get_model(
         ) from e
 
     runtime_init_kwargs = model_cls.get_runtime_init_kwargs(config.model)
+    if config.context_size is not None:
+        runtime_init_kwargs["context_size"] = config.context_size
     if (
         session_id is not None
         and getattr(model_cls, "type", None) == "opencode_go_chat"

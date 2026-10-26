@@ -94,6 +94,16 @@ class AgentData(BaseModel):
         title="Agent Default Model",
     )
 
+    default_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description=(
+            "Fallback chat model for this agent. Used for new sessions and "
+            "sub-agent runs when the primary model fails, unless the caller "
+            "provides an explicit fallback."
+        ),
+        title="Agent Default Fallback Model",
+    )
+
     allow_subagent_calls: bool = Field(
         default=False,
         description="Whether this agent may call other managed agents.",

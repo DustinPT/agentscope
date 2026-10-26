@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
-import type { ChatModelConfig, GlobalModelCategoryKey, ModelCard, UserModelDefaults } from '@/api';
+import type {
+        ChatModelConfig,
+        GlobalModelCategoryKey,
+        GlobalModelFallbackCategoryKey,
+        ModelCard,
+        UserModelDefaults,
+} from '@/api';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
@@ -11,15 +17,35 @@ import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useUserModelDefaults } from '@/hooks/useUserModelDefaults';
 import { useTranslation } from '@/i18n/useI18n';
 
-const CATEGORY_META: Array<{ key: GlobalModelCategoryKey; i18nKey: string }> = [
-        { key: 'visual_engineering', i18nKey: 'visualEngineering' },
-        { key: 'ultrabrain', i18nKey: 'ultrabrain' },
-        { key: 'deep', i18nKey: 'deep' },
-        { key: 'artistry', i18nKey: 'artistry' },
-        { key: 'quick', i18nKey: 'quick' },
-        { key: 'unspecified_low', i18nKey: 'unspecifiedLow' },
-        { key: 'unspecified_high', i18nKey: 'unspecifiedHigh' },
-        { key: 'writing', i18nKey: 'writing' },
+const CATEGORY_META: Array<{
+        key: GlobalModelCategoryKey;
+        fallbackKey: GlobalModelFallbackCategoryKey;
+        i18nKey: string;
+}> = [
+        {
+                key: 'visual_engineering',
+                fallbackKey: 'visual_engineering_fallback_chat_model_config',
+                i18nKey: 'visualEngineering',
+        },
+        {
+                key: 'ultrabrain',
+                fallbackKey: 'ultrabrain_fallback_chat_model_config',
+                i18nKey: 'ultrabrain',
+        },
+        { key: 'deep', fallbackKey: 'deep_fallback_chat_model_config', i18nKey: 'deep' },
+        { key: 'artistry', fallbackKey: 'artistry_fallback_chat_model_config', i18nKey: 'artistry' },
+        { key: 'quick', fallbackKey: 'quick_fallback_chat_model_config', i18nKey: 'quick' },
+        {
+                key: 'unspecified_low',
+                fallbackKey: 'unspecified_low_fallback_chat_model_config',
+                i18nKey: 'unspecifiedLow',
+        },
+        {
+                key: 'unspecified_high',
+                fallbackKey: 'unspecified_high_fallback_chat_model_config',
+                i18nKey: 'unspecifiedHigh',
+        },
+        { key: 'writing', fallbackKey: 'writing_fallback_chat_model_config', i18nKey: 'writing' },
 ];
 
 function cloneDefaults(value: UserModelDefaults): UserModelDefaults {
@@ -27,19 +53,75 @@ function cloneDefaults(value: UserModelDefaults): UserModelDefaults {
                 visual_engineering: value.visual_engineering
                         ? { ...value.visual_engineering, parameters: { ...value.visual_engineering.parameters } }
                         : null,
+                visual_engineering_fallback_chat_model_config:
+                        value.visual_engineering_fallback_chat_model_config
+                                ? {
+                                          ...value.visual_engineering_fallback_chat_model_config,
+                                          parameters: {
+                                                  ...value.visual_engineering_fallback_chat_model_config.parameters,
+                                          },
+                                  }
+                                : null,
                 ultrabrain: value.ultrabrain
                         ? { ...value.ultrabrain, parameters: { ...value.ultrabrain.parameters } }
                         : null,
+                ultrabrain_fallback_chat_model_config: value.ultrabrain_fallback_chat_model_config
+                        ? {
+                                  ...value.ultrabrain_fallback_chat_model_config,
+                                  parameters: { ...value.ultrabrain_fallback_chat_model_config.parameters },
+                          }
+                        : null,
                 deep: value.deep ? { ...value.deep, parameters: { ...value.deep.parameters } } : null,
+                deep_fallback_chat_model_config: value.deep_fallback_chat_model_config
+                        ? {
+                                  ...value.deep_fallback_chat_model_config,
+                                  parameters: { ...value.deep_fallback_chat_model_config.parameters },
+                          }
+                        : null,
                 artistry: value.artistry ? { ...value.artistry, parameters: { ...value.artistry.parameters } } : null,
+                artistry_fallback_chat_model_config: value.artistry_fallback_chat_model_config
+                        ? {
+                                  ...value.artistry_fallback_chat_model_config,
+                                  parameters: { ...value.artistry_fallback_chat_model_config.parameters },
+                          }
+                        : null,
                 quick: value.quick ? { ...value.quick, parameters: { ...value.quick.parameters } } : null,
+                quick_fallback_chat_model_config: value.quick_fallback_chat_model_config
+                        ? {
+                                  ...value.quick_fallback_chat_model_config,
+                                  parameters: { ...value.quick_fallback_chat_model_config.parameters },
+                          }
+                        : null,
                 unspecified_low: value.unspecified_low
                         ? { ...value.unspecified_low, parameters: { ...value.unspecified_low.parameters } }
+                        : null,
+                unspecified_low_fallback_chat_model_config: value.unspecified_low_fallback_chat_model_config
+                        ? {
+                                  ...value.unspecified_low_fallback_chat_model_config,
+                                  parameters: {
+                                          ...value.unspecified_low_fallback_chat_model_config.parameters,
+                                  },
+                          }
                         : null,
                 unspecified_high: value.unspecified_high
                         ? { ...value.unspecified_high, parameters: { ...value.unspecified_high.parameters } }
                         : null,
+                unspecified_high_fallback_chat_model_config:
+                        value.unspecified_high_fallback_chat_model_config
+                                ? {
+                                          ...value.unspecified_high_fallback_chat_model_config,
+                                          parameters: {
+                                                  ...value.unspecified_high_fallback_chat_model_config.parameters,
+                                          },
+                                  }
+                                : null,
                 writing: value.writing ? { ...value.writing, parameters: { ...value.writing.parameters } } : null,
+                writing_fallback_chat_model_config: value.writing_fallback_chat_model_config
+                        ? {
+                                  ...value.writing_fallback_chat_model_config,
+                                  parameters: { ...value.writing_fallback_chat_model_config.parameters },
+                          }
+                        : null,
         };
 }
 
@@ -82,8 +164,20 @@ export function ModelDefaultsPage() {
                 return Object.fromEntries(entries) as Record<GlobalModelCategoryKey, ModelCard | null>;
         }, [draft, groups]);
 
-        const handleModelChange = (key: GlobalModelCategoryKey, value: ChatModelConfig | null) => {
-                setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+        const handleModelChange = (
+                key: GlobalModelCategoryKey,
+                fallbackKey: GlobalModelFallbackCategoryKey,
+                value: ChatModelConfig | null,
+        ) => {
+                setDraft((prev) =>
+                        prev
+                                ? {
+                                          ...prev,
+                                          [key]: value,
+                                          [fallbackKey]: value ? prev[fallbackKey] : null,
+                                  }
+                                : prev,
+                );
         };
 
         const handleParametersChange = (key: GlobalModelCategoryKey, parameters: Record<string, unknown>) => {
@@ -99,6 +193,28 @@ export function ModelDefaultsPage() {
                                 },
                         };
                 });
+        };
+
+        const handleContextSizeChange = (key: GlobalModelCategoryKey, contextSize: number | null) => {
+                setDraft((prev) => {
+                        if (!prev) return prev;
+                        const current = prev[key];
+                        if (!current) return prev;
+                        return {
+                                ...prev,
+                                [key]: {
+                                        ...current,
+                                        context_size: contextSize,
+                                },
+                        };
+                });
+        };
+
+        const handleFallbackModelChange = (
+                key: GlobalModelFallbackCategoryKey,
+                value: ChatModelConfig | null,
+        ) => {
+                setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
         };
 
         const handleSave = async () => {
@@ -142,7 +258,7 @@ export function ModelDefaultsPage() {
                                                 ) : null}
 
                                                 {draft
-                                                        ? CATEGORY_META.map(({ key, i18nKey }) => (
+                                                        ? CATEGORY_META.map(({ key, fallbackKey, i18nKey }) => (
                                                                           <Card key={key}>
                                                                                   <CardHeader>
                                                                                           <CardTitle>
@@ -159,7 +275,11 @@ export function ModelDefaultsPage() {
                                                                                                   <LlmSelect
                                                                                                           value={draft[key]}
                                                                                                           onChange={(value) =>
-                                                                                                                  handleModelChange(key, value)
+                                                                                                                  handleModelChange(
+                                                                                                                          key,
+                                                                                                                          fallbackKey,
+                                                                                                                          value,
+                                                                                                                  )
                                                                                                           }
                                                                                                           onAddCredential={() =>
                                                                                                                   setCredentialOpen(true)
@@ -182,8 +302,21 @@ export function ModelDefaultsPage() {
                                                                                                                           parameters,
                                                                                                                   )
                                                                                                           }
-                                                                                                          selectedFallbackModel={null}
-                                                                                                          onFallbackChange={() => {}}
+                                                                                                          onContextSizeChange={(contextSize) =>
+                                                                                                                  handleContextSizeChange(
+                                                                                                                          key,
+                                                                                                                          contextSize,
+                                                                                                                  )
+                                                                                                          }
+                                                                                                          selectedFallbackModel={
+                                                                                                                  draft[fallbackKey]
+                                                                                                          }
+                                                                                                          onFallbackChange={(value) =>
+                                                                                                                  handleFallbackModelChange(
+                                                                                                                          fallbackKey,
+                                                                                                                          value,
+                                                                                                                  )
+                                                                                                          }
                                                                                                   />
                                                                                           </div>
                                                                                   </CardContent>

@@ -335,6 +335,8 @@ Important:
             or caller_session.config.chat_model_config
         )
         fallback_chat_model_config = (
+            target_agent.data.default_fallback_chat_model_config
+            or
             caller_session.config.fallback_chat_model_config
         )
         if chat_model_config is None:

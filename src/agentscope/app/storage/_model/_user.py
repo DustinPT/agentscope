@@ -16,33 +16,65 @@ class GlobalDefaultModels(BaseModel):
         default=None,
         description="Default model for frontend, UI, CSS, and design work.",
     )
+    visual_engineering_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model for frontend, UI, CSS, and design work.",
+    )
     ultrabrain: ChatModelConfig | None = Field(
         default=None,
         description="Default model for maximum reasoning tasks.",
+    )
+    ultrabrain_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model for maximum reasoning tasks.",
     )
     deep: ChatModelConfig | None = Field(
         default=None,
         description="Default model for deep coding and complex logic tasks.",
     )
+    deep_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model for deep coding and complex logic tasks.",
+    )
     artistry: ChatModelConfig | None = Field(
         default=None,
         description="Default model for creative and novel approaches.",
+    )
+    artistry_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model for creative and novel approaches.",
     )
     quick: ChatModelConfig | None = Field(
         default=None,
         description="Default model for simple and fast tasks.",
     )
+    quick_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model for simple and fast tasks.",
+    )
     unspecified_low: ChatModelConfig | None = Field(
         default=None,
         description="Default model for general standard work.",
+    )
+    unspecified_low_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model for general standard work.",
     )
     unspecified_high: ChatModelConfig | None = Field(
         default=None,
         description="Default model for general complex work.",
     )
+    unspecified_high_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model for general complex work.",
+    )
     writing: ChatModelConfig | None = Field(
         default=None,
         description="Default model for text, docs, and prose tasks.",
+    )
+    writing_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model for text, docs, and prose tasks.",
     )
 
 

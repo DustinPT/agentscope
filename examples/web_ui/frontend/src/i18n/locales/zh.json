@@ -625,6 +625,8 @@
 		"title": "模型参数",
 		"description": "调整所选模型的推理参数。",
 		"empty": "暂无可配置参数。",
+                "contextSizeLabel": "上下文长度限制",
+                "contextSizeDescription": "留空表示跟随模型默认值，且不得大于模型最大上下文长度（{{max}}）。",
 		"fallbackLabel": "兜底模型",
 		"fallbackLabelWithModel": "兜底模型（{{model}}）",
                 "parametersLabel": "参数",

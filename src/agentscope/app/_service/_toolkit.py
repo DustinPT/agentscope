@@ -172,6 +172,9 @@ optional):
                 user_id=user_id,
                 agent_id=agent_record.id,
                 chat_model_config=session_record.config.chat_model_config,
+                fallback_chat_model_config=(
+                    session_record.config.fallback_chat_model_config
+                ),
             ),
         )
 

@@ -323,6 +323,11 @@ async def create_session(
     resolved_chat_model_config = (
         body.chat_model_config or agent.data.default_chat_model_config
     )
+    resolved_fallback_chat_model_config = (
+        body.fallback_chat_model_config
+        if "fallback_chat_model_config" in body.model_fields_set
+        else agent.data.default_fallback_chat_model_config
+    )
     await _ensure_credential_exists(
         storage,
         user_id,
@@ -331,7 +336,7 @@ async def create_session(
     await _ensure_credential_exists(
         storage,
         user_id,
-        body.fallback_chat_model_config,
+        resolved_fallback_chat_model_config,
     )
     await _ensure_credential_exists(
         storage,
@@ -357,7 +362,7 @@ async def create_session(
         config=SessionConfig(
             workspace_id=resolved_workspace_id,
             chat_model_config=resolved_chat_model_config,
-            fallback_chat_model_config=body.fallback_chat_model_config,
+            fallback_chat_model_config=resolved_fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
             permission_mode=permission_mode,
             **({"name": body.name} if body.name is not None else {}),

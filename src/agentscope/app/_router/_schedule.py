@@ -33,6 +33,22 @@ schedule_router = APIRouter(
 )
 
 
+async def _ensure_credential_exists(
+    storage: StorageBase,
+    user_id: str,
+    credential_id: str | None,
+) -> None:
+    """Validate that a referenced credential belongs to the user."""
+    if credential_id is None:
+        return
+    credentials = await storage.list_credentials(user_id)
+    if not any(c.id == credential_id for c in credentials):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Credential '{credential_id}' not found.",
+        )
+
+
 @schedule_router.get(
     "/",
     response_model=ListSchedulesResponse,
@@ -89,6 +105,20 @@ async def create_schedule(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent '{body.agent_id}' not found.",
         )
+    await _ensure_credential_exists(
+        storage,
+        user_id,
+        body.chat_model_config.credential_id,
+    )
+    await _ensure_credential_exists(
+        storage,
+        user_id,
+        (
+            body.fallback_chat_model_config.credential_id
+            if body.fallback_chat_model_config is not None
+            else None
+        ),
+    )
 
     record = ScheduleRecord(
         user_id=user_id,
@@ -102,6 +132,7 @@ async def create_schedule(
             stateful=body.stateful,
             permission_mode=body.permission_mode,
             chat_model_config=body.chat_model_config,
+            fallback_chat_model_config=body.fallback_chat_model_config,
             source=ScheduleSource.USER,
             started_at=datetime.now(),
         ),
@@ -155,6 +186,20 @@ async def update_schedule(
         )
 
     updates = body.model_dump(exclude_none=True)
+    if "fallback_chat_model_config" in body.model_fields_set:
+        updates["fallback_chat_model_config"] = body.fallback_chat_model_config
+    if body.chat_model_config is not None:
+        await _ensure_credential_exists(
+            storage,
+            user_id,
+            body.chat_model_config.credential_id,
+        )
+    if body.fallback_chat_model_config is not None:
+        await _ensure_credential_exists(
+            storage,
+            user_id,
+            body.fallback_chat_model_config.credential_id,
+        )
     updated_data = existing.data.model_copy(update=updates)
     updated_record = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},

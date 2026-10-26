@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ._base import _RecordBase
 from ....permission import PermissionMode
@@ -33,6 +33,48 @@ class ChatModelConfig(BaseModel):
 
     parameters: dict
     """The model parameters."""
+
+    context_size: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional context-size override for this model config. Must not "
+            "exceed the model card's declared context size."
+        ),
+    )
+    """Optional context-size override for this model config."""
+
+    @model_validator(mode="after")
+    def _validate_context_size(self) -> "ChatModelConfig":
+        """Validate the optional context-size override against the model card.
+
+        The override is intentionally constrained to be less than or equal to
+        the model card default, so callers can shrink the context window but
+        cannot claim a larger one than the provider/model supports.
+        """
+        if self.context_size is None:
+            return self
+
+        from ....credential import CredentialFactory
+
+        credential_cls = CredentialFactory.get_credential_class(self.type)
+        if credential_cls is None:
+            raise ValueError(f"Provider '{self.type}' not found.")
+
+        model_cls = credential_cls.get_chat_model_class()
+        card = model_cls.get_model_card(self.model)
+        if card is None:
+            raise ValueError(
+                f"Model '{self.model}' not found for provider '{self.type}'."
+            )
+
+        if self.context_size > card.context_size:
+            raise ValueError(
+                "context_size must be less than or equal to the model "
+                f"limit ({card.context_size}) for model '{self.model}'."
+            )
+
+        return self
 
 
 class TTSModelConfig(BaseModel):

@@ -47,6 +47,13 @@ class CreateAgentRequest(BaseModel):
             "caller does not provide a model, and for sub-agent runs."
         ),
     )
+    default_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description=(
+            "Fallback model for this agent. Used for new sessions and "
+            "sub-agent runs when the primary model fails."
+        ),
+    )
     allow_subagent_calls: bool = Field(
         default=False,
         description="Whether this agent may call other managed agents.",
@@ -98,6 +105,13 @@ class UpdateAgentRequest(BaseModel):
         description=(
             "Default model for this agent. Used for new sessions when the "
             "caller does not provide a model, and for sub-agent runs."
+        ),
+    )
+    default_fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description=(
+            "Fallback model for this agent. Used for new sessions and "
+            "sub-agent runs when the primary model fails."
         ),
     )
     allow_subagent_calls: bool | None = Field(

@@ -64,6 +64,7 @@ export function SessionDraftComposer({
 				credential_id: firstItem.credential.id,
 				model: modelName,
 				parameters: {},
+                                context_size: null,
 			};
 	}, [groups]);
 
@@ -113,6 +114,17 @@ export function SessionDraftComposer({
 											: prev.chatModelConfig,
 									}))
 								}
+                                                                onContextSizeChange={(contextSize) =>
+                                                                        updateDraft((prev) => ({
+                                                                                ...prev,
+                                                                                chatModelConfig: prev.chatModelConfig
+                                                                                        ? {
+                                                                                                  ...prev.chatModelConfig,
+                                                                                                  context_size: contextSize,
+                                                                                          }
+                                                                                        : prev.chatModelConfig,
+                                                                        }))
+                                                                }
 								selectedFallbackModel={draft.fallbackChatModelConfig}
 								onFallbackChange={(value) =>
 									updateDraft((prev) => ({

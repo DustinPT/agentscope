@@ -167,6 +167,9 @@ class SchedulerManager:
                         session_config = SessionConfig(
                             workspace_id="",
                             chat_model_config=record.data.chat_model_config,
+                            fallback_chat_model_config=(
+                                record.data.fallback_chat_model_config
+                            ),
                             permission_mode=record.data.permission_mode,
                         )
                         session = await storage.upsert_session(
@@ -203,6 +206,9 @@ class SchedulerManager:
                         config=SessionConfig(
                             workspace_id="",
                             chat_model_config=record.data.chat_model_config,
+                            fallback_chat_model_config=(
+                                record.data.fallback_chat_model_config
+                            ),
                             permission_mode=record.data.permission_mode,
                         ),
                         state=state,
@@ -387,6 +393,7 @@ class SchedulerManager:
         user_id: str,
         agent_id: str,
         chat_model_config: ChatModelConfig,
+        fallback_chat_model_config: ChatModelConfig | None = None,
     ) -> list[ToolBase]:
         """Return the agent-facing tools provided by the scheduler manager.
 
@@ -398,6 +405,9 @@ class SchedulerManager:
             chat_model_config (`ChatModelConfig`):
                 Model configuration inherited from the current session and
                 stored on new :class:`~...ScheduleRecord` objects.
+            fallback_chat_model_config (`ChatModelConfig | None`, optional):
+                Fallback model configuration inherited from the current
+                session and stored on new schedule records.
 
         Returns:
             `list[ToolBase]`:
@@ -410,6 +420,7 @@ class SchedulerManager:
                 user_id=user_id,
                 agent_id=agent_id,
                 chat_model_config=chat_model_config,
+                fallback_chat_model_config=fallback_chat_model_config,
                 storage=self._storage,
                 scheduler_manager=self,
             ),

@@ -71,9 +71,15 @@ async def _validate_subagent_config(
     allow_subagent_calls: bool,
     allowed_subagent_ids: list[str],
     default_credential_id: str | None,
+    default_fallback_credential_id: str | None,
 ) -> None:
     """Validate sub-agent configuration against storage."""
     await _ensure_credential_exists(storage, user_id, default_credential_id)
+    await _ensure_credential_exists(
+        storage,
+        user_id,
+        default_fallback_credential_id,
+    )
 
     if self_agent_id is not None and self_agent_id in allowed_subagent_ids:
         raise HTTPException(
@@ -146,6 +152,11 @@ async def _validate_agent_body(
         default_credential_id=(
             body.default_chat_model_config.credential_id
             if body.default_chat_model_config is not None
+            else None
+        ),
+        default_fallback_credential_id=(
+            body.default_fallback_chat_model_config.credential_id
+            if body.default_fallback_chat_model_config is not None
             else None
         ),
     )
@@ -244,6 +255,7 @@ async def get_agent_schema() -> AgentSchemaResponse:
 
     subagent_keys = (
         "default_chat_model_config",
+        "default_fallback_chat_model_config",
         "allow_subagent_calls",
         "allowed_subagent_ids",
     )
@@ -279,6 +291,29 @@ async def get_agent_schema() -> AgentSchemaResponse:
                 agent_schema.get("properties", {})
                 .get("allow_subagent_calls", {})
             ),
+            "default_fallback_chat_model_config": {
+                "type": "object",
+                "title": "Agent Default Fallback Model",
+                "description": (
+                    "Fallback model for this agent. Used for new sessions "
+                    "and sub-agent runs when the primary model fails. "
+                    "Leave empty for no default fallback."
+                ),
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "title": "Provider Type",
+                    },
+                    "credential_id": {
+                        "type": "string",
+                        "title": "Credential Id",
+                    },
+                    "model": {
+                        "type": "string",
+                        "title": "Model",
+                    },
+                },
+            },
             "allowed_subagent_ids": {
                 "type": "array",
                 "title": "Allowed Sub-Agents",
@@ -398,6 +433,12 @@ async def update_agent(
     existing = await _get_agent_or_404(storage, user_id, agent_id)
 
     updates = body.model_dump(exclude_none=True)
+    if "default_chat_model_config" in body.model_fields_set:
+        updates["default_chat_model_config"] = body.default_chat_model_config
+    if "default_fallback_chat_model_config" in body.model_fields_set:
+        updates["default_fallback_chat_model_config"] = (
+            body.default_fallback_chat_model_config
+        )
     merged_data = existing.data.model_dump(mode="python")
     merged_data.update(updates)
     updated_data = AgentData.model_validate(merged_data)

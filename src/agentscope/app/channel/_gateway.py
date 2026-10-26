@@ -349,11 +349,11 @@ class ChannelGateway:
                 agent_id=agent_id,
                 session_id=session_id,
             ),
-            chat_model_config=ChatModelConfig(
-                **record.session.chat_model_config,
+            chat_model_config=ChatModelConfig.model_validate(
+                record.session.chat_model_config,
             ),
             fallback_chat_model_config=(
-                ChatModelConfig(**fallback) if fallback else None
+                ChatModelConfig.model_validate(fallback) if fallback else None
             ),
             name=self._session_name(record, event, scope),
             permission_mode=permission_mode,

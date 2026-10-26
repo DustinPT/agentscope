@@ -78,6 +78,11 @@ class ScheduleData(BaseModel):
         description="Model configuration for the auto-created session.",
     )
 
+    fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model configuration for the auto-created session.",
+    )
+
     stateful: bool = Field(
         title="Stateful",
         default=False,
