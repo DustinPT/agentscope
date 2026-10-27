@@ -22,6 +22,7 @@ from ._sandbox_permission import (
     normalize_domain_pattern,
     normalize_operations,
     normalize_path_pattern,
+    normalize_unix_socket_pattern,
     normalize_sandbox_grant,
     sandbox_grant_identity,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "normalize_domain_pattern",
     "normalize_operations",
     "normalize_path_pattern",
+    "normalize_unix_socket_pattern",
     "normalize_sandbox_grant",
     "sandbox_grant_identity",
 ]

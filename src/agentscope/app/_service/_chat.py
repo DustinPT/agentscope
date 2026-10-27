@@ -48,6 +48,7 @@ from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     ChannelContextGuardMiddleware,
     InboxMiddleware,
+    SandboxViolationHintMiddleware,
     StateChangeMiddleware,
     SubAgentMiddleware,
     ToolOffloadMiddleware,
@@ -1857,6 +1858,7 @@ class ChatService:
         # ----------------------------------------------------------------
         middlewares: list = [
             InboxMiddleware(self._message_bus),
+            SandboxViolationHintMiddleware(),
             StateChangeMiddleware(
                 message_bus=self._message_bus,
                 session_id=session_id,

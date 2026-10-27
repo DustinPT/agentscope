@@ -20,6 +20,11 @@ from pydantic import (
 
 from ._builtin import ResetTools, SkillViewer
 from ._base import ToolBase
+from ._tool_call_context import (
+    ToolCallContext,
+    reset_current_tool_call,
+    set_current_tool_call,
+)
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
@@ -308,9 +313,16 @@ class Toolkit:
 
             runtime_context = state.tool_context.runtime_context
             previous_tool_call_id = None
+            tool_call_context_token = None
             if runtime_context is not None:
                 previous_tool_call_id = runtime_context.current_tool_call_id
                 runtime_context.current_tool_call_id = tool_call.id
+            tool_call_context_token = set_current_tool_call(
+                ToolCallContext(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                ),
+            )
 
             try:
                 if inspect.iscoroutinefunction(tool_func.__call__):
@@ -342,6 +354,8 @@ class Toolkit:
                         f"but got {type(res)}.",
                     )
             finally:
+                if tool_call_context_token is not None:
+                    reset_current_tool_call(tool_call_context_token)
                 if runtime_context is not None:
                     runtime_context.current_tool_call_id = previous_tool_call_id
 

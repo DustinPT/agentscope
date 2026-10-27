@@ -15,7 +15,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._gateway_client import GatewayClient
@@ -63,6 +62,12 @@ class SRTWorkspace(LocalWorkspace):
         self._runtime_log_fp: Any = None
         self._runtime_tmpdir: str | None = None
         self._backend = None
+        self._node_executable: str | None = None
+        self._sandbox_runtime_module_path: str | None = None
+        self._bridge_path = os.path.join(
+            os.path.dirname(__file__),
+            "_sandbox_runtime_bridge.mjs",
+        )
 
     async def initialize(self) -> None:
         """Start the sandboxed local runtime service."""
@@ -77,16 +82,28 @@ class SRTWorkspace(LocalWorkspace):
             raise FileNotFoundError(
                 f"SRT settings file not found: {self.srt_settings_path}",
             )
+        if not os.path.isfile(self._bridge_path):
+            raise FileNotFoundError(
+                f"SRT sandbox bridge file not found: {self._bridge_path}",
+            )
 
         port = self.service_port or _allocate_local_port(self.service_host)
         self.service_port = port
         base_url = f"http://{self.service_host}:{port}"
 
-        await self._start_runtime_process(port)
+        self._node_executable = _resolve_node_executable()
+        srt_executable = _resolve_srt_executable(self.srt_executable)
+        self._sandbox_runtime_module_path = _resolve_sandbox_runtime_module_path(
+            srt_executable,
+        )
+
+        await self._start_runtime_process(port, srt_executable=srt_executable)
         self._backend = SRTBackend(
-            base_url=base_url,
-            token=self.service_token,
             workdir=self.workdir,
+            srt_settings_path=self.srt_settings_path,
+            node_executable=self._node_executable,
+            sandbox_runtime_module_path=self._sandbox_runtime_module_path,
+            bridge_path=self._bridge_path,
             timeout=self.startup_timeout,
         )
         self._gateway = GatewayClient(
@@ -148,9 +165,13 @@ class SRTWorkspace(LocalWorkspace):
         self._loaded_agent_namespaces = set()
         self.is_alive = False
 
-    async def _start_runtime_process(self, port: int) -> None:
+    async def _start_runtime_process(
+        self,
+        port: int,
+        *,
+        srt_executable: str,
+    ) -> None:
         """Launch the sandboxed local runtime service process."""
-        srt_executable = _resolve_srt_executable(self.srt_executable)
         os.makedirs(os.path.dirname(self._runtime_log_path), exist_ok=True)
         self._runtime_log_fp = open(self._runtime_log_path, "ab")
         runtime_tmpdir_root = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
@@ -372,6 +393,15 @@ class SRTWorkspace(LocalWorkspace):
             await self._save_agent_mcp_file(agent_id)
             return gw_client
 
+    def consume_tool_call_violations(
+        self,
+        tool_call_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return and clear cached sandbox violations for one tool call."""
+        if not isinstance(self._backend, SRTBackend):
+            return []
+        return self._backend.consume_tool_call_violations(tool_call_id)
+
 
 def _allocate_local_port(host: str) -> int:
     """Allocate a currently free localhost TCP port."""
@@ -394,6 +424,29 @@ def _resolve_srt_executable(executable: str) -> str:
     raise FileNotFoundError(
         f"SRT executable {executable!r} not found in PATH. "
         "Install @anthropic-ai/sandbox-runtime first.",
+    )
+
+
+def _resolve_node_executable() -> str:
+    """Resolve a Node.js executable path or raise a clear error."""
+    resolved = shutil.which("node")
+    if resolved:
+        return resolved
+    raise FileNotFoundError(
+        "Node.js executable 'node' not found in PATH. "
+        "Install Node.js to use SRT sandbox bridge execution.",
+    )
+
+
+def _resolve_sandbox_runtime_module_path(srt_executable: str) -> str:
+    """Resolve the sandbox-runtime dist/index.js path from the SRT CLI."""
+    cli_path = os.path.realpath(srt_executable)
+    package_root = os.path.dirname(os.path.dirname(cli_path))
+    module_path = os.path.join(package_root, "dist", "index.js")
+    if os.path.isfile(module_path):
+        return module_path
+    raise FileNotFoundError(
+        f"sandbox-runtime module not found next to SRT executable: {module_path}",
     )
 
 

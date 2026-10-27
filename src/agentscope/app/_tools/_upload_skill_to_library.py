@@ -127,7 +127,8 @@ class UploadSkillToLibrary(ToolBase):
         tmpdir = tempfile.TemporaryDirectory(prefix="agentscope-skill-upload-")
         local_path = os.path.join(tmpdir.name, Path(absolute).name)
         with open(local_path, "wb") as file_obj:
-            file_obj.write(await backend.read_file(absolute))
+            async for chunk in backend.read_stream(absolute):
+                file_obj.write(chunk)
         return local_path, tmpdir
 
     @staticmethod

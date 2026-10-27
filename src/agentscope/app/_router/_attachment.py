@@ -4,7 +4,7 @@
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 
 from ..deps import (
     get_attachment_store,
@@ -42,6 +42,15 @@ async def get_attachment_request_user_id(
     return resolved
 
 
+async def _stream_attachment_file(
+    workspace,
+    path: str,
+):
+    """Yield one attachment from the workspace backend."""
+    async for chunk in workspace.get_backend().read_stream(path):
+        yield chunk
+
+
 @attachment_router.get(
     "/{session_id}/{message_id}/{attachment_name}",
     name="download_attachment",
@@ -55,7 +64,7 @@ async def download_attachment(
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
     attachment_store: AttachmentStore = Depends(get_attachment_store),
-) -> Response:
+) -> StreamingResponse:
     """Proxy one attachment from the session workspace to the client."""
     session = await storage.get_session_meta(user_id, session_id)
     if session is None:
@@ -71,7 +80,7 @@ async def download_attachment(
         session.config.workspace_id,
     )
     try:
-        payload = await attachment_store.read_attachment_bytes(
+        path = await attachment_store.resolve_attachment_path(
             workspace,
             session_id=session_id,
             message_id=message_id,
@@ -82,6 +91,12 @@ async def download_attachment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Attachment not found.",
         ) from exc
+    entry = await workspace.get_backend().stat(path)
+    if entry is None or entry.is_dir:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment not found.",
+        )
 
     filename = attachment_name
     headers = {
@@ -89,8 +104,8 @@ async def download_attachment(
             f"inline; filename*=UTF-8''{quote(filename)}"
         ),
     }
-    return Response(
-        content=payload,
+    return StreamingResponse(
+        _stream_attachment_file(workspace, path),
         media_type=attachment_store.guess_media_type(filename),
         headers=headers,
     )

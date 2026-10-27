@@ -5,6 +5,7 @@ from ._channel_context_guard_middleware import ChannelContextGuardMiddleware
 from ._inbox_middleware import InboxMiddleware
 from ._knowledge_base_middleware import KnowledgeBaseMiddleware
 from ._protocol import ProtocolMiddlewareBase, AGUIProtocolMiddleware
+from ._sandbox_violation_hint_middleware import SandboxViolationHintMiddleware
 from ._skill_library_middleware import SkillLibraryMiddleware
 from ._state_change_middleware import StateChangeMiddleware
 from ._subagent_result_middleware import SubAgentMiddleware
@@ -17,6 +18,7 @@ __all__ = [
     "KnowledgeBaseMiddleware",
     "ProtocolMiddlewareBase",
     "AGUIProtocolMiddleware",
+    "SandboxViolationHintMiddleware",
     "SkillLibraryMiddleware",
     "StateChangeMiddleware",
     "SubAgentMiddleware",

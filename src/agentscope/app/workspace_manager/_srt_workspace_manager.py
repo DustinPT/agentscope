@@ -310,6 +310,14 @@ async def _build_derived_srt_settings(
                 )
             continue
 
+        if grant.resource_type == SandboxGrantResourceType.UNIX_SOCKET:
+            if SandboxOperation.CONNECT in grant.operations:
+                network["allowUnixSockets"] = _append_unique_value(
+                    network.get("allowUnixSockets"),
+                    grant.pattern,
+                )
+            continue
+
         if SandboxOperation.READ in grant.operations:
             filesystem["allowRead"] = _append_unique_value(
                 filesystem.get("allowRead"),

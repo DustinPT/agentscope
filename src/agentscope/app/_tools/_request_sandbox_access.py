@@ -31,10 +31,10 @@ class _RequestSandboxAccessParams(ParamsBase):
     )
     pattern: str = Field(
         description=(
-            "Specific domain, directory path, or file path to authorize. "
-            "Request only the minimum access needed and avoid wildcards "
-            "unless they are truly necessary. For directories, use the "
-            "directory path itself without adding a '/**' suffix; the "
+            "Specific domain, Unix socket path, directory path, or file path "
+            "to authorize. Request only the minimum access needed and avoid "
+            "wildcards unless they are truly necessary. For directories, use "
+            "the directory path itself without adding a '/**' suffix; the "
             "directory path already covers all descendant files and "
             "subdirectories."
         ),
@@ -43,8 +43,8 @@ class _RequestSandboxAccessParams(ParamsBase):
     operations: list[str] = Field(
         default_factory=list,
         description=(
-            "Requested operations. Use ['connect'] for domains and "
-            "['read'] or ['read', 'write'] for paths."
+            "Requested operations. Use ['connect'] for domains and Unix "
+            "sockets, and ['read'] or ['read', 'write'] for paths."
         ),
     )
     reason: str = Field(
@@ -59,11 +59,12 @@ class RequestSandboxAccess(_SessionToolBase):
     name = "RequestSandboxAccess"
     description = (
         "Request user authorization for sandbox access to a specific domain, "
-        "directory, or file. Request only the minimum permissions needed: "
-        "prefer exact domains, exact directories, and exact files, and avoid "
-        "wildcards unless they are truly necessary. For directories, provide "
-        "the directory path itself without adding a '/**' suffix because the "
-        "directory path already covers all descendant files and "
+        "Unix socket, directory, or file. Request only the minimum "
+        "permissions needed: prefer exact domains, exact Unix socket paths, "
+        "exact directories, and exact files, and avoid wildcards unless they "
+        "are truly necessary. For directories, provide the directory path "
+        "itself without adding a '/**' suffix because the directory path "
+        "already covers all descendant files and "
         "subdirectories. This tool always requires explicit user "
         "confirmation and returns whether access was authorized plus the "
         "granted permission details."

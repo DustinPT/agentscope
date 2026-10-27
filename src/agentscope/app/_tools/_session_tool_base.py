@@ -45,6 +45,17 @@ if TYPE_CHECKING:
 _CANCEL_POLL_INTERVAL_SECS = 0.1
 
 
+async def _copy_backend_file_to_local(
+    backend: Any,
+    remote_path: str,
+    local_path: str,
+) -> None:
+    """Copy one backend file to local disk via streaming reads."""
+    with open(local_path, "wb") as file_obj:
+        async for chunk in backend.read_stream(remote_path):
+            file_obj.write(chunk)
+
+
 class _SessionToolBase(ToolBase):
     """Shared request-scoped helpers for test-management tools."""
 
@@ -205,13 +216,15 @@ class _SessionToolBase(ToolBase):
                 relative = os.path.relpath(remote_file, absolute)
                 local_path = os.path.join(target_dir, relative)
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                with open(local_path, "wb") as f:
-                    f.write(await backend.read_file(remote_file))
+                await _copy_backend_file_to_local(
+                    backend,
+                    remote_file,
+                    local_path,
+                )
             return target_dir, tmpdir
 
         local_path = os.path.join(local_root, Path(absolute).name)
-        with open(local_path, "wb") as f:
-            f.write(await backend.read_file(absolute))
+        await _copy_backend_file_to_local(backend, absolute, local_path)
         return local_path, tmpdir
 
     def _zip_local_directory(

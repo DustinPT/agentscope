@@ -24,6 +24,7 @@ class SandboxGrantResourceType(StrEnum):
 
     DOMAIN = "domain"
     PATH = "path"
+    UNIX_SOCKET = "unix_socket"
 
 
 class SandboxOperation(StrEnum):
@@ -109,6 +110,14 @@ def normalize_path_pattern(pattern: str) -> str:
     return os.path.normpath(value)
 
 
+def normalize_unix_socket_pattern(pattern: str) -> str:
+    """Normalize one Unix socket path pattern."""
+    value = normalize_path_pattern(pattern)
+    if not value.startswith("/"):
+        raise ValueError("Unix socket pattern must be an absolute path.")
+    return value
+
+
 def normalize_operations(
     resource_type: SandboxGrantResourceType,
     operations: list[str] | list[SandboxOperation] | None,
@@ -118,7 +127,11 @@ def normalize_operations(
     if not raw_values:
         raw_values = (
             [SandboxOperation.CONNECT.value]
-            if resource_type == SandboxGrantResourceType.DOMAIN
+            if resource_type
+            in {
+                SandboxGrantResourceType.DOMAIN,
+                SandboxGrantResourceType.UNIX_SOCKET,
+            }
             else [SandboxOperation.READ.value]
         )
 
@@ -140,6 +153,13 @@ def normalize_operations(
             raise ValueError("Domain permissions only support the 'connect' operation.")
         return normalized
 
+    if resource_type == SandboxGrantResourceType.UNIX_SOCKET:
+        if normalized != [SandboxOperation.CONNECT]:
+            raise ValueError(
+                "Unix socket permissions only support the 'connect' operation.",
+            )
+        return normalized
+
     if SandboxOperation.CONNECT in normalized:
         raise ValueError("Path permissions do not support the 'connect' operation.")
     if SandboxOperation.WRITE in normalized and SandboxOperation.READ not in normalized:
@@ -158,11 +178,12 @@ def normalize_sandbox_grant(
     """Build one normalized sandbox permission grant."""
     normalized_resource_type = SandboxGrantResourceType(resource_type)
     normalized_scope = SandboxGrantScope(scope)
-    normalized_pattern = (
-        normalize_domain_pattern(pattern)
-        if normalized_resource_type == SandboxGrantResourceType.DOMAIN
-        else normalize_path_pattern(pattern)
-    )
+    if normalized_resource_type == SandboxGrantResourceType.DOMAIN:
+        normalized_pattern = normalize_domain_pattern(pattern)
+    elif normalized_resource_type == SandboxGrantResourceType.UNIX_SOCKET:
+        normalized_pattern = normalize_unix_socket_pattern(pattern)
+    else:
+        normalized_pattern = normalize_path_pattern(pattern)
     normalized_operations = normalize_operations(
         normalized_resource_type,
         operations,

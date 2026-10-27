@@ -236,6 +236,14 @@ def _build_sandbox_access_card(base: dict[str, str], tool_input: str) -> dict:
             _build_sandbox_scope_actions(base, parsed, operations=["connect"]),
             _build_deny_row(base),
         ]
+    elif resource_type == "unix_socket":
+        request_summary = (
+            f"Request permission to connect to Unix socket `{pattern}`."
+        )
+        action_rows = [
+            _build_sandbox_scope_actions(base, parsed, operations=["connect"]),
+            _build_deny_row(base),
+        ]
     else:
         request_summary = f"Request sandbox access to `{pattern}`."
         action_rows = [
@@ -294,6 +302,12 @@ def _build_sandbox_scope_actions(
             ("This workspace", "workspace"),
             ("This agent", "agent"),
             ("This user", "user"),
+        ]
+    elif raw_input.get("resource_type") == "unix_socket":
+        button_defs = [
+            ("Workspace connect", "workspace"),
+            ("Agent connect", "agent"),
+            ("User connect", "user"),
         ]
     else:
         suffix = "read/write" if has_write else "read-only"

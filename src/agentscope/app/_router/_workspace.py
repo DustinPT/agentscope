@@ -124,7 +124,7 @@ class SandboxGrantPayload(BaseModel):
         description="Sandbox resource type.",
     )
     pattern: str = Field(
-        description="Domain or path pattern to authorize.",
+        description="Domain, Unix socket path, or filesystem path pattern to authorize.",
         min_length=1,
     )
     operations: list[SandboxOperation | str] = Field(
@@ -512,11 +512,19 @@ async def _preview_media_type(
     display_name: str,
 ) -> str | None:
     """Return previewable media type for one file path, if supported."""
+    sample = await _read_preview_sample(workspace, path)
+    return _preview_media_type_from_sample(display_name, sample)
+
+
+def _preview_media_type_from_sample(
+    display_name: str,
+    sample: bytes,
+) -> str | None:
+    """Return previewable media type for one file sample, if supported."""
     media_type = _text_like_media_type(display_name)
     if media_type is not None and media_type.startswith("image/"):
         return media_type
 
-    sample = await _read_preview_sample(workspace, path)
     if Read._is_binary_file(sample, media_type):
         return None
     return media_type or "text/plain"
@@ -541,6 +549,30 @@ async def _entry_to_response(
             workspace.get_backend().join_path(parent_path, entry.name),
             entry.name,
         )
+    return WorkspaceFileEntry(
+        name=entry.name,
+        path=entry_path,
+        is_dir=entry.is_dir,
+        mime_type=mime_type,
+        size_bytes=entry.size_bytes,
+        mtime=entry.mtime,
+    )
+
+
+def _entry_with_sample_to_response(
+    parent_relative_path: str,
+    entry: DirEntry,
+    sample: bytes | None,
+) -> WorkspaceFileEntry:
+    """Convert one directory entry plus preview sample to API response shape."""
+    entry_path = (
+        f"{parent_relative_path}/{entry.name}"
+        if parent_relative_path
+        else entry.name
+    )
+    mime_type = None
+    if not entry.is_dir:
+        mime_type = _preview_media_type_from_sample(entry.name, sample or b"")
     return WorkspaceFileEntry(
         name=entry.name,
         path=entry_path,
@@ -978,6 +1010,35 @@ async def list_workspace_files(
     workspace_root, target_path = _resolve_workspace_target_path(workspace, relative_path)
     backend = workspace.get_backend()
 
+    optimized_scandir = getattr(backend, "scandir_with_samples", None)
+    if callable(optimized_scandir):
+        try:
+            entries_with_samples = await optimized_scandir(target_path, sample_size=4096)
+        except FileNotFoundError:
+            if relative_path:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Workspace directory not found.",
+                ) from None
+            return []
+        except NotADirectoryError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workspace directory not found.",
+            ) from None
+
+        entries_with_samples.sort(
+            key=lambda item: (not item.entry.is_dir, item.entry.name.lower()),
+        )
+        return [
+            _entry_with_sample_to_response(
+                relative_path,
+                item.entry,
+                item.sample_bytes,
+            )
+            for item in entries_with_samples
+        ]
+
     if not await backend.is_dir(workspace_root):
         if relative_path:
             raise HTTPException(
@@ -1100,17 +1161,36 @@ async def preview_workspace_file(
         )
 
     _, target_path = _resolve_workspace_target_path(workspace, relative_path)
-    target_stat = await workspace.get_backend().stat(target_path)
+    backend = workspace.get_backend()
+    optimized_stat = getattr(backend, "stat_with_sample", None)
+    if callable(optimized_stat):
+        try:
+            preview_stat = await optimized_stat(target_path, sample_size=4096)
+        except IsADirectoryError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workspace file not found.",
+            ) from None
+        target_stat = preview_stat.entry
+        sample = preview_stat.sample_bytes or b""
+    else:
+        target_stat = await backend.stat(target_path)
+        if target_stat is None or target_stat.is_dir:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workspace file not found.",
+            )
+        sample = await _read_preview_sample(workspace, target_path)
+
     if target_stat is None or target_stat.is_dir:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workspace file not found.",
         )
 
-    media_type = await _preview_media_type(
-        workspace,
-        target_path,
+    media_type = _preview_media_type_from_sample(
         Path(relative_path).name,
+        sample,
     )
     if media_type is None:
         raise HTTPException(

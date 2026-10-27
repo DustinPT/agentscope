@@ -142,3 +142,13 @@ class AgentWorkspaceView(WorkspaceBase):
     async def list_mcp_asset_names(self) -> list[str]:
         """List MCP assets visible to this agent."""
         return await self._runtime._list_agent_mcp_asset_names(self.agent_id)
+
+    def consume_tool_call_violations(
+        self,
+        tool_call_id: str,
+    ) -> list[dict]:
+        """Delegate sandbox violation consumption to the shared runtime."""
+        consumer = getattr(self._runtime, "consume_tool_call_violations", None)
+        if consumer is None:
+            return []
+        return consumer(tool_call_id)
