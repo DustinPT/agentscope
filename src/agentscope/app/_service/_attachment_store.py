@@ -3,15 +3,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import mimetypes
 import re
+import tempfile
 from copy import deepcopy
 from pathlib import Path, PurePath
 from typing import Any
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
+import aiofiles
 from fastapi import Request
 
 from ...formatter import FormatterBase
@@ -171,11 +172,13 @@ class AttachmentStore:
             suffix = mimetypes.guess_extension(media_type or "") or ".bin"
         return f"{stem}{suffix}"
 
-    async def _load_local_file_bytes(
-        self,
-        path: str,
-    ) -> bytes:
-        return await asyncio.to_thread(Path(path).read_bytes)
+    @staticmethod
+    def _is_transient_local_file(path: str) -> bool:
+        file_path = Path(path)
+        return (
+            file_path.parent == Path(tempfile.gettempdir())
+            and file_path.name.startswith("agentscope-")
+        )
 
     async def _select_stored_name(
         self,
@@ -184,7 +187,7 @@ class AttachmentStore:
         session_id: str,
         message_id: str,
         preferred_name: str,
-        payload: bytes,
+        payload: bytes | None,
     ) -> str:
         backend = workspace.get_backend()
         stem = PurePath(preferred_name).stem or self._DEFAULT_FILE_STEM
@@ -201,11 +204,26 @@ class AttachmentStore:
             )
             if not await backend.file_exists(candidate_path):
                 return candidate
-            existing = await backend.read_file(candidate_path)
-            if existing == payload:
-                return candidate
+            if payload is not None:
+                existing = await backend.read_file(candidate_path)
+                if existing == payload:
+                    return candidate
+            else:
+                index += 1
+                candidate = f"{stem}-{index}{suffix}"
+                continue
             index += 1
             candidate = f"{stem}-{index}{suffix}"
+
+    async def _stream_local_file(
+        self,
+        path: str,
+        *,
+        chunk_size: int = 1024 * 1024,
+    ):
+        async with aiofiles.open(path, mode="rb") as file_obj:
+            while chunk := await file_obj.read(chunk_size):
+                yield chunk
 
     async def _persist_data_block(
         self,
@@ -224,7 +242,7 @@ class AttachmentStore:
             local_path = self._extract_local_file_path(str(source.url))
             if local_path is None:
                 return block
-            payload = await self._load_local_file_bytes(local_path)
+            payload = None
         else:
             payload = self._decode_base64_data(source.data)
 
@@ -247,15 +265,26 @@ class AttachmentStore:
                 message_id=message_id,
             ),
         )
-        await backend.write_file(
-            self._attachment_path(
-                workspace,
-                session_id=session_id,
-                message_id=message_id,
-                attachment_name=stored_name,
-            ),
-            payload,
+        target_path = self._attachment_path(
+            workspace,
+            session_id=session_id,
+            message_id=message_id,
+            attachment_name=stored_name,
         )
+        if local_path is not None:
+            try:
+                await backend.write_stream(
+                    target_path,
+                    self._stream_local_file(local_path),
+                )
+            finally:
+                if self._is_transient_local_file(local_path):
+                    try:
+                        Path(local_path).unlink()
+                    except OSError:
+                        pass
+        else:
+            await backend.write_file(target_path, payload)
         return block.model_copy(
             update={
                 "source": URLSource(

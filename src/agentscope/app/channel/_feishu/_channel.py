@@ -15,15 +15,19 @@ SDK's public ``start()`` — the one place to adapt if the SDK changes.
 import asyncio
 import base64
 import json
+import os
+from pathlib import Path
+import tempfile
 import threading
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
 
+import aiofiles
 from pydantic import BaseModel, Field
 
 from ...._logging import logger
 from ....event import ReplyEndEvent, RequireUserConfirmEvent
-from ....message import Base64Source, DataBlock, Msg, TextBlock
+from ....message import Base64Source, DataBlock, Msg, TextBlock, URLSource
 from .._base import (
     ChannelBase,
     ChannelCapability,
@@ -561,11 +565,11 @@ class FeishuChannel(ChannelBase):
         content: dict,
         message_id: str,
     ) -> list[TextBlock | DataBlock]:
-        """Flatten a Feishu ``post`` (nested rich-text rows) into ordered
-        text and image blocks, downloading each embedded resource.
+        """Flatten a Feishu ``post`` into ordered text and attachment
+        blocks, downloading each embedded resource.
 
         Args:
-            content (`dict`): The parsed ``post`` content (title + rows).
+            content (`dict`): The parsed ``post`` content.
             message_id (`str`): The message id, for the resource endpoint.
 
         Returns:
@@ -607,6 +611,19 @@ class FeishuChannel(ChannelBase):
                         blocks.append(block)
             parts.append("\n")
         _flush()
+        for attachment in content.get("files") or []:
+            file_key = attachment.get("file_key") or ""
+            if not file_key or attachment.get("is_folder"):
+                continue
+            block = await self._download_resource(
+                message_id,
+                file_key,
+                "file",
+                "application/octet-stream",
+                attachment.get("file_name") or "file",
+            )
+            if block is not None:
+                blocks.append(block)
         return blocks
 
     def _on_card_action(
@@ -1302,7 +1319,8 @@ class FeishuChannel(ChannelBase):
         message: "EventMessage",
         msg_type: str,
     ) -> DataBlock | None:
-        """Download a media resource into a base64 ``DataBlock``.
+        """Download one inbound media resource into a file-backed
+        ``DataBlock``.
 
         Args:
             message (`EventMessage`):
@@ -1339,7 +1357,8 @@ class FeishuChannel(ChannelBase):
         default_mime: str,
         name: str,
     ) -> DataBlock | None:
-        """Download one message resource (image/file) into a base64 block.
+        """Download one message resource (image/file) into a file-backed
+        block.
 
         Args:
             message_id (`str`): The message the resource belongs to.
@@ -1357,20 +1376,41 @@ class FeishuChannel(ChannelBase):
             f"{_API}/im/v1/messages/{message_id}"
             f"/resources/{key}?type={resource_type}"
         )
+        temp_path: str | None = None
         try:
-            resp = await self._http.get(
+            suffix = Path(name).suffix
+            with tempfile.NamedTemporaryFile(
+                delete=False,
+                prefix="agentscope-feishu-resource-",
+                suffix=suffix,
+            ) as temp_file:
+                temp_path = temp_file.name
+            async with self._http.stream(
+                "GET",
                 url,
                 headers={"Authorization": f"Bearer {self._token}"},
-            )
-            if resp.status_code != 200:
-                return None
+            ) as resp:
+                if resp.status_code != 200:
+                    if temp_path is not None:
+                        os.unlink(temp_path)
+                    return None
+                async with aiofiles.open(temp_path, mode="wb") as file_obj:
+                    async for chunk in resp.aiter_bytes():
+                        if chunk:
+                            await file_obj.write(chunk)
+                media_type = resp.headers.get("content-type", default_mime)
             return DataBlock(
-                source=Base64Source(
-                    data=base64.b64encode(resp.content).decode("ascii"),
-                    media_type=resp.headers.get("content-type", default_mime),
+                source=URLSource(
+                    url=Path(temp_path).as_uri(),
+                    media_type=media_type,
                 ),
                 name=name,
             )
         except Exception:  # pylint: disable=broad-except
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
             logger.debug("Feishu resource download failed")
             return None
