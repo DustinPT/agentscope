@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             SchedulerManager(
                 storage=storage,
                 message_bus=message_bus,
+                workspace_manager=workspace_manager,
             ),
         )
         app.state.scheduler_manager = scheduler
