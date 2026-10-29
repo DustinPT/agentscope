@@ -1456,6 +1456,8 @@ class ChatService:
         )
 
         session_state = deepcopy(session_record.state)
+        session_state.session_id = session_id
+        session_state.conversation_kind = session_record.conversation_kind
         if (
             workspace.workdir
             not in session_state.permission_context.working_directories
@@ -1475,24 +1477,63 @@ class ChatService:
 
         runtime_session = session_record.model_copy(deep=True)
         runtime_session.state = session_state
-
-        toolkit = await get_toolkit(
-            storage=self._storage,
-            workspace=workspace,
-            scheduler_manager=self._scheduler_manager,
-            background_task_manager=self._background_task_manager,
-            message_bus=self._message_bus,
-            chat_service=self,
-            chat_run_registry=self._chat_run_registry,
-            user_id=user_id,
-            agent_record=agent_record,
-            session_record=runtime_session,
-            agent_asset_store=self._agent_asset_store,
-            extra_factory=self._extra_agent_tools,
-            sub_agent_templates=self._sub_agent_templates,
+        channel = (
+            await self._channel_clients.get(
+                session_record.source_channel_id,
+            )
+            if session_record.source_channel_id
+            and self._channel_clients is not None
+            else None
+        )
+        channel_tools = (
+            await channel.list_tools(workspace)
+            if channel is not None
+            else []
         )
 
-        middlewares = []
+        main_session_chat_context = await self._build_main_session_chat_context(
+            user_id=user_id,
+            session_id=session_id,
+            session_record=runtime_session,
+            channel=channel,
+            channel_tools=channel_tools,
+        )
+        if main_session_chat_context is None:
+            session_state.middle_context.pop(
+                _MAIN_SESSION_CHAT_CONTEXT_KEY,
+                None,
+            )
+        else:
+            session_state.middle_context[_MAIN_SESSION_CHAT_CONTEXT_KEY] = (
+                main_session_chat_context
+            )
+
+        middlewares: list = [
+            InboxMiddleware(self._message_bus),
+            SandboxViolationHintMiddleware(),
+            StateChangeMiddleware(
+                message_bus=self._message_bus,
+                session_id=session_id,
+            ),
+            _AttachmentModelCallMiddleware(
+                attachment_store=self._attachment_store,
+                workspace=workspace,
+            ),
+        ]
+        if (
+            runtime_session.parent_session_id is None
+            and runtime_session.source == SessionSource.CHANNEL
+        ):
+            middlewares.append(ChannelContextGuardMiddleware())
+        if agent_record.data.react_config.enable_tool_offload:
+            middlewares.append(
+                ToolOffloadMiddleware(
+                    bg_manager=self._background_task_manager,
+                    message_bus=self._message_bus,
+                    user_id=user_id,
+                    agent_id=agent_record.id,
+                ),
+            )
         if runtime_session.parent_session_id is not None:
             middlewares.append(
                 SubAgentMiddleware(
@@ -1511,6 +1552,14 @@ class ChatService:
         )
         if team_member_middleware is not None:
             middlewares.append(team_member_middleware)
+        tts_cfg = runtime_session.config.tts_model_config
+        if tts_cfg is not None:
+            tts_model = await get_tts_model(
+                user_id,
+                tts_cfg,
+                self._storage,
+            )
+            middlewares.append(TTSMiddleware(tts_model))
         if self._extra_agent_middlewares is not None:
             factory_args: tuple = (
                 user_id,
@@ -1525,12 +1574,41 @@ class ChatService:
                 await self._extra_agent_middlewares(*factory_args),
             )
 
+        toolkit = await get_toolkit(
+            storage=self._storage,
+            workspace=workspace,
+            scheduler_manager=self._scheduler_manager,
+            background_task_manager=self._background_task_manager,
+            message_bus=self._message_bus,
+            middlewares=middlewares,
+            chat_service=self,
+            chat_run_registry=self._chat_run_registry,
+            user_id=user_id,
+            agent_record=agent_record,
+            session_record=runtime_session,
+            agent_asset_store=self._agent_asset_store,
+            extra_factory=self._extra_agent_tools,
+            sub_agent_templates=self._sub_agent_templates,
+            channel_tools=channel_tools,
+        )
+
+        system_prompt = agent_record.data.system_prompt
+        if main_session_chat_context is not None:
+            attachment = self._build_main_session_attachment(
+                main_session_chat_context,
+            )
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                f"<system-notification>{attachment}</system-notification>"
+            )
+
         return {
             "workspace": workspace,
             "session_state": session_state,
             "runtime_session": runtime_session,
             "toolkit": toolkit,
             "middlewares": middlewares,
+            "system_prompt": system_prompt,
         }
 
     async def _build_export_system_message(
@@ -1543,7 +1621,6 @@ class ChatService:
         exported_at: str,
     ) -> dict[str, Any]:
         """Reconstruct the current system message for export."""
-        base_system_prompt = agent_record.data.system_prompt
         try:
             runtime_context = await self._build_export_runtime_context(
                 user_id=user_id,
@@ -1559,7 +1636,7 @@ class ChatService:
             )
             if model_cfg is None:
                 return self._build_fallback_export_system_message(
-                    system_prompt=base_system_prompt,
+                    system_prompt=agent_record.data.system_prompt,
                     exported_at=exported_at,
                     reason="missing_model_config",
                 )
@@ -1570,10 +1647,22 @@ class ChatService:
                 self._storage,
                 session_id=session_id,
             )
+            fallback_cfg = runtime_session.config.fallback_chat_model_config
+            fallback_model = (
+                await get_model(
+                    user_id,
+                    fallback_cfg,
+                    self._storage,
+                    session_id=session_id,
+                )
+                if fallback_cfg is not None
+                else None
+            )
             agent = self._agent_cls(
                 name=agent_record.data.name,
-                system_prompt=base_system_prompt,
+                system_prompt=runtime_context["system_prompt"],
                 model=model,
+                model_config=ModelConfig(fallback_model=fallback_model),
                 toolkit=runtime_context["toolkit"],
                 state=runtime_context["session_state"],
                 middlewares=runtime_context["middlewares"],
@@ -1599,7 +1688,7 @@ class ChatService:
                 exc,
             )
             return self._build_fallback_export_system_message(
-                system_prompt=base_system_prompt,
+                system_prompt=agent_record.data.system_prompt,
                 exported_at=exported_at,
                 reason="reconstruction_failed",
             )
