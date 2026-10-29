@@ -25,6 +25,7 @@ from ...event import AgentEvent
 from ...message import (
     DataBlock,
     Msg,
+    ReplyFinishedReason,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
@@ -38,6 +39,11 @@ if TYPE_CHECKING:
 _NO_TEXT_REPLY = "(Agent returned no text content)"
 _AGENT_ERROR_REPLY = (
     "❌ Agent encountered an error. Please check the agent configuration."
+)
+_AGENT_EXCEED_MAX_ITERS_REPLY = (
+    "⚠️ Agent reached the maximum reasoning-acting iterations. "
+    "The reply below is a partial result so far, and you can continue "
+    "asking follow-up questions if needed."
 )
 # Deserialize a bus event dict back into its typed AgentEvent.
 _EVENT_ADAPTER: TypeAdapter = TypeAdapter(AgentEvent)
@@ -382,8 +388,14 @@ class ChannelBase(ABC):
         # Every block is already folded whole, and Markdown needs a blank
         # line between them or thinking runs into the text that follows.
         text = "\n\n".join(part for part in parts if part.strip()).strip()
-        if (reply.metadata or {}).get("terminal_state") == "failed":
+        if reply.finished_reason == ReplyFinishedReason.ERROR:
             text = text or _AGENT_ERROR_REPLY
+        elif reply.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
+            text = (
+                f"{_AGENT_EXCEED_MAX_ITERS_REPLY}\n\n{text}"
+                if text
+                else _AGENT_EXCEED_MAX_ITERS_REPLY
+            )
         elif not text and not data:
             text = _NO_TEXT_REPLY
         blocks: list[TextBlock | DataBlock] = (
