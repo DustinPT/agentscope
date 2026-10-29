@@ -12,6 +12,10 @@ from ...message import AssistantMsg, HintBlock, ToolResultState
 from ...middleware import MiddlewareBase
 from ...tool import ToolResponse
 
+_SANDBOX_VIOLATION_HINT_SOURCE = (
+    '{"label": "System", "sublabel": "Sandbox Authorization"}'
+)
+
 
 class SandboxViolationHintMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     """Collect sandbox violations after tool calls and inject one hint later."""
@@ -61,7 +65,7 @@ class SandboxViolationHintMiddleware(MiddlewareBase):  # pylint: disable=abstrac
         violations = self._pending_by_reply_id.pop(reply_id, [])
         if violations:
             hint = HintBlock(
-                source="system",
+                source=_SANDBOX_VIOLATION_HINT_SOURCE,
                 hint=self._build_hint_content(violations),
                 metadata={"kind": "sandbox_authorization"},
             )
