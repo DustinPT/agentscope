@@ -2,7 +2,7 @@
 """Middleware that guides channel-main-session context resets."""
 from __future__ import annotations
 
-from ...event import ReplyStartEvent
+from ...event import HintBlockEvent, ReplyStartEvent
 from ...message import AssistantMsg, HintBlock
 from ...middleware import MiddlewareBase
 from ...tool import ToolBase
@@ -26,6 +26,10 @@ _CHANNEL_CONTEXT_GUARD_PROMPT_SUFFIX = (
     "is only for unrelated-task switches."
 )
 
+_CHANNEL_CONTEXT_GUARD_SOURCE = (
+    '{"label": "System", "sublabel": "Channel Context Guard"}'
+)
+
 
 class ChannelContextGuardMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     """Expose the channel context reset tool and usage guidance."""
@@ -45,7 +49,7 @@ class ChannelContextGuardMiddleware(MiddlewareBase):  # pylint: disable=abstract
                 "do not call the tool."
                 "</system-reminder>"
             ),
-            source="system",
+            source=_CHANNEL_CONTEXT_GUARD_SOURCE,
         )
 
     @staticmethod
@@ -99,6 +103,7 @@ class ChannelContextGuardMiddleware(MiddlewareBase):  # pylint: disable=abstract
         reminder_injected = False
 
         async for item in next_handler(**input_kwargs):
+            yield item
             if (
                 should_inject_reminder
                 and not reminder_injected
@@ -130,7 +135,12 @@ class ChannelContextGuardMiddleware(MiddlewareBase):  # pylint: disable=abstract
                             content=[reminder_block],
                         ),
                     )
-            yield item
+                yield HintBlockEvent(
+                    reply_id=agent.state.reply_id,
+                    block_id=reminder_block.id,
+                    source=reminder_block.source,
+                    hint=reminder_block.hint,
+                )
 
     async def list_tools(self) -> list[ToolBase]:
         """Return the context-reset tool for this agent run."""

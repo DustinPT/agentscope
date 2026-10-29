@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ...event import ReplyStartEvent
+from ...event import HintBlockEvent, ReplyStartEvent
 from ...message import AssistantMsg, HintBlock
 from ...middleware import MiddlewareBase
 from ...tool import ToolBase
@@ -56,6 +56,10 @@ _SKILL_LIBRARY_MANAGEMENT_PROMPT_SUFFIX = (
     "should be removed by its exact name."
 )
 
+_SKILL_LIBRARY_REMINDER_SOURCE = (
+    '{"label": "System", "sublabel": "Skill Library"}'
+)
+
 
 class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     """Expose skill-library tools and prompt guidance for using them."""
@@ -93,14 +97,14 @@ class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 "library skill, do not call `SearchSkills`."
                 "</system-reminder>"
             ),
-            source="system",
+            source=_SKILL_LIBRARY_REMINDER_SOURCE,
         )
 
     @staticmethod
     def _is_skill_library_reminder(block: HintBlock) -> bool:
         """Return whether one hint block is the injected skill reminder."""
         return (
-            block.source == "system"
+            block.source in {"system", _SKILL_LIBRARY_REMINDER_SOURCE}
             and "<system-reminder>" in block.hint
             and "`SearchSkills`" in block.hint
             and "`DownloadSkill`" in block.hint
@@ -205,17 +209,24 @@ class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         reminder_injected = False
 
         async for item in next_handler(**input_kwargs):
+            yield item
             if (
                 should_inject_reminder
                 and not reminder_injected
                 and isinstance(item, ReplyStartEvent)
             ):
                 reminder_injected = True
+                reminder_block = self._build_turn_reminder_block()
                 self._append_reminder_to_current_reply(
                     agent,
-                    self._build_turn_reminder_block(),
+                    reminder_block,
                 )
-            yield item
+                yield HintBlockEvent(
+                    reply_id=agent.state.reply_id,
+                    block_id=reminder_block.id,
+                    source=reminder_block.source,
+                    hint=reminder_block.hint,
+                )
 
     async def on_reasoning(
         self,
@@ -228,9 +239,16 @@ class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             self._has_subagent_task_hint(agent)
             and not self._current_reply_has_reminder(agent)
         ):
+            reminder_block = self._build_turn_reminder_block()
             self._append_reminder_to_current_reply(
                 agent,
-                self._build_turn_reminder_block(),
+                reminder_block,
+            )
+            yield HintBlockEvent(
+                reply_id=agent.state.reply_id,
+                block_id=reminder_block.id,
+                source=reminder_block.source,
+                hint=reminder_block.hint,
             )
 
         async for item in next_handler(**input_kwargs):
