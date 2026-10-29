@@ -1,11 +1,46 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
+from datetime import datetime
+import os
+from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..model import ChatModelBase
+
+
+def _get_local_timezone() -> str:
+    """Resolve the current system timezone as an IANA name when possible."""
+    tz_name = os.getenv("TZ", "").strip()
+    if tz_name:
+        return tz_name
+
+    try:
+        from tzlocal import get_localzone
+
+        resolved = str(get_localzone())
+        if resolved:
+            return resolved
+    except Exception:
+        pass
+
+    tzinfo = datetime.now().astimezone().tzinfo
+    key = getattr(tzinfo, "key", None)
+    if isinstance(key, str) and key:
+        return key
+
+    localtime = Path("/etc/localtime")
+    try:
+        resolved = localtime.resolve(strict=True)
+    except OSError:
+        return "UTC"
+
+    parts = resolved.as_posix().split("/zoneinfo/", 1)
+    if len(parts) == 2 and parts[1]:
+        return parts[1]
+    return "UTC"
 
 
 class SummarySchema(BaseModel):
@@ -61,7 +96,7 @@ class ContextConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
     """Allow arbitrary types in the pydantic model."""
 
-    trigger_ratio: float = Field(default=0.8, gt=0, lt=0.9)
+    trigger_ratio: float = Field(default=0.8, gt=0, le=0.9)
     """When the token exceeds this ratio of the maximum context length, the
     context will be compressed. To reserve the context for context compression,
     the maximum ratio is 0.9."""
@@ -70,14 +105,48 @@ class ContextConfig(BaseModel):
     """The ratio of the tokens to reserve in context compression, which should
     be smaller than the trigger ratio."""
 
+    context_buffer_ratio: float = Field(
+        title="Context Buffer",
+        default=0.2,
+        ge=0,
+        le=1,
+        description=(
+            "The buffer ahead of the 'trigger_ratio', within which the agent "
+            "is told that a compression is near, and can compress by itself "
+            "if the compression tool is enabled. It must be smaller than the "
+            "'trigger_ratio'."
+        ),
+    )
+    """The buffer ahead of the compression threshold, e.g. with a trigger ratio
+    of 0.8 and a buffer of 0.2, the context length is injected once the input
+    tokens exceed 60% of the model context size."""
+
     compression_prompt: str = Field(
         default=(
-            "<system-hint>You have been working on the task described above "
-            "but have not yet completed it. "
+            "<system-hint>You have been working on the task described above. "
             "Now write a continuation summary that will allow you to resume "
             "work efficiently in a future context window where the "
             "conversation history will be replaced with this summary. "
-            "Your summary should be structured, concise, and actionable."
+            "Your summary should be structured, concise, and actionable.\n"
+            "The current time is {current_time}.\n"
+            "This summary may itself be summarized again later, and the "
+            "conversation history it refers to will be gone, so every "
+            "reference must be self-contained — resolve anything that "
+            "depends on the vanished context into an absolute, "
+            "fully-qualified form:\n"
+            "- Time: convert relative expressions ('today', 'now', "
+            "'yesterday', 'tomorrow', 'recently') to absolute dates using "
+            "the current time above; re-anchor them even if an earlier "
+            "summary already wrote them relatively.\n"
+            "- Names & pointers: use file paths, symbol names, PR/issue "
+            "numbers, IDs, URLs, and exact commands/error strings verbatim "
+            "instead of 'this file', 'the above', 'the second approach', "
+            "'the 5 failing tests'.\n"
+            "- In-flight work: record everything still pending, especially "
+            "tools launched in the background whose results you are still "
+            "waiting on — give each one's id and a short note of what it is "
+            "doing — and mark each item's owner (user request vs your own "
+            "decision) and status (done / pending / blocked).\n"
             "</system-hint>"
         ),
         # ``format: textarea`` is a hint for schema-driven UI renderers
@@ -115,6 +184,212 @@ class ContextConfig(BaseModel):
     )
     """The structured model used to guide the agent to generate the
     structured compressed summary."""
+
+    tool_result_limit: int = Field(
+        title="Tool Result Limit",
+        default=50000,
+        description=(
+            "The maximum length of the tool results in tokens. "
+            "If exceeded, the tool result will be truncated."
+        ),
+    )
+    """The tool result limit to avoid tool result bursting."""
+
+    compression_fallback_to_truncation: bool = Field(
+        default=True,
+        description=(
+            "Whether to truncate the oldest context when the compression "
+            "summary cannot be generated. Turning it off raises the error "
+            "instead, keeping the context intact at the cost of exceeding "
+            "the context length."
+        ),
+    )
+    """Whether to fall back to context truncation when the summary generation
+    fails."""
+
+    compression_tool_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to expose a context compression tool to the agent. "
+            "When runtime-state injection is enabled, the agent is prompted "
+            "to use the tool between tasks as the context approaches the "
+            "hard compression threshold."
+        ),
+    )
+    """Whether the agent can explicitly request context compression."""
+
+    max_image_num: int = Field(
+        title="Max Image Number",
+        default=5,
+        ge=0,
+        description=(
+            "The maximum number of images kept in the context. The oldest "
+            "images exceeding the limit will be removed."
+        ),
+    )
+    """The maximum number of images kept in the context. When the number of
+    images exceeds this limit, the oldest images will be removed or offloaded
+    and replaced by a reminder."""
+
+
+class InjectionConfig(BaseModel):
+    """The state injection related configuration in AgentScope."""
+
+    inject_runtime_state: bool = Field(
+        title="Inject Runtime State",
+        description=(
+            "Inject the runtime state to context, including current time,"
+            "tasks state, context length, etc."
+        ),
+        default=True,
+    )
+    """Whether to inject the runtime state to context, including current time,
+    tasks state, context length, etc."""
+
+    timezone: str = Field(
+        title="Timezone",
+        default_factory=_get_local_timezone,
+        description=(
+            "The injected timezone. e.g. 'America/New_York' or "
+            "'Asia/Shanghai'."
+        ),
+    )
+    """The timezone to inject into the context."""
+
+    time_format: str = Field(
+        title="Time Format",
+        default="%Y-%m-%dT%H:%M:%S",
+        description=(
+            "The format to inject and parse the time information, which must "
+            "round-trip a full timestamp, i.e. carry the date part. A "
+            "time-only format such as '%H:%M:%S' makes the parsed time fall "
+            "back to year 1900, so that the time is injected in every "
+            "iteration."
+        ),
+    )
+    """The format to inject and parse the time information."""
+
+    time_interval: float = Field(
+        title="Time Interval",
+        default=0.5,
+        ge=0,
+        description=(
+            "The minimum time interval in hours from the last injection to "
+            "trigger new time injection"
+        ),
+    )
+    """The minimum elapsed time in hours from the recorded time to trigger a
+    new time injection."""
+
+    context_buffer_ratio: float | None = Field(
+        title="Context Buffer",
+        default=None,
+        ge=0,
+        le=1,
+        description=(
+            "Deprecated, use the 'context_buffer_ratio' of the context "
+            "config instead. When provided, it overrides the one in the "
+            "context config."
+        ),
+    )
+    """Deprecated in favor of ``ContextConfig.context_buffer_ratio``."""
+
+    tool_retries_limit: int = Field(
+        title="Tool Retries Limit",
+        default=3,
+        ge=3,
+        description=(
+            "The number of consecutive failures of the same tool call that "
+            "triggers the tool error injection."
+        ),
+    )
+    """The number of consecutive failures of the same tool call that triggers
+    the tool error injection."""
+
+    tool_retries_hint: str = Field(
+        title="Tool Retries Hint",
+        default=(
+            "The last {count} calls to '{tool_name}' with the same arguments "
+            "all failed. Stop retrying the same call as-is, check the error "
+            "message and try a different approach."
+        ),
+        description=(
+            "The hint injected when the same tool call keeps failing, where "
+            "the '{tool_name}' and '{count}' placeholders will be replaced "
+            "by the failing tool name and the number of consecutive failures."
+        ),
+    )
+    """The hint injected when the same tool call keeps failing."""
+
+    template: str = Field(
+        title="Template",
+        default="""<system-reminder>Treat the following as the ground truth \
+at this point of the conversation. Anything stated earlier is outdated, and a \
+later reminder, if any, supersedes this one:
+{runtime_state}
+</system-reminder>""",
+        description=(
+            "The template to wrap the injected runtime state, where the "
+            "'{runtime_state}' placeholder will be replaced by the injected "
+            "fields."
+        ),
+    )
+    """The template to wrap the injected runtime state."""
+
+    @field_validator("template")
+    @classmethod
+    def _check_template(cls, value: str) -> str:
+        """Ensure the template contains the runtime-state placeholder."""
+        if "{runtime_state}" not in value:
+            raise ValueError(
+                "The injection template must contain the '{runtime_state}' "
+                f"placeholder, got {value!r}.",
+            )
+        return value
+
+    injection_source: str = Field(
+        title="Injection Source",
+        default='{"label": "System", "sublabel": "Runtime State"}',
+        description=(
+            "The source of the injected hint block, which is also used to "
+            "identify the previous injections within the context."
+        ),
+    )
+    """The source of the injected hint block."""
+
+    task_tool_names: list[str] = Field(
+        title="Task Tool Names",
+        default_factory=lambda: [
+            "TaskCreate",
+            "TaskGet",
+            "TaskList",
+            "TaskUpdate",
+        ],
+        description=(
+            "The names of the task related tools. Their presence in the "
+            "context suppresses the tasks injection."
+        ),
+    )
+    """The names of task-related tools that indicate task awareness."""
+
+    extra_fields: dict[str, str] = Field(
+        title="Extra Fields",
+        default_factory=dict,
+        description=(
+            "The extra fields to inject, which will be wrapped into the "
+            "'<{key}>{value}</{key}>' format."
+        ),
+    )
+    """The user defined fields to inject."""
+
+    emit_hint_event: bool = Field(
+        title="Emit Hint Event",
+        default=True,
+        description=(
+            "If emit the HintBlockEvent when runtime state injection happens."
+        ),
+    )
+    """Whether to emit a HintBlockEvent when runtime state injection happens."""
 
 class ReActConfig(BaseModel):
     """The reasoning related configuration"""

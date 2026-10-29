@@ -370,7 +370,17 @@
 			"description": "控制上下文窗口的管理和压缩方式。",
 			"trigger-ratio": { "label": "触发比例" },
 			"reserve-ratio": { "label": "保留比例" },
+                        "context-buffer-ratio": {
+                                "label": "上下文缓冲比例",
+                                "placeholder": "在达到压缩阈值前，提前提示并允许主动压缩的缓冲区比例。"
+                        },
 			"tool-result-limit": { "label": "工具结果限制" },
+                        "compression-fallback-to-truncation": { "label": "压缩失败时截断上下文" },
+                        "compression-tool-enabled": { "label": "启用主动压缩工具" },
+                        "max-image-num": {
+                                "label": "最大图片数量",
+                                "placeholder": "上下文中最多保留的图片数量，超出后会移除或卸载最旧的图片。"
+                        },
 			"compression-prompt": { "label": "压缩提示词" },
 			"summary-template": { "label": "摘要模板" }
 		},

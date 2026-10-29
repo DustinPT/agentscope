@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import asyncio
+import collections
+from datetime import datetime
 import inspect
 import json
 import re
 import uuid
+import warnings
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from asyncio import Queue
 from copy import deepcopy
@@ -19,7 +23,7 @@ from typing import (
 
 import jsonschema
 
-from ._config import ContextConfig, ReActConfig, ModelConfig
+from ._config import ContextConfig, InjectionConfig, ModelConfig, ReActConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -60,7 +64,6 @@ from ..model import (
     ChatResponse,
     ChatUsage,
     ChatModelBase,
-    StructuredResponse,
 )
 from ..message import (
     Msg,
@@ -80,6 +83,7 @@ from ..message import (
     Usage,
 )
 from ..tool import (
+    FunctionTool,
     Toolkit,
     ToolChunk,
     ToolChoice,
@@ -98,21 +102,34 @@ if TYPE_CHECKING:
 else:
     MiddlewareBase = Any
 
-_CONTEXT_COMPRESS_TOOL_NAME = "ContextCompress"
-_CONTEXT_COMPRESS_FALLBACK_PROMPT = (
-    "<system-hint>The structured summary tool is unavailable for this turn. "
-    "Return a plain-text continuation summary using exactly these markdown "
-    "headings:\n"
-    "# Task Overview\n"
-    "# Current State\n"
-    "# Important Discoveries\n"
-    "# Next Steps\n"
-    "# Context to Preserve\n"
-    "Keep each section concise and actionable.</system-hint>"
-)
+_COMPRESSION_TOOL_NAME = "CompressContext"
 _TOOL_RESULT_PREVIEW_MAX_LINES = 2_000
 _TOOL_RESULT_PREVIEW_MAX_BYTES = 50 * 1024
 _TOOL_RESULT_TRUNCATION_MARKER = "... output truncated ..."
+
+
+def _resolve_timezone(timezone: str) -> ZoneInfo:
+    """Resolve a configured timezone, defaulting to UTC on invalid input."""
+    try:
+        return ZoneInfo(timezone)
+    except ZoneInfoNotFoundError:
+        logger.warning("Unknown timezone %r, falling back to UTC.", timezone)
+        return ZoneInfo("UTC")
+
+
+class _AlwaysAllowedFunctionTool(FunctionTool):
+    """FunctionTool variant used for agent-owned internal tools."""
+
+    async def check_permissions(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> PermissionDecision:
+        """Allow the agent's own internal tool without extra confirmation."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message=f"{self.name} is always allowed.",
+        )
 
 
 def _utf8_take_prefix(text: str, maximum_bytes: int) -> str:
@@ -214,9 +231,10 @@ class Agent:
         state: AgentState | None = None,
         offloader: Offloader | None = None,
         # The agent configurations
-        model_config: ModelConfig = ModelConfig(),
-        context_config: ContextConfig = ContextConfig(),
-        react_config: ReActConfig = ReActConfig(),
+        model_config: ModelConfig | None = None,
+        context_config: ContextConfig | None = None,
+        react_config: ReActConfig | None = None,
+        injection_config: InjectionConfig | None = None,
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -249,15 +267,31 @@ class Agent:
                 compression.
             react_config (`ReActConfig`):
                 The config for the reasoning-acting loop.
+            injection_config (`InjectionConfig | None`, optional):
+                The runtime-state injection config, which controls how the
+                time, task state and context usage are injected into the
+                context to help the agent better reason and act.
         """
         self.name = name
         self._system_prompt = system_prompt
         self.model = model
         self.state = state or AgentState()
 
-        self.model_config = model_config
-        self.context_config = context_config
-        self.react_config = react_config
+        self.model_config = model_config or ModelConfig()
+        self.context_config = context_config or ContextConfig()
+        self.react_config = react_config or ReActConfig()
+        self.injection_config = injection_config or InjectionConfig()
+        if self.injection_config.context_buffer_ratio is not None:
+            warnings.warn(
+                "The 'context_buffer_ratio' of the injection config is "
+                "deprecated, set it in the context config instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.context_config.context_buffer_ratio = (
+                self.injection_config.context_buffer_ratio
+            )
+        self._validate_configs()
 
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
@@ -269,6 +303,11 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
+        self._compression_tool = _AlwaysAllowedFunctionTool(
+            self._compress_context_tool,
+            name=_COMPRESSION_TOOL_NAME,
+            is_concurrency_safe=False,
+        )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -296,6 +335,33 @@ class Agent:
         self._compress_context_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_compress_context")
         ]
+
+    def _validate_configs(self) -> None:
+        """Validate cross-config constraints before the agent starts."""
+        if (
+            self.context_config.reserve_ratio
+            >= self.context_config.trigger_ratio
+        ):
+            raise ValueError(
+                "The 'reserve_ratio' of the context config must be smaller "
+                "than its 'trigger_ratio', got "
+                f"{self.context_config.reserve_ratio} and "
+                f"{self.context_config.trigger_ratio}.",
+            )
+
+        if (
+            self.injection_config.inject_runtime_state
+            or self.context_config.compression_tool_enabled
+        ) and (
+            self.context_config.context_buffer_ratio
+            >= self.context_config.trigger_ratio
+        ):
+            raise ValueError(
+                "The 'context_buffer_ratio' of the context config must be "
+                "smaller than its 'trigger_ratio', got "
+                f"{self.context_config.context_buffer_ratio} and "
+                f"{self.context_config.trigger_ratio}.",
+            )
 
     # =======================================================================
     # Agent public methods
@@ -497,6 +563,8 @@ class Agent:
                 f"threshold ({threshold} tokens), cannot be compressed.",
             )
 
+        await self._limit_context_images(cfg)
+
         # Split the context into the ones to be compressed, and the others to
         # be reserved
         tools = kwargs.get("tools", [])
@@ -548,12 +616,19 @@ class Agent:
                 ),
             )
 
+        timezone = self.injection_config.timezone
+        now = datetime.now(_resolve_timezone(timezone))
+        compression_prompt = cfg.compression_prompt.replace(
+            "{current_time}",
+            f"{now.strftime(self.injection_config.time_format)} ({timezone})",
+        )
+
         messages = (
             msgs_system
             + msgs_to_compress
             + instruction_msgs
             + [
-                UserMsg(name="user", content=cfg.compression_prompt),
+                UserMsg(name="user", content=compression_prompt),
             ]
         )
 
@@ -590,7 +665,7 @@ class Agent:
         yield ToolCallStartEvent(
             reply_id=self.state.reply_id,
             tool_call_id=tool_call_id,
-            tool_call_name=_CONTEXT_COMPRESS_TOOL_NAME,
+            tool_call_name=_COMPRESSION_TOOL_NAME,
         )
         yield ToolCallDeltaEvent(
             reply_id=self.state.reply_id,
@@ -610,11 +685,10 @@ class Agent:
         yield ToolResultStartEvent(
             reply_id=self.state.reply_id,
             tool_call_id=tool_call_id,
-            tool_call_name=_CONTEXT_COMPRESS_TOOL_NAME,
+            tool_call_name=_COMPRESSION_TOOL_NAME,
         )
 
         # Compress the messages
-        structured_error: Exception | None = None
         res = None
         try:
             res = await self.model.generate_structured_output(
@@ -623,8 +697,7 @@ class Agent:
                 conversation_kind=self.state.conversation_kind,
             )
 
-        except Exception as e:
-            structured_error = e
+        except Exception as error:
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -635,19 +708,18 @@ class Agent:
                     messages = (
                         msgs_system
                         + msgs_to_compress[i:]
+                        + instruction_msgs
                         + [
                             UserMsg(
                                 name="user",
-                                content=cfg.compression_prompt,
+                                content=compression_prompt,
                             ),
                         ]
                     )
-                    estimated_compression_tokens = (
-                        await self.model.count_tokens(
-                            messages,
-                            compression_tool_schema,
-                            conversation_kind=self.state.conversation_kind,
-                        )
+                    estimated_compression_tokens = await self.model.count_tokens(
+                        messages,
+                        compression_tool_schema,
+                        conversation_kind=self.state.conversation_kind,
                     )
                     # Considering trigger_ratio <= 0.9, at least reserve 10%
                     # tokens for compression response
@@ -663,20 +735,28 @@ class Agent:
                         structured_model=cfg.summary_schema,
                         conversation_kind=self.state.conversation_kind,
                     )
-                    structured_error = None
                 except Exception as retry_error:
-                    structured_error = retry_error
+                    error = retry_error
 
-        if res is None:
-            res = await self._generate_context_summary_from_text_fallback(
-                messages=messages,
-                summary_schema=cfg.summary_schema,
-                previous_error=structured_error,
+            if res is None:
+                if not cfg.compression_fallback_to_truncation:
+                    raise error
+                logger.warning(
+                    "[AGENT %s]: Summary generation failed: %s. Falling back "
+                    "to context truncation.",
+                    self.name,
+                    error,
+                )
+
+        if res is not None:
+            self.state.summary = cfg.summary_template.format(**res.content)
+        elif not self.state.summary:
+            self.state.summary = (
+                "<system-info>Some earlier messages were truncated for "
+                "limited context.</system-info>"
             )
 
-        # Update the summary
-        self.state.summary = cfg.summary_template.format(**res.content)
-
+        path: str | None = None
         if self.offloader:
             path = await self.offloader.offload_context(
                 self.state.session_id,
@@ -716,120 +796,139 @@ class Agent:
             state=ToolResultState.SUCCESS,
         )
 
-    async def _generate_context_summary_from_text_fallback(
-        self,
-        messages: list[Msg],
-        summary_schema: dict[str, Any],
-        previous_error: Exception | None,
-    ) -> StructuredResponse:
-        """Fallback to plain-text summarization when structured output fails."""
-        logger.warning(
-            "Structured context compression failed (%s); falling back to "
-            "plain-text summarization.",
-            previous_error,
+    async def _compress_context_tool(self) -> ToolChunk:
+        """Allow the agent to request context compression explicitly."""
+        context_config = self.context_config.model_copy(
+            update={
+                "trigger_ratio": self.context_config.trigger_ratio
+                - self.context_config.context_buffer_ratio,
+            },
         )
-        fallback_messages = deepcopy(messages) + [
-            UserMsg(
-                name="user",
-                content=_CONTEXT_COMPRESS_FALLBACK_PROMPT,
-            ),
-        ]
-        response = await self._call_model(
-            messages=fallback_messages,
-            tools=[],
-            tool_choice=None,
-            conversation_kind=self.state.conversation_kind,
-        )
-        completed_response = await self._collect_completed_chat_response(
-            response,
-        )
-        summary_text = self._extract_text_from_chat_response(
-            completed_response,
-        )
-        if not summary_text:
-            raise RuntimeError(
-                "Failed to generate fallback compression summary text.",
+        previous_msg_count = len(self.state.context)
+        previous_summary = self.state.summary or ""
+        try:
+            async for _ in self.compress_context(context_config=context_config):
+                pass
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=f"Context compression failed: {error}",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
             )
-        structured_content = self._build_context_summary_from_plain_text(
-            summary_text,
-            summary_schema,
-        )
-        return StructuredResponse(
-            content=structured_content,
-            usage=completed_response.usage,
-            metadata=completed_response.metadata,
+
+        if len(self.state.context) == previous_msg_count:
+            summary = (
+                "The context is not long enough to compress, so it remains "
+                "unchanged."
+            )
+        else:
+            summary = self.state.summary or previous_summary or (
+                "Context compressed successfully."
+            )
+
+        return ToolChunk(
+            content=[
+                TextBlock(
+                    text=self._build_context_compression_result_output(
+                        input_tokens=None,
+                        output_tokens=None,
+                        summary=summary,
+                        offload_path=None,
+                    ),
+                ),
+            ],
+            state=ToolResultState.SUCCESS,
         )
 
-    async def _collect_completed_chat_response(
-        self,
-        response: ChatResponse | AsyncGenerator[ChatResponse, None],
-    ) -> ChatResponse:
-        """Collect the final ChatResponse from sync or streaming model output."""
-        if inspect.isasyncgen(response):
-            completed_response: ChatResponse | None = None
-            async for chunk in response:
-                if chunk.is_last:
-                    completed_response = chunk
-            if completed_response is None:
-                raise RuntimeError(
-                    "Failed to collect fallback compression response.",
+    async def _limit_context_images(self, cfg: ContextConfig) -> None:
+        """Limit the number of images kept in context."""
+        max_image_num = cfg.max_image_num
+        if max_image_num < 0:
+            return
+
+        def _is_image(block: Any) -> bool:
+            return isinstance(block, DataBlock) and block.source.media_type.startswith(
+                "image/",
+            )
+
+        images: list[tuple[list, int, DataBlock, bool, str]] = []
+        for msg in self.state.context:
+            for index, block in enumerate(msg.content):
+                if _is_image(block):
+                    images.append((msg.content, index, block, True, msg.role))
+                elif isinstance(block, ToolResultBlock) and isinstance(
+                    block.output,
+                    list,
+                ):
+                    for sub_index, sub_block in enumerate(block.output):
+                        if _is_image(sub_block):
+                            images.append(
+                                (
+                                    block.output,
+                                    sub_index,
+                                    sub_block,
+                                    False,
+                                    msg.role,
+                                ),
+                            )
+                elif isinstance(block, HintBlock) and isinstance(block.hint, list):
+                    for sub_index, sub_block in enumerate(block.hint):
+                        if _is_image(sub_block):
+                            images.append(
+                                (
+                                    block.hint,
+                                    sub_index,
+                                    sub_block,
+                                    False,
+                                    msg.role,
+                                ),
+                            )
+
+        n_exceed = len(images) - max_image_num
+        if n_exceed <= 0:
+            return
+
+        replacements: list[tuple[list, int, HintBlock | TextBlock]] = []
+        for container, index, block, is_top_level, role in images[:n_exceed]:
+            url = ""
+            if isinstance(block.source, URLSource):
+                url = str(block.source.url)
+            elif self.offloader is not None:
+                offload_data_block = getattr(self.offloader, "offload_data_block", None)
+                if offload_data_block is None:
+                    offload_data_block = getattr(
+                        self.offloader,
+                        "_offload_data_block",
+                        None,
+                    )
+                if offload_data_block is not None:
+                    saved_block = await offload_data_block(block)
+                    if isinstance(saved_block.source, URLSource):
+                        url = str(saved_block.source.url)
+
+            block_name = f"named '{block.name}' " if block.name else ""
+            if url:
+                text = (
+                    f"<system-reminder>The image {block_name}is offloaded into "
+                    f"{url}, you can refer to it when needed.</system-reminder>"
                 )
-            return completed_response
+            else:
+                text = (
+                    f"<system-reminder>The image {block_name}is removed to free "
+                    "up context space.</system-reminder>"
+                )
 
-        return response
+            if is_top_level and role != "user":
+                replacement: HintBlock | TextBlock = HintBlock(hint=text)
+            else:
+                replacement = TextBlock(text=text)
+            replacements.append((container, index, replacement))
 
-    def _extract_text_from_chat_response(
-        self,
-        response: ChatResponse,
-    ) -> str:
-        """Extract concatenated text blocks from a model response."""
-        texts = [
-            block.text
-            for block in response.content
-            if isinstance(block, TextBlock)
-        ]
-        return "\n".join(texts).strip()
-
-    def _build_context_summary_from_plain_text(
-        self,
-        summary_text: str,
-        summary_schema: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Map a plain-text fallback summary into the structured schema."""
-        title_to_key = {
-            "Task Overview": "task_overview",
-            "Current State": "current_state",
-            "Important Discoveries": "important_discoveries",
-            "Next Steps": "next_steps",
-            "Context to Preserve": "context_to_preserve",
-        }
-        pattern = re.compile(
-            r"(?ms)^# (?P<title>Task Overview|Current State|"
-            r"Important Discoveries|Next Steps|Context to Preserve)\s*\n"
-            r"(?P<body>.*?)(?=^# |\Z)",
-        )
-        content = {value: "" for value in title_to_key.values()}
-        for match in pattern.finditer(summary_text):
-            title = match.group("title")
-            body = match.group("body").strip()
-            content[title_to_key[title]] = body
-
-        if not any(content.values()):
-            paragraphs = [
-                paragraph.strip()
-                for paragraph in summary_text.split("\n\n")
-                if paragraph.strip()
-            ]
-            content["task_overview"] = paragraphs[0] if paragraphs else ""
-            content["current_state"] = summary_text.strip()
-            content["important_discoveries"] = (
-                paragraphs[1] if len(paragraphs) > 1 else ""
-            )
-
-        return self.model._truncate_structured_output_to_schema(
-            content,
-            summary_schema,
-        )
+        for container, index, replacement in replacements:
+            container[index] = replacement
 
     def _build_context_compression_call_input(
         self,
@@ -1085,6 +1184,9 @@ class Agent:
             if action == "reasoning":
                 # Compressed the memory if needed before reasoning
                 async for evt in self.compress_context():
+                    yield evt
+                # Inject runtime state if needed before reasoning
+                async for evt in self._inject_runtime_state():
                     yield evt
                 # Perform reasoning
                 async for evt in self._reasoning():
@@ -1419,6 +1521,207 @@ class Agent:
                 name=self.name,
                 content=list(completed_response.content),
                 usage=final_usage,
+            )
+
+    def _get_repeated_tool_error(self) -> tuple[str, int] | None:
+        """Detect repeated failures of the same tool call."""
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return None
+
+        results = last_msg.get_content_blocks("tool_result")
+        if not results or results[-1].state != ToolResultState.ERROR:
+            return None
+
+        tool_name = results[-1].name
+        streak: list[str] = []
+        for result in reversed(results):
+            if (
+                result.state != ToolResultState.ERROR
+                or result.name != tool_name
+            ):
+                break
+            streak.append(result.id)
+
+        limit = self.injection_config.tool_retries_limit
+        if len(streak) < limit:
+            return None
+
+        inputs = {
+            block.id: block.input
+            for block in last_msg.get_content_blocks("tool_call")
+        }
+        normalized_arguments: list[str] = []
+        for block_id in streak:
+            raw_input = inputs.get(block_id, "")
+            try:
+                normalized_arguments.append(
+                    json.dumps(json.loads(raw_input), sort_keys=True),
+                )
+            except (TypeError, ValueError):
+                normalized_arguments.append(raw_input.strip())
+
+        count = 0
+        for value in normalized_arguments:
+            if value != normalized_arguments[0]:
+                break
+            count += 1
+
+        if count < limit:
+            return None
+        return tool_name, count
+
+    async def _inject_runtime_state(
+        self,
+    ) -> AsyncGenerator[HintBlockEvent, None]:
+        """Inject runtime-state hints into the persistent conversation context."""
+        if not self.injection_config.inject_runtime_state:
+            return
+
+        injections: dict[str, str] = {}
+        now = datetime.now(_resolve_timezone(self.injection_config.timezone))
+        injection_source = self.injection_config.injection_source
+
+        task_status: dict[str, int] = collections.defaultdict(int)
+        for task in self.state.tasks_context.tasks:
+            task_status[task.state] += 1
+        has_uncompleted_tasks = (
+            task_status["pending"] > 0 or task_status["in_progress"] > 0
+        )
+
+        last_time_text: str | None = None
+        aware_of_tasks = not has_uncompleted_tasks
+        for msg in reversed(self.state.context):
+            if last_time_text is not None and aware_of_tasks:
+                break
+            if msg.role != "assistant":
+                continue
+            for block in reversed(msg.content):
+                if (
+                    isinstance(block, HintBlock)
+                    and block.source == injection_source
+                ):
+                    if isinstance(block.hint, str):
+                        text = block.hint
+                    else:
+                        text = "".join(
+                            item.text
+                            for item in block.hint
+                            if isinstance(item, TextBlock)
+                        )
+                    if last_time_text is None and "<current-time>" in text:
+                        last_time_text = text
+                    if not aware_of_tasks and "<tasks>" in text:
+                        aware_of_tasks = True
+                elif (
+                    isinstance(block, ToolCallBlock)
+                    and block.name in self.injection_config.task_tool_names
+                ):
+                    aware_of_tasks = True
+
+        inject_time = True
+        if last_time_text is not None:
+            match = re.search(
+                r"<current-time>(.*?)</current-time>",
+                last_time_text,
+            )
+            last_time = None
+            if match is not None:
+                try:
+                    last_time = datetime.strptime(
+                        match.group(1).strip(),
+                        self.injection_config.time_format,
+                    )
+                except ValueError:
+                    last_time = None
+
+            if last_time is not None:
+                if last_time.tzinfo is None:
+                    match_tz = re.search(
+                        r"<timezone>(.*?)</timezone>",
+                        last_time_text,
+                    )
+                    last_time = last_time.replace(
+                        tzinfo=_resolve_timezone(
+                            match_tz.group(1).strip()
+                            if match_tz
+                            else self.injection_config.timezone,
+                        ),
+                    )
+                elapsed_hours = (now - last_time).total_seconds() / 3600
+                inject_time = not (
+                    0 <= elapsed_hours <= self.injection_config.time_interval
+                )
+
+        if inject_time:
+            injections["current-time"] = now.strftime(
+                self.injection_config.time_format,
+            )
+            injections["timezone"] = self.injection_config.timezone
+
+        if has_uncompleted_tasks and not aware_of_tasks:
+            injections["tasks"] = (
+                f"You have {task_status['in_progress']} in-progress tasks "
+                f"and {task_status['pending']} pending tasks. "
+                "Use `TaskList` to view them if you don't know."
+            )
+
+        if self.state.cur_iter == 0:
+            kwargs = await self._prepare_model_input()
+            input_tokens = await self.model.count_tokens(**kwargs)
+            trigger_tokens = int(
+                self.context_config.trigger_ratio * self.model.context_size,
+            )
+            if input_tokens > (
+                (
+                    self.context_config.trigger_ratio
+                    - self.context_config.context_buffer_ratio
+                )
+                * self.model.context_size
+            ):
+                hint = (
+                    f"Your current context contains {input_tokens} tokens. "
+                    f"When reaching {trigger_tokens} tokens, your context "
+                    "will be compressed."
+                )
+                if (
+                    self.context_config.compression_tool_enabled
+                    and task_status["in_progress"] == 0
+                ):
+                    hint += (
+                        " No task is in progress, so judge by yourself "
+                        "whether the context should be compressed now by "
+                        f"calling `{_COMPRESSION_TOOL_NAME}`."
+                    )
+                injections["context-length"] = hint
+
+        repeated_error = self._get_repeated_tool_error()
+        if repeated_error is not None:
+            tool_name, count = repeated_error
+            injections["tool-error"] = (
+                self.injection_config.tool_retries_hint
+                .replace("{tool_name}", tool_name)
+                .replace("{count}", str(count))
+            )
+
+        if not injections:
+            return
+
+        injections.update(self.injection_config.extra_fields)
+        hint_block = HintBlock(
+            source=injection_source,
+            hint=self.injection_config.template.replace(
+                "{runtime_state}",
+                "\n".join(f"<{k}>{v}</{k}>" for k, v in injections.items()),
+            ),
+        )
+        self.state.append_context(self.name, [hint_block])
+        if self.injection_config.emit_hint_event:
+            yield HintBlockEvent(
+                reply_id=self.state.reply_id,
+                block_id=hint_block.id,
+                source=hint_block.source,
+                hint=hint_block.hint,
             )
 
     async def _check_incoming_event(
@@ -2426,6 +2729,26 @@ class Agent:
         if msg_index < 0:
             return [], deepcopy(self.state.context)
 
+        unfinished_tool_call_ids: set[str] = set()
+        last_msg = self._get_last_msg()
+        if last_msg is not None:
+            finished_ids = {
+                block.id for block in last_msg.get_content_blocks("tool_result")
+            }
+            unfinished_tool_call_ids = {
+                block.id
+                for block in last_msg.get_content_blocks("tool_call")
+                if block.id not in finished_ids
+            }
+
+        for index, msg in enumerate(self.state.context[: msg_index + 1]):
+            if any(
+                block.id in unfinished_tool_call_ids
+                for block in msg.get_content_blocks("tool_call")
+            ):
+                msg_index = index
+                break
+
         # The msgs that won't exceed the reserved token limit
         msgs_to_compress = self.state.context[:msg_index]
         msgs_to_reserve = self.state.context[msg_index + 1 :]
@@ -2452,22 +2775,42 @@ class Agent:
                 break
             block_index -= 1
 
-        # Adjust the block_index to avoid splitting tool call and result pairs
+        unfinished_block_indexes = [
+            index
+            for index, block in enumerate(boundary_msg_content)
+            if isinstance(block, ToolCallBlock)
+            and block.id in unfinished_tool_call_ids
+        ]
+        if unfinished_block_indexes:
+            block_index = min(block_index, min(unfinished_block_indexes) - 1)
 
-        # Check if the reserved part has tool results that don't have the
-        # corresponding tool calls
-        remain_result_ids = {}
-        for i in range(len(boundary_msg_content) - 1, block_index, -1):
-            block = boundary_msg_content[i]
-            if isinstance(block, ToolResultBlock):
-                remain_result_ids[block.id] = i
-            elif isinstance(block, ToolCallBlock):
-                remain_result_ids.pop(block.id, None)
+        while True:
+            remain_result_ids = {}
+            for i in range(len(boundary_msg_content) - 1, block_index, -1):
+                block = boundary_msg_content[i]
+                if isinstance(block, ToolResultBlock):
+                    remain_result_ids[block.id] = i
+                elif isinstance(block, ToolCallBlock):
+                    remain_result_ids.pop(block.id, None)
 
-        # Find the largest index of the remaining tool results, which doesn't
-        # have the corresponding tool calls in the reserved parts
-        if remain_result_ids:
-            block_index = max(remain_result_ids.values())
+            if not remain_result_ids:
+                break
+
+            new_block_index = max(remain_result_ids.values())
+            if unfinished_block_indexes and new_block_index >= min(
+                unfinished_block_indexes,
+            ):
+                block_index = (
+                    min(
+                        index
+                        for index, block in enumerate(boundary_msg_content)
+                        if isinstance(block, ToolCallBlock)
+                        and block.id in remain_result_ids
+                    )
+                    - 1
+                )
+            else:
+                block_index = new_block_index
 
         # Split the boundary msg content
         boundary_msg_to_compress.content = boundary_msg_content[
@@ -2700,6 +3043,12 @@ class Agent:
             )
         # The conversation context
         messages.extend(self.state.context)
+
+        if self.context_config.compression_tool_enabled and (
+            await self.toolkit.get_tool(_COMPRESSION_TOOL_NAME)
+            is not self._compression_tool
+        ):
+            await self.toolkit.add_tool(self._compression_tool)
 
         # Get the tools schemas
         tools = await self.toolkit.get_tool_schemas(

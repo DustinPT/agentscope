@@ -22,6 +22,7 @@ import { WriteRenderer } from './WriteRenderer';
 
 const renderers: Record<string, ToolRenderer> = {
 	Bash: BashRenderer,
+        CompressContext: ContextCompressRenderer,
 	ContextCompress: ContextCompressRenderer,
 	Read: ReadRenderer,
         RequestSandboxAccess: RequestSandboxAccessRenderer,

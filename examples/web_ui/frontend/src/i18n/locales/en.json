@@ -370,7 +370,17 @@
 			"description": "Controls how the context window is managed and compressed.",
 			"trigger-ratio": { "label": "Trigger ratio" },
 			"reserve-ratio": { "label": "Reserve ratio" },
+                        "context-buffer-ratio": {
+                                "label": "Context buffer ratio",
+                                "placeholder": "The buffer before the compression threshold where the agent is warned and may compress proactively."
+                        },
 			"tool-result-limit": { "label": "Tool result limit" },
+                        "compression-fallback-to-truncation": { "label": "Fallback to truncation on compression failure" },
+                        "compression-tool-enabled": { "label": "Enable compression tool" },
+                        "max-image-num": {
+                                "label": "Max image count",
+                                "placeholder": "The maximum number of images kept in context before the oldest ones are removed or offloaded."
+                        },
 			"compression-prompt": { "label": "Compression prompt" },
 			"summary-template": { "label": "Summary template" }
 		},
