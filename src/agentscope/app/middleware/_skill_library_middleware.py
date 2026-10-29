@@ -84,17 +84,12 @@ class SkillLibraryMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         return HintBlock(
             hint=(
                 "<system-reminder>"
-                "Before handling the current user task, first decide "
-                "whether you should search the skill library. If you do not "
-                "already know that an installed skill fits, or if the task "
-                "is unfamiliar, multi-step, domain-specific, repetitive, or "
-                "tool-heavy, call `SearchSkills` early before substantial "
-                "reasoning or other tool usage. Use a short English ASCII "
-                "query that describes the capability you need. If the "
-                "search returns a promising match, call `DownloadSkill` "
-                "before continuing. If you already know an installed skill "
-                "fits, or the task is straightforward and does not need a "
-                "library skill, do not call `SearchSkills`."
+                "Decide early whether this task needs a library skill. "
+                "If no installed skill clearly fits, or the task is "
+                "unfamiliar, multi-step, domain-specific, repetitive, or "
+                "tool-heavy, call `SearchSkills` first with a short English "
+                "ASCII capability query. If a promising match appears, call "
+                "`DownloadSkill` before continuing."
                 "</system-reminder>"
             ),
             source=_SKILL_LIBRARY_REMINDER_SOURCE,
