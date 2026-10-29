@@ -2,6 +2,8 @@
 """Middleware that guides channel-main-session context resets."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from ...event import HintBlockEvent, ReplyStartEvent
 from ...message import AssistantMsg, HintBlock
 from ...middleware import MiddlewareBase
@@ -29,10 +31,20 @@ _CHANNEL_CONTEXT_GUARD_PROMPT_SUFFIX = (
 _CHANNEL_CONTEXT_GUARD_SOURCE = (
     '{"label": "System", "sublabel": "Channel Context Guard"}'
 )
+_DEFAULT_REMINDER_IDLE_SECONDS = 1800.0
+"""Minimum idle time before injecting the per-turn reminder again."""
 
 
 class ChannelContextGuardMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     """Expose the channel context reset tool and usage guidance."""
+
+    def __init__(
+        self,
+        *,
+        reminder_idle_seconds: float = _DEFAULT_REMINDER_IDLE_SECONDS,
+    ) -> None:
+        """Store the idle threshold used to suppress frequent reminders."""
+        self._reminder_idle_seconds = max(0.0, reminder_idle_seconds)
 
     @staticmethod
     def _build_turn_reminder_block() -> HintBlock:
@@ -53,7 +65,58 @@ class ChannelContextGuardMiddleware(MiddlewareBase):  # pylint: disable=abstract
         )
 
     @staticmethod
+    def _parse_timestamp(value: str | None) -> float | None:
+        """Parse one ISO-format timestamp into epoch seconds."""
+        if not value:
+            return None
+
+        try:
+            return datetime.fromisoformat(
+                value.replace("Z", "+00:00"),
+            ).timestamp()
+        except ValueError:
+            return None
+
+    @classmethod
+    def _get_msg_timestamp(cls, msg) -> float | None:
+        """Return the most suitable timestamp for one message."""
+        return cls._parse_timestamp(
+            getattr(msg, "finished_at", None),
+        ) or cls._parse_timestamp(
+            getattr(msg, "created_at", None),
+        )
+
+    @classmethod
+    def _get_latest_context_interaction_timestamp(
+        cls,
+        agent,
+    ) -> float | None:
+        """Return the latest prior user/assistant interaction timestamp."""
+        for msg in reversed(agent.state.context):
+            if getattr(msg, "role", None) not in {"user", "assistant"}:
+                continue
+            timestamp = cls._get_msg_timestamp(msg)
+            if timestamp is not None:
+                return timestamp
+        return None
+
+    @classmethod
+    def _get_latest_incoming_user_timestamp(
+        cls,
+        incoming_user_msgs,
+    ) -> float | None:
+        """Return the latest timestamp among incoming user messages."""
+        latest_timestamp = None
+        for msg in incoming_user_msgs:
+            timestamp = cls._get_msg_timestamp(msg)
+            if timestamp is None:
+                continue
+            if latest_timestamp is None or timestamp > latest_timestamp:
+                latest_timestamp = timestamp
+        return latest_timestamp
+
     def _needs_current_turn_reminder(
+        self,
         agent,
         inputs,
     ) -> bool:
@@ -73,7 +136,29 @@ class ChannelContextGuardMiddleware(MiddlewareBase):  # pylint: disable=abstract
             msg.role == "user"
             for msg in agent.state.context
         )
-        return has_prior_user_context or bool(agent.state.summary)
+        has_prior_context = has_prior_user_context or bool(agent.state.summary)
+        if not has_prior_context:
+            return False
+
+        if self._reminder_idle_seconds <= 0:
+            return True
+
+        current_user_timestamp = self._get_latest_incoming_user_timestamp(
+            incoming_user_msgs,
+        )
+        latest_interaction_timestamp = (
+            self._get_latest_context_interaction_timestamp(agent)
+        )
+        if (
+            current_user_timestamp is None
+            or latest_interaction_timestamp is None
+        ):
+            return True
+
+        return (
+            current_user_timestamp - latest_interaction_timestamp
+            > self._reminder_idle_seconds
+        )
 
     async def on_system_prompt(  # type: ignore[override]
         self,
