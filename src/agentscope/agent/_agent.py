@@ -29,6 +29,7 @@ from ..event import (
     CustomEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
+    HintBlockEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     TextBlockDeltaEvent,
@@ -90,6 +91,7 @@ from ..permission import (
     PermissionDecision,
 )
 from ..workspace import Offloader, WorkspaceBase
+from ..types import ReplyFinishedReason
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -1010,14 +1012,16 @@ class Agent:
                 async for evt in self._handle_incoming_event(inputs):
                     yield evt
                 reply_metadata = await self._finalize_reply_metadata()
-                yield ReplyEndEvent(
+                end_event = ReplyEndEvent(
                     session_id=self.state.session_id,
                     reply_id=self.state.reply_id,
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
                     metadata=reply_metadata,
                 )
+                yield end_event
                 last_msg = self._get_last_msg()
                 if last_msg is not None:
-                    last_msg.metadata.update(reply_metadata)
+                    last_msg.append_event(end_event)
                     yield last_msg
             return
 
@@ -1038,14 +1042,16 @@ class Agent:
                 yield evt
             if isinstance(event, UserInterruptEvent):
                 reply_metadata = await self._finalize_reply_metadata()
-                yield ReplyEndEvent(
+                end_event = ReplyEndEvent(
                     session_id=self.state.session_id,
                     reply_id=self.state.reply_id,
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
                     metadata=reply_metadata,
                 )
+                yield end_event
                 last_msg = self._get_last_msg()
                 if last_msg is not None:
-                    last_msg.metadata.update(reply_metadata)
+                    last_msg.append_event(end_event)
                     yield last_msg
                 return
         else:
@@ -1085,10 +1091,12 @@ class Agent:
                     # Exit the loop when no tool calls generated and the reply
                     # message is generated
                     if isinstance(evt, Msg):
+                        evt.finished_reason = ReplyFinishedReason.COMPLETED
                         reply_metadata = await self._finalize_reply_metadata(evt)
                         yield ReplyEndEvent(
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
+                            finished_reason=ReplyFinishedReason.COMPLETED,
                             metadata=reply_metadata,
                         )
                         yield evt
@@ -1153,10 +1161,57 @@ class Agent:
         # ===================================================================
         # Step 4: Handling the max iteration executed
         # ===================================================================
-        yield ExceedMaxItersEvent(
-            reply_id=self.state.reply_id,
-            name=self.name,
+        hint_block = HintBlock(
+            hint=(
+                f"<system-reminder>You have reached the maximum of "
+                f"{self.react_config.max_iters} reasoning-acting "
+                f"iterations. Summarize the work and findings so far "
+                f"and return the final answer as text. Do not call any "
+                f"tools.</system-reminder>"
+            ),
+            source='{"label": "System", "sublabel": "Max Iterations Reached"}',
         )
+        current_reply = self._get_last_msg()
+        if (
+            current_reply is not None
+            and current_reply.role == "assistant"
+            and current_reply.name == self.name
+            and current_reply.id == self.state.reply_id
+        ):
+            current_reply.content.append(hint_block)
+        else:
+            self.state.context.append(
+                AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content=[hint_block],
+                ),
+            )
+        yield HintBlockEvent(
+            reply_id=self.state.reply_id,
+            block_id=hint_block.id,
+            source=hint_block.source,
+            hint=hint_block.hint,
+        )
+
+        async for evt in self._reasoning(tool_choice=ToolChoice(mode="none")):
+            if isinstance(evt, Msg):
+                evt.finished_reason = ReplyFinishedReason.EXCEED_MAX_ITERS
+                reply_metadata = await self._finalize_reply_metadata(evt)
+                yield ExceedMaxItersEvent(
+                    reply_id=self.state.reply_id,
+                    name=self.name,
+                )
+                yield ReplyEndEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+                    metadata=reply_metadata,
+                )
+                yield evt
+                return
+            yield evt
+
         logger.warning(
             "Agent %s exceeds the max iteration numbers %d. "
             "Stop the react loop.",
@@ -1164,19 +1219,22 @@ class Agent:
             self.react_config.max_iters,
         )
 
-        # Mirror the normal-exit path so subscribers (e.g. SSE clients
-        # waiting on a terminal event) don't hang when the loop bails
-        # out on max_iters.
         final_msg = AssistantMsg(
             id=self.state.reply_id,
             name=self.name,
-            content="Executed maximum iterations of reasoning-acting loop"
+            content="Executed maximum iterations of reasoning-acting loop "
             "without finishing the task.",
+            finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
         )
         reply_metadata = await self._finalize_reply_metadata(final_msg)
+        yield ExceedMaxItersEvent(
+            reply_id=self.state.reply_id,
+            name=self.name,
+        )
         yield ReplyEndEvent(
             session_id=self.state.session_id,
             reply_id=self.state.reply_id,
+            finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
             metadata=reply_metadata,
         )
 

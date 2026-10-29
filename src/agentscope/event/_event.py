@@ -15,6 +15,7 @@ from ..message import (
     ToolResultState,
 )
 from ..permission import PermissionRule
+from ..types import ReplyFinishedReason
 
 
 class EventType(StrEnum):
@@ -103,6 +104,8 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
+    finished_reason: ReplyFinishedReason = ReplyFinishedReason.COMPLETED
+    """The finished reason of this reply."""
 
 
 class ModelCallStartEvent(EventBase):

@@ -1,10 +1,14 @@
-import type { ContentBlock, Msg, ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import type { ContentBlock, Msg, TextBlock, ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import { TriangleAlert } from 'lucide-react';
 import React from 'react';
 import { useRef, useEffect } from 'react';
 
 import { EmptyMessage } from './Empty';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { TextInput, type ProcessedFile } from '@/components/chat/TextInput.tsx';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 
 interface ChatContentProps {
@@ -72,6 +76,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
         files,
         onFilesChange,
 }) => {
+        const { t } = useTranslation();
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const prevScrollHeightRef = useRef<number>(0);
@@ -211,6 +216,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
                 scrollToBottom('auto');
         }, [scrollViewportCommand, scrollToBottom]);
 
+        const lastMessage = msgs.at(-1) as (Msg & { finished_reason?: string | null }) | undefined;
+        const showMaxItersAlert = !sending && lastMessage?.finished_reason === 'exceed_max_iters';
+
 	return (
 		<div className={cn('flex flex-col h-full w-full items-center p-2 gap-4', className)}>
 			<div
@@ -235,6 +243,33 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					) : (
 						<EmptyMessage />
 					)}
+                                        {showMaxItersAlert && (
+                                                <Alert className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-50">
+                                                        <TriangleAlert />
+                                                        <AlertTitle>{t('chat.maxItersExceeded.title')}</AlertTitle>
+                                                        <AlertDescription>
+                                                                {t('chat.maxItersExceeded.description')}
+                                                        </AlertDescription>
+                                                        <AlertAction>
+                                                                <Button
+                                                                        size="xs"
+                                                                        onClick={() => {
+                                                                                onSend([
+                                                                                        {
+                                                                                                id: crypto.randomUUID(),
+                                                                                                type: 'text',
+                                                                                                text: t('chat.maxItersExceeded.continue'),
+                                                                                                created_at: new Date().toISOString(),
+                                                                                                finished_at: new Date().toISOString(),
+                                                                                        } as TextBlock,
+                                                                                ]);
+                                                                        }}
+                                                                >
+                                                                        {t('chat.maxItersExceeded.continue')}
+                                                                </Button>
+                                                        </AlertAction>
+                                                </Alert>
+                                        )}
 				</div>
 			</div>
 			<TextInput

@@ -12,9 +12,10 @@ from .._bus_ops import deliver_to_inbox
 from .._reply_state import get_current_reply_msg, is_reply_awaiting_tool_interaction
 from ..message_bus import MessageBus
 from ..storage import SessionRecord, StorageBase, SubAgentTaskRecord
-from ...event import ExceedMaxItersEvent
+from ...event import ExceedMaxItersEvent, ReplyEndEvent
 from ...message import ContentBlock, DataBlock, HintBlock, Msg, TextBlock, ToolCallState
 from ...middleware import MiddlewareBase
+from ...types import ReplyFinishedReason
 
 
 _TERMINAL_PARENT_INVOCATION_STATUSES = {
@@ -198,6 +199,51 @@ def _build_error_hint_content(
         f"Sub-agent '{agent_name}' (session_id={session_id}) failed.\n\n"
         f"Error:\n\n{error_text}\n"
         "</subagent-message>"
+    )
+
+
+def _build_partial_success_hint_content(
+    *,
+    agent_id: str,
+    agent_name: str,
+    session_id: str,
+    session_name: str,
+    content_blocks: list[TextBlock | DataBlock],
+) -> str | list[TextBlock | DataBlock]:
+    """Wrap a partial final result produced at the iteration limit."""
+    prefix = _build_prefix(
+        agent_id=agent_id,
+        agent_name=agent_name,
+        session_id=session_id,
+        session_name=session_name,
+    )
+    notification_prefix = (
+        f"{prefix}"
+        f"Sub-agent '{agent_name}' (session_id={session_id}) reached the "
+        "maximum reasoning-acting iterations and stopped.\n\n"
+        "Partial result so far:\n\n"
+    )
+    notification_suffix = (
+        "\n\nThe main agent may resume this existing child session if more "
+        "work is still needed.\n</subagent-message>"
+    )
+    blocks = [deepcopy(block) for block in content_blocks]
+    if blocks:
+        if isinstance(blocks[0], TextBlock):
+            blocks[0].text = notification_prefix + blocks[0].text
+        else:
+            blocks.insert(0, TextBlock(text=notification_prefix))
+        if isinstance(blocks[-1], TextBlock):
+            blocks[-1].text += notification_suffix
+        else:
+            blocks.append(TextBlock(text=notification_suffix))
+        return blocks
+
+    return (
+        f"{prefix}"
+        f"{_build_empty_result_text(agent_name, session_id)}"
+        f"\nThe main agent may resume this existing child session if more "
+        "work is still needed.\n</subagent-message>"
     )
 
 
@@ -427,9 +473,12 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     ) -> AsyncGenerator:
         """Mirror a finished child-session reply back to the parent session."""
         exceeded_max_iters = False
+        terminal_finished_reason: ReplyFinishedReason | None = None
         async for item in next_handler(**input_kwargs):
             if isinstance(item, ExceedMaxItersEvent):
                 exceeded_max_iters = True
+            elif isinstance(item, ReplyEndEvent):
+                terminal_finished_reason = item.finished_reason
             yield item
 
         child_session = await self._storage.get_session_meta(
@@ -453,7 +502,32 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         if child_agent is None:
             return
 
-        if exceeded_max_iters:
+        content_blocks = (
+            _extract_result_blocks(final_msg.content)
+            if final_msg is not None
+            else []
+        )
+
+        if (
+            exceeded_max_iters
+            or terminal_finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS
+        ):
+            if content_blocks:
+                await self._deliver_terminal_result(
+                    task=task,
+                    terminal_status="final_delivered",
+                    terminal_reason="partial_final_reply_exceeded_max_iters",
+                    hint_content=_build_partial_success_hint_content(
+                        agent_id=self._agent_id,
+                        agent_name=child_agent.data.name,
+                        session_id=self._session_id,
+                        session_name=child_session.config.name,
+                        content_blocks=content_blocks,
+                    ),
+                    hint_label="subagent_message",
+                    hint_state="warning",
+                )
+                return
             await self._deliver_terminal_result(
                 task=task,
                 terminal_status="error_delivered",
@@ -497,7 +571,6 @@ class SubAgentMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             await self._persist_task(task)
             return
 
-        content_blocks = _extract_result_blocks(final_msg.content)
         if content_blocks:
             await self._deliver_terminal_result(
                 task=task,

@@ -22,6 +22,7 @@ from ._block import (
     ContentBlockTypes,
 )
 from .._logging import logger
+from ..types import ReplyFinishedReason
 
 if TYPE_CHECKING:
     from ..event import AgentEvent
@@ -81,6 +82,8 @@ class Msg(BaseModel):
     """The creation time of the message"""
     finished_at: str | None = Field(default=None)
     """The finished time of the message"""
+    finished_reason: ReplyFinishedReason | None = Field(default=None)
+    """The reason this reply finished, if it is terminal."""
     usage: Usage | None = Field(default=None)
     """The token usage information of the message"""
 
@@ -241,6 +244,9 @@ class Msg(BaseModel):
         match event.type:
             case EventType.REPLY_END:
                 self.finished_at = event.created_at
+                self.finished_reason = ReplyFinishedReason(
+                    event.finished_reason,
+                )
                 if event.metadata:
                     self.metadata.update(event.metadata)
 
@@ -521,6 +527,7 @@ def AssistantMsg(
     finished_at: str | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
     usage: Usage | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
 ) -> Msg:
     """Create an assistant message with role ``"assistant"``.
 
@@ -545,6 +552,8 @@ def AssistantMsg(
             generated when not provided.
         usage (`Usage | None`, optional):
             The token usage information of the message.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The terminal reason of the message when it is already known.
 
     Returns:
         `Msg`:
@@ -559,6 +568,7 @@ def AssistantMsg(
         finished_at=finished_at,
         id=id or uuid.uuid4().hex,
         usage=usage,
+        finished_reason=finished_reason,
     )
 
 

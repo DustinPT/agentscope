@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The message module in agentscope."""
 
+from ..types import ReplyFinishedReason
 from ._block import (
     ContentBlock,
     ContentBlockTypes,
@@ -31,6 +32,7 @@ __all__ = [
     "URLSource",
     "ContentBlock",
     "ContentBlockTypes",
+    "ReplyFinishedReason",
     "Msg",
     "UserMsg",
     "AssistantMsg",

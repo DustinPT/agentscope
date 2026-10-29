@@ -137,6 +137,7 @@
                 "rollbacking": "Rolling back…",
 		"running": "Running...",
                 "interrupted": "Interrupted",
+                "maxIters": "Iteration limit reached",
                 "failed": "Run failed",
 		"contextUsageTooltip": "Context usage (current context length / model max context)",
                 "errorKinds": {
@@ -204,6 +205,11 @@
 			"scrollToTop": "Scroll to top",
                         "scrollToBottom": "Scroll to bottom",
                         "exportSession": "Export session"
+                },
+                "maxItersExceeded": {
+                        "title": "Reached the iteration limit",
+                        "description": "The agent stopped after hitting its maximum reasoning-acting iterations. You can ask it to continue from the current progress.",
+                        "continue": "Continue from the current progress"
 		}
 	},
         "workspace-drawer": {

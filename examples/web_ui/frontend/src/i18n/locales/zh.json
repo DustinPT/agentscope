@@ -137,6 +137,7 @@
                 "rollbacking": "回退中…",
 		"running": "运行中...",
                 "interrupted": "已中断",
+                "maxIters": "已达到迭代上限",
                 "failed": "运行失败",
 		"contextUsageTooltip": "上下文使用率（当前上下文长度/模型最大上下文）",
                 "errorKinds": {
@@ -204,6 +205,11 @@
 			"scrollToTop": "滚动到顶部",
                         "scrollToBottom": "滚动到底部",
                         "exportSession": "导出会话"
+                },
+                "maxItersExceeded": {
+                        "title": "已达到迭代上限",
+                        "description": "Agent 已达到最大推理-行动迭代次数并停止。你可以让它基于当前进展继续。",
+                        "continue": "基于当前进展继续"
 		}
 	},
         "workspace-drawer": {

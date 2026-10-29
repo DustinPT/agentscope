@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from starlette.types import ASGIApp
 
 from ._base import ProtocolMiddlewareBase
+from ....types import ReplyFinishedReason
 from ....event import (
     AgentEvent,
     DataBlockDeltaEvent,
@@ -99,15 +100,21 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             )
 
         if isinstance(event, ReplyEndEvent):
+            if event.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
+                return AGUIRunErrorEvent(
+                    message="The agent exceeded the maximum reasoning-acting "
+                    "iterations",
+                    code="exceed_max_iters",
+                )
             return AGUIRunFinishedEvent(
                 thread_id=event.session_id,
                 run_id=event.reply_id,
             )
 
         if isinstance(event, ExceedMaxItersEvent):
-            return AGUIRunErrorEvent(
-                message=(f"Agent '{event.name}' exceeded max iterations"),
-                code="exceed_max_iters",
+            return AGUICustomEvent(
+                name="exceed_max_iters",
+                value=event.model_dump(exclude_none=True),
             )
 
         if isinstance(event, ModelCallStartEvent):

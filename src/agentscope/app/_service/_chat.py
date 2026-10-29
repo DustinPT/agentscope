@@ -51,6 +51,7 @@ from ..middleware import (
     SandboxViolationHintMiddleware,
     StateChangeMiddleware,
     SubAgentMiddleware,
+    TeamMemberMiddleware,
     ToolOffloadMiddleware,
 )
 from .._types import (
@@ -82,6 +83,7 @@ from ...middleware import MiddlewareBase, TTSMiddleware
 from ...message import AssistantMsg, Msg, SystemMsg
 from ...permission import AdditionalWorkingDirectory
 from ...state import ToolRuntimeContext
+from ...types import ReplyFinishedReason
 from ._agent_asset_store import AgentAssetStore
 from ._attachment_store import AttachmentStore
 
@@ -270,6 +272,48 @@ class ChatService:
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._channel_clients = channel_clients
+
+    async def _build_team_member_middleware(
+        self,
+        *,
+        user_id: str,
+        agent_id: str,
+        agent_record: AgentRecord,
+        session_record,
+    ) -> TeamMemberMiddleware | None:
+        """Build a leader-notification middleware for one team worker."""
+        if agent_record.source != "team" or session_record.team_id is None:
+            return None
+
+        team = await self._storage.get_team(user_id, session_record.team_id)
+        if team is None:
+            return None
+
+        leader_session = await self._storage.get_session_meta(
+            user_id,
+            team.session_id,
+        )
+        if leader_session is None:
+            return None
+
+        leader_agent = await self._storage.get_agent(
+            user_id,
+            leader_session.agent_id,
+        )
+        if leader_agent is None:
+            return None
+
+        return TeamMemberMiddleware(
+            storage=self._storage,
+            message_bus=self._message_bus,
+            user_id=user_id,
+            session_id=session_record.id,
+            agent_id=agent_id,
+            leader_session_id=leader_session.id,
+            leader_agent_id=leader_agent.id,
+            leader_name=leader_agent.data.name,
+            member_name=agent_record.data.name,
+        )
 
     def _resolve_managed_assets(
         self,
@@ -612,6 +656,7 @@ class ChatService:
         return ReplyEndEvent(
             session_id=session_id,
             reply_id=reply_id,
+            finished_reason=ReplyFinishedReason.ERROR,
             created_at=failed_at,
             metadata=self._build_reply_failure_metadata(exc, failed_at),
         )
@@ -641,6 +686,7 @@ class ChatService:
         return ReplyEndEvent(
             session_id=session_id,
             reply_id=reply_id,
+            finished_reason=ReplyFinishedReason.INTERRUPTED,
             created_at=interrupted_at,
             metadata=self._build_reply_interrupted_metadata(
                 interrupted_at,
@@ -1457,6 +1503,14 @@ class ChatService:
                     session_id=session_id,
                 ),
             )
+        team_member_middleware = await self._build_team_member_middleware(
+            user_id=user_id,
+            agent_id=agent_record.id,
+            agent_record=agent_record,
+            session_record=runtime_session,
+        )
+        if team_member_middleware is not None:
+            middlewares.append(team_member_middleware)
         if self._extra_agent_middlewares is not None:
             factory_args: tuple = (
                 user_id,
@@ -1892,6 +1946,14 @@ class ChatService:
                     session_id=session_id,
                 ),
             )
+        team_member_middleware = await self._build_team_member_middleware(
+            user_id=user_id,
+            agent_id=agent_id,
+            agent_record=agent_record,
+            session_record=session_record,
+        )
+        if team_member_middleware is not None:
+            middlewares.append(team_member_middleware)
         tts_cfg = session_record.config.tts_model_config
         if tts_cfg is not None:
             tts_model = await get_tts_model(

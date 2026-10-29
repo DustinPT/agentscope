@@ -27,6 +27,8 @@ type JsonLike =
 	| JsonLike[]
 	| { [key: string]: JsonLike };
 
+type MsgWithFinishedReason = Msg & { finished_reason?: string | null };
+
 export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
 
 const INTERRUPT_TIMEOUT_MS = 10_000;
@@ -150,6 +152,13 @@ export function useMessages(
 	const mergeReplyMetadata = useCallback((msg: Msg, event: AgentEvent) => {
 		if (event.type !== EventType.REPLY_END) return;
 		const replyEndEvent = event as ReplyEndEvent;
+                const target = msg as MsgWithFinishedReason;
+                const finishedReason = (
+                        replyEndEvent as ReplyEndEvent & { finished_reason?: string | null }
+                ).finished_reason;
+                if (typeof finishedReason === 'string') {
+                        target.finished_reason = finishedReason;
+                }
                 const metadata = replyEndEvent.metadata;
                 if (!metadata || typeof metadata !== 'object') return;
 		msg.metadata = {
@@ -173,6 +182,7 @@ export function useMessages(
                         return {
                                 ...message,
                                 finished_at: message.created_at,
+                                finished_reason: 'interrupted',
                                 metadata: {
                                         ...message.metadata,
                                         terminal_state: 'interrupted',

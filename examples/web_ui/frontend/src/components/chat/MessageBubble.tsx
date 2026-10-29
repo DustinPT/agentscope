@@ -71,6 +71,11 @@ interface ReplyRunErrorMetadata {
         status_code?: number | null;
 }
 
+function getFinishedReason(message: Msg): string | null {
+        const candidate = (message as Msg & { finished_reason?: string | null }).finished_reason;
+        return typeof candidate === 'string' ? candidate : null;
+}
+
 function getTerminalState(message: Msg): 'interrupted' | null {
         return message.metadata?.terminal_state === 'interrupted' ? 'interrupted' : null;
 }
@@ -743,11 +748,13 @@ export function MessageBubble({
         const [directoryDialogPath, setDirectoryDialogPath] = useState<string | null>(null);
 
         const runError = getReplyRunErrorMetadata(message);
+        const finishedReason = getFinishedReason(message);
         const terminalState = getTerminalState(message);
         const runFailedAt = getRunFailedAt(message);
         const isFailed = !!runError;
+        const isMaxIters = finishedReason === 'exceed_max_iters';
         const isInterrupted = terminalState === 'interrupted';
-        const isRunning = !message.finished_at && !isFailed && !isInterrupted;
+        const isRunning = !message.finished_at && !isFailed && !isInterrupted && !isMaxIters;
 	const hasUsage =
 		!!message.usage &&
 		((message.usage.input_tokens ?? 0) > 0 || (message.usage.output_tokens ?? 0) > 0);
@@ -942,6 +949,8 @@ export function MessageBubble({
                                                 aria-label={
                                                         isRunning
                                                                 ? t('messageBubble.running')
+                                                                : isMaxIters
+                                                                  ? t('messageBubble.maxIters')
                                                                 : isInterrupted
                                                                   ? t('messageBubble.interrupted')
                                                                 : isFailed
@@ -951,6 +960,11 @@ export function MessageBubble({
 					>
                                                 {isRunning ? (
 							<Loader2 data-icon="inline-start" className="animate-spin" />
+                                                ) : isMaxIters ? (
+                                                        <AlertCircle
+                                                                data-icon="inline-start"
+                                                                className="text-amber-600"
+                                                        />
                                                 ) : isInterrupted ? (
                                                         <AlertCircle
                                                                 data-icon="inline-start"
@@ -985,6 +999,11 @@ export function MessageBubble({
                                                 {isInterrupted && (
                                                         <span className="ml-1 text-amber-700">
                                                                 {t('messageBubble.interrupted')}
+                                                        </span>
+                                                )}
+                                                {isMaxIters && (
+                                                        <span className="ml-1 text-amber-700">
+                                                                {t('messageBubble.maxIters')}
                                                         </span>
                                                 )}
 						{hasUsage && (
