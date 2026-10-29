@@ -20,6 +20,7 @@ from ._web_utils import normalize_public_http_url
 
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+_MAX_ERROR_BODY_BYTES = 8 * 1024
 _ANTIBOT_SCAN_BYTES = 4096
 _JINA_READER_BASE_URL_ENV = "AGENTSCOPE_WEBFETCH_JINA_BASE_URL"
 _DEFAULT_JINA_READER_BASE_URL = "https://r.jina.ai"
@@ -58,6 +59,42 @@ def _get_jina_reader_base_url() -> str:
     if "://" not in configured:
         configured = f"https://{configured}"
     return configured.rstrip("/")
+
+
+def _truncate_error_detail(text: str) -> str:
+    """Trim verbose upstream error payloads to a model-friendly size."""
+    detail = str(text or "").strip()
+    if len(detail) <= _MAX_ERROR_BODY_BYTES:
+        return detail
+    return f"{detail[:_MAX_ERROR_BODY_BYTES].rstrip()}..."
+
+
+def _extract_http_error_detail(exc: urllib.error.HTTPError) -> str:
+    """Include the raw upstream response body when an HTTP request fails."""
+    summary = str(exc).strip() or f"HTTP Error {exc.code}"
+    try:
+        payload = exc.read(_MAX_ERROR_BODY_BYTES + 1)
+    except OSError:
+        payload = b""
+
+    if not payload:
+        return summary
+
+    body = payload[:_MAX_ERROR_BODY_BYTES].decode("utf-8", errors="replace").strip()
+    if not body:
+        return summary
+
+    return f"{summary}; response body: {_truncate_error_detail(body)}"
+
+
+def _format_fetch_error(exc: Exception) -> str:
+    """Return a concise, information-rich fetch error string."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return _extract_http_error_detail(exc)
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", None)
+        return str(reason).strip() or str(exc).strip() or "unknown error"
+    return str(exc).strip() or "unknown error"
 
 
 def _fetch_via_jina(url: str) -> bytes:
@@ -151,7 +188,7 @@ Usage:
             ValueError,
             RuntimeError,
         ) as exc:
-            error_text = str(exc).strip() or "unknown error"
+            error_text = _format_fetch_error(exc)
             return ToolChunk(
                 content=[TextBlock(text=f"Error: Failed to fetch URL: {error_text}")],
                 state=ToolResultState.ERROR,
