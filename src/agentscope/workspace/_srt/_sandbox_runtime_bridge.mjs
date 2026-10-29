@@ -57,16 +57,43 @@ function waitForExit(child, timeoutMs) {
   });
 }
 
-async function settleViolations(store, commandId, waitMs) {
-  const deadline = Date.now() + waitMs;
-  let previousCount = -1;
-  while (Date.now() < deadline) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function settleViolations(
+  store,
+  commandId,
+  {
+    maxWaitMs = 250,
+    minQuietMs = 60,
+    minWaitMs = 30,
+    initialPollMs = 10,
+    maxPollMs = 40,
+  } = {},
+) {
+  const startedAt = Date.now();
+  let quietSince = startedAt;
+  let pollMs = initialPollMs;
+  let previousCount = store.getViolationsForCommand(commandId).length;
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    await sleep(pollMs);
+
     const current = store.getViolationsForCommand(commandId);
-    if (current.length > 0 && current.length === previousCount) {
+    const currentCount = current.length;
+    const now = Date.now();
+    if (currentCount !== previousCount) {
+      previousCount = currentCount;
+      quietSince = now;
+      pollMs = initialPollMs;
+      continue;
+    }
+
+    if (now - startedAt >= minWaitMs && now - quietSince >= minQuietMs) {
       return current;
     }
-    previousCount = current.length;
-    await new Promise(resolve => setTimeout(resolve, 100));
+    pollMs = Math.min(pollMs * 2, maxPollMs);
   }
   return store.getViolationsForCommand(commandId);
 }
@@ -119,7 +146,7 @@ async function main() {
         const stderrBuffer = Buffer.concat(stderrChunks);
         const stderrText = stderrBuffer.toString("utf8");
         const store = SandboxManager.getSandboxViolationStore();
-        const violations = await settleViolations(store, payload.commandId, 800);
+        const violations = await settleViolations(store, payload.commandId);
         const annotatedStderr = SandboxManager.annotateStderrWithSandboxFailures(
           payload.commandId,
           stderrText,
@@ -143,7 +170,7 @@ async function main() {
     const stderrBuffer = Buffer.concat(stderrChunks);
     const stderrText = stderrBuffer.toString("utf8");
     const store = SandboxManager.getSandboxViolationStore();
-    const violations = await settleViolations(store, payload.commandId, 800);
+    const violations = await settleViolations(store, payload.commandId);
     const annotatedStderr = SandboxManager.annotateStderrWithSandboxFailures(
       payload.commandId,
       stderrText,
