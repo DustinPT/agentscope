@@ -66,15 +66,6 @@ class _ScheduleCreateParams(BaseModel):
         "context. If False, each execution gets a fresh session.",
     )
 
-    permission_mode: str = Field(
-        default=PermissionMode.DONT_ASK.value,
-        description=(
-            "Permission mode for the agent during scheduled execution. "
-            f"Allowed values: {[m.value for m in PermissionMode]}. "
-            "Defaults to 'dont_ask' since no user is present."
-        ),
-    )
-
 
 class ScheduleCreate(ToolBase):
     """The schedule create tool.
@@ -83,9 +74,9 @@ class ScheduleCreate(ToolBase):
     given cron interval.  The record is persisted to storage and immediately
     registered with the in-memory APScheduler.
 
-    The schedule inherits the model configuration of the current session.
-    The agent that creates the schedule is also the agent that will be run
-    on each trigger.
+    The schedule inherits the model configuration and permission mode of the
+    current session. The agent that creates the schedule is also the agent
+    that will be run on each trigger.
     """
 
     name: str = "ScheduleCreate"
@@ -183,7 +174,6 @@ scheduled task description.
         started_at: datetime | None = None,
         ended_at: datetime | None = None,
         stateful: bool = False,
-        permission_mode: str = PermissionMode.DONT_ASK.value,
         _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Create a new scheduled task.
@@ -207,8 +197,6 @@ scheduled task description.
                 schedule runs indefinitely.
             stateful (`bool`, optional):
                 Whether consecutive executions share the same session context.
-            permission_mode (`str`, optional):
-                Permission mode value string.
             _agent_state (`AgentState | None`, optional):
                 Injected agent state; provides the source session ID.
 
@@ -217,14 +205,23 @@ scheduled task description.
                 A chunk with the new schedule ID on success, or an error
                 description on failure.
         """
-        try:
-            perm_mode = PermissionMode(permission_mode)
-        except ValueError:
-            perm_mode = PermissionMode.DONT_ASK
-
         source_session_id = (
             _agent_state.session_id if _agent_state is not None else ""
         )
+        perm_mode = PermissionMode.DONT_ASK
+
+        if source_session_id:
+            caller_session = await self._storage.get_session(
+                self._user_id,
+                self._agent_id,
+                source_session_id,
+            )
+            if caller_session is not None:
+                perm_mode = caller_session.config.permission_mode
+            elif _agent_state is not None:
+                perm_mode = _agent_state.permission_context.mode
+        elif _agent_state is not None:
+            perm_mode = _agent_state.permission_context.mode
 
         record = ScheduleRecord(
             user_id=self._user_id,
