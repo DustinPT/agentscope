@@ -39,6 +39,7 @@ from ._refresh_knowledge_base_files import RefreshKnowledgeBaseFiles
 from ._request_sandbox_access import RequestSandboxAccess
 from ._search_knowledge_base import SearchKnowledgeBase
 from ._search_skills import SearchSkills
+from ._send_session_hint import SendSessionHint
 from ._send_session_message import SendSessionMessage
 from ._subagent_run import SubAgentRun
 from ._submit_external_results import SubmitExternalResults
@@ -65,6 +66,7 @@ __all__ = [
     "RequestSandboxAccess",
     "SearchKnowledgeBase",
     "SearchSkills",
+    "SendSessionHint",
     "SendSessionMessage",
     "SubAgentRun",
     "SubmitExternalResults",

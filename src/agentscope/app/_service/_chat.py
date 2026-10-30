@@ -47,6 +47,7 @@ from .._manager import ChatRunRegistry
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     ChannelContextGuardMiddleware,
+    EnvironmentInfoMiddleware,
     InboxMiddleware,
     SandboxViolationHintMiddleware,
     StateChangeMiddleware,
@@ -1509,6 +1510,7 @@ class ChatService:
             )
 
         middlewares: list = [
+            EnvironmentInfoMiddleware(session_id=session_id),
             InboxMiddleware(self._message_bus),
             SandboxViolationHintMiddleware(),
             StateChangeMiddleware(
@@ -2000,6 +2002,7 @@ class ChatService:
         # plumbing is needed here.
         # ----------------------------------------------------------------
         middlewares: list = [
+            EnvironmentInfoMiddleware(session_id=session_id),
             InboxMiddleware(self._message_bus),
             SandboxViolationHintMiddleware(),
             StateChangeMiddleware(

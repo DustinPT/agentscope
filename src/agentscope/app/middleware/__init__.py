@@ -2,6 +2,7 @@
 """The middlewares module."""
 
 from ._channel_context_guard_middleware import ChannelContextGuardMiddleware
+from ._environment_info_middleware import EnvironmentInfoMiddleware
 from ._inbox_middleware import InboxMiddleware
 from ._knowledge_base_middleware import KnowledgeBaseMiddleware
 from ._protocol import ProtocolMiddlewareBase, AGUIProtocolMiddleware
@@ -15,6 +16,7 @@ from ._tool_offload_middleware import ToolOffloadMiddleware
 
 __all__ = [
     "ChannelContextGuardMiddleware",
+    "EnvironmentInfoMiddleware",
     "InboxMiddleware",
     "KnowledgeBaseMiddleware",
     "ProtocolMiddlewareBase",

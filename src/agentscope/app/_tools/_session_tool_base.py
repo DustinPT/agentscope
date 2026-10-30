@@ -227,6 +227,42 @@ class _SessionToolBase(ToolBase):
         await _copy_backend_file_to_local(backend, absolute, local_path)
         return local_path, tmpdir
 
+    async def _copy_workspace_file_to_temp_file(
+        self,
+        path: str,
+    ) -> tuple[str, str]:
+        """Copy one workspace file to a transient local temp file.
+
+        The returned temp path intentionally uses the ``agentscope-`` prefix so
+        AttachmentStore can recognize it as a transient local file and delete
+        it after the target session persists the attachment into its own
+        workspace.
+        """
+        backend = self._workspace.get_backend()
+        absolute = self._normalize_workspace_path(path)
+        if not await backend.file_exists(absolute):
+            raise FileNotFoundError(f"Workspace path not found: {path}")
+        if await backend.is_dir(absolute):
+            raise IsADirectoryError(
+                f"Workspace path must be a file, got directory: {path}",
+            )
+
+        suffix = Path(absolute).suffix
+        fd, temp_path = tempfile.mkstemp(
+            prefix="agentscope-session-hint-",
+            suffix=suffix,
+        )
+        os.close(fd)
+        try:
+            await _copy_backend_file_to_local(backend, absolute, temp_path)
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
+        return absolute, temp_path
+
     def _zip_local_directory(
         self,
         directory: str,

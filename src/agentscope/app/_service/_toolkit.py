@@ -14,6 +14,7 @@ from .._tools import (
     ImportAgentPackage,
     InterruptSession,
     RequestSandboxAccess,
+    SendSessionHint,
     SendSessionMessage,
     SubAgentRun,
     SubmitExternalResults,
@@ -23,7 +24,7 @@ from .._tools import (
     WaitNewMessages,
 )
 from .._types import AgentToolFactory, SubAgentTemplate
-from ..storage import AgentRecord, SessionRecord, StorageBase
+from ..storage import AgentRecord, SessionRecord, SessionSource, StorageBase
 from .._manager import ChatRunRegistry
 from ...middleware import MiddlewareBase
 from ...tool import (
@@ -203,6 +204,17 @@ optional):
                 InterruptSession(**managed_tool_kwargs),
             ],
         )
+
+    if (
+        session_record.source == SessionSource.SCHEDULE
+        and session_record.source_schedule_id is not None
+    ):
+        source_schedule = await storage.get_schedule(
+            user_id,
+            session_record.source_schedule_id,
+        )
+        if source_schedule is not None and source_schedule.data.source_session_id:
+            tools.append(SendSessionHint(**managed_tool_kwargs))
 
     sandbox_type = _detect_sandbox_type(workspace)
     if sandbox_type is not None:

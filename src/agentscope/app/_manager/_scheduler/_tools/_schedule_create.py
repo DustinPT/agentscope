@@ -109,6 +109,14 @@ When in doubt, ask for clarification before creating the schedule.
 schedule fires in a new session. Include all necessary details: the goal, \
 expected output, constraints, relevant file paths, and anything else needed \
 to complete the task independently.
+- If you want the scheduled session to send its result back to the current \
+session, explicitly include your current session id in `description` and \
+instruct the scheduled session to call `SendSessionHint` with that exact \
+target session id. The scheduled session only knows where to send the \
+result if you provide the callback session id in the task description.
+- Channel tools injected into the current channel session are NOT visible to \
+the scheduled session. Do not rely on those channel tools when writing the \
+scheduled task description.
 """
 
     input_schema: dict = _ScheduleCreateParams.model_json_schema()
