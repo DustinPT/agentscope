@@ -673,6 +673,7 @@ class FeishuChannel(ChannelBase):
                         tool_result_metadata=dict(
                             parsed["tool_result_metadata"],
                         ),
+                        confirm_rules=parsed.get("confirm_rules"),
                     ),
                 ),
                 loop,
@@ -912,6 +913,7 @@ class FeishuChannel(ChannelBase):
                     event.metadata.get("agent_id", ""),
                     event.metadata.get("session_id", ""),
                     req.reply_id,
+                    suggested_rules=tool.suggested_rules,
                 ),
             )
 

@@ -177,6 +177,7 @@ class ChannelGateway:
             tool_call_id=event.tool_call_id,
             approved=event.approved,
             tool_input_override=event.tool_input_override,
+            rules=event.confirm_rules,
         )
 
     async def _resume_external(

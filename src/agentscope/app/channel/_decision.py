@@ -18,6 +18,7 @@ from ...message import (
     ToolResultBlock,
     ToolResultState,
 )
+from ...permission import PermissionRule
 from .._bus_ops import enqueue_run_trigger
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
@@ -92,6 +93,7 @@ async def resume_after_decision(
     tool_call_id: str,
     approved: bool,
     tool_input_override: str = "",
+    rules: list[PermissionRule] | None = None,
 ) -> bool:
     """Resume the run with a decision on ``tool_call_id``.
 
@@ -139,6 +141,7 @@ async def resume_after_decision(
                 ConfirmResult(
                     confirmed=approved,
                     tool_call=confirmed_tool_call,
+                    rules=rules if approved else None,
                 ),
             ],
         ),

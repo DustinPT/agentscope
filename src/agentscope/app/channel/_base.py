@@ -32,6 +32,7 @@ from ...message import (
     ToolResultBlock,
     ToolResultState,
 )
+from ...permission import PermissionRule
 
 if TYPE_CHECKING:
     from ...tool import ToolBase
@@ -159,6 +160,9 @@ class ChannelConfirmationResultEvent(BaseModel):
 
     tool_result_metadata: dict[str, Any] = Field(default_factory=dict)
     """Structured metadata for external execution submissions."""
+
+    confirm_rules: list[PermissionRule] | None = None
+    """Optional permission rules accepted together with an approval."""
 
     actor: str = ""
     """Platform-side id of whoever made the decision (for audit)."""

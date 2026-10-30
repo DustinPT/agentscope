@@ -12,14 +12,19 @@ import json
 from typing import Any
 
 from ....message import ToolResultState
+from ....permission import PermissionRule
 from ....tool import AskUserAnswer, AskUserMetadata, AskUserParams
 
 _ACTION_TYPE = "tool_guard_approval"
 _APPROVE = "approve"
+_APPROVE_WITH_RULE = "approve_with_rule"
 _DENY = "deny"
 _EXTERNAL_SUBMIT = "external_submit"
 _REQUEST_SANDBOX_ACCESS = "RequestSandboxAccess"
 _ASK_USER = "AskUser"
+_CARD_SCHEMA_V2 = "2.0"
+_FIELD_SANDBOX_SCOPE = "sandbox_scope"
+_FIELD_SANDBOX_OPERATIONS = "sandbox_operations"
 
 
 def _build_approval_card(
@@ -32,6 +37,7 @@ def _build_approval_card(
     reply_id: str = "",
     header_title: str | None = None,
     body_intro: str | None = None,
+    suggested_rules: list[PermissionRule] | None = None,
 ) -> str:
     """Build the approval card (JSON string) for a pending tool call.
 
@@ -57,6 +63,8 @@ def _build_approval_card(
         "session_id": session_id,
         "reply_id": reply_id,
         "interaction_kind": "confirm",
+        "tool_name": tool_name,
+        "tool_input": tool_input,
     }
     if tool_name == _REQUEST_SANDBOX_ACCESS:
         card = _build_sandbox_access_card(
@@ -73,37 +81,12 @@ def _build_approval_card(
             body += f"\n**Arguments:** {shown}"
         if body_intro:
             body = f"{body_intro}\n\n{body}"
-        card = {
-            "config": {"wide_screen_mode": True},
-            "header": {
-                "template": "orange",
-                "title": {
-                    "tag": "plain_text",
-                    "content": header_title or "🛡️ Tool execution needs approval",
-                },
-            },
-            "elements": [
-                {"tag": "markdown", "content": body},
-                {"tag": "hr"},
-                {
-                    "tag": "action",
-                    "actions": [
-                        {
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "✅ Allow"},
-                            "type": "primary",
-                            "value": {**base, "action": _APPROVE},
-                        },
-                        {
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "❌ Deny"},
-                            "type": "danger",
-                            "value": {**base, "action": _DENY},
-                        },
-                    ],
-                },
-            ],
-        }
+        card = _build_confirm_card(
+            base,
+            body,
+            header_title=header_title,
+            suggested_rules=suggested_rules,
+        )
     return json.dumps(card, ensure_ascii=False)
 
 
@@ -143,39 +126,39 @@ def _build_external_execution_card(
     )
 
 
-def _resolved_confirm_card(
+def _resolved_confirm_card_v2(
     approved: bool,
     decision_label: str = "",
-) -> dict:
-    """Build the post-decision confirm card object (schema 1.0).
-
-    Args:
-        approved (`bool`): The decision, selecting the colour and text.
-
-    Returns:
-        `dict`: The card object (schema 1.0).
-    """
+) -> dict[str, Any]:
+    """Build the post-decision confirm card object (schema 2.0)."""
+    if approved:
+        title = "Tool allowed"
+        content = "The tool was allowed to run."
+        template = "green"
+    else:
+        title = "Tool denied"
+        content = "The tool was denied."
+        template = "red"
+    if decision_label:
+        content = f"{content}\n\n{decision_label}"
     return {
+        "schema": _CARD_SCHEMA_V2,
         "config": {"wide_screen_mode": True},
         "header": {
-            "template": "green" if approved else "red",
+            "template": template,
             "title": {
                 "tag": "plain_text",
-                "content": "✅ Allowed" if approved else "🚫 Denied",
+                "content": title,
             },
         },
-        "elements": [
-            {
-                "tag": "markdown",
-                "content": (
-                    f"The tool was allowed to run.\n\n{decision_label}"
-                    if approved and decision_label
-                    else "The tool was allowed to run."
-                    if approved
-                    else "The tool was denied."
-                ),
-            },
-        ],
+        "body": {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": content,
+                },
+            ],
+        },
     }
 
 
@@ -231,15 +214,22 @@ def _parse_action(action: Any) -> dict[str, Any] | None:
     tool_call_id = str(value.get("tool_call_id") or "").strip()
     chat_id = str(value.get("chat_id") or "").strip()
     action = str(value.get("action") or "").strip().lower()
-    if not tool_call_id or action not in (_APPROVE, _DENY, _EXTERNAL_SUBMIT):
+    if not tool_call_id or action not in (
+        _APPROVE,
+        _APPROVE_WITH_RULE,
+        _DENY,
+        _EXTERNAL_SUBMIT,
+    ):
         return None
     agent_id = str(value.get("agent_id") or "").strip()
     session_id = str(value.get("session_id") or "").strip()
     reply_id = str(value.get("reply_id") or "").strip()
     tool_input_override = str(value.get("tool_input_override") or "")
     decision_label = str(value.get("decision_label") or "").strip()
+    tool_name = str(value.get("tool_name") or "").strip()
+    tool_input = str(value.get("tool_input") or "")
+    confirm_rules = _parse_confirm_rules(value.get("confirm_rules"))
     if action == _EXTERNAL_SUBMIT:
-        tool_name = str(value.get("tool_name") or "").strip()
         tool_input = str(value.get("tool_input") or "")
         if tool_name == _ASK_USER:
             output, metadata, state = _parse_ask_user_submission(
@@ -262,10 +252,23 @@ def _parse_action(action: Any) -> dict[str, Any] | None:
             "tool_result_state": state,
             "tool_result_metadata": metadata,
         }
+    if tool_name == _REQUEST_SANDBOX_ACCESS:
+        if action == _APPROVE:
+            parsed_sandbox = _parse_sandbox_form_selection(
+                tool_input,
+                form_values,
+            )
+            if parsed_sandbox is None:
+                return None
+            tool_input_override = parsed_sandbox["tool_input_override"]
+            decision_label = parsed_sandbox["decision_label"]
+        else:
+            tool_input_override = ""
+            decision_label = ""
     return {
         "tool_call_id": tool_call_id,
         "chat_id": chat_id,
-        "approved": action == _APPROVE,
+        "approved": action in {_APPROVE, _APPROVE_WITH_RULE},
         "agent_id": agent_id,
         "session_id": session_id,
         "reply_id": reply_id,
@@ -275,6 +278,7 @@ def _parse_action(action: Any) -> dict[str, Any] | None:
         "tool_output": "",
         "tool_result_state": ToolResultState.SUCCESS,
         "tool_result_metadata": {},
+        "confirm_rules": confirm_rules if action == _APPROVE_WITH_RULE else None,
     }
 
 
@@ -314,7 +318,7 @@ def _build_action_response(
     card_data = (
         _resolved_external_execution_card(approved, decision_label)
         if interaction_kind == "external_execution"
-        else _resolved_confirm_card(approved, decision_label)
+        else _resolved_confirm_card_v2(approved, decision_label)
     )
     return _wrap_response(
         {
@@ -349,6 +353,148 @@ def _extract_form_values(action: Any) -> dict[str, Any]:
         if isinstance(candidate, dict):
             return candidate
     return {}
+
+
+def _build_confirm_card(
+    base: dict[str, str],
+    body: str,
+    *,
+    header_title: str | None = None,
+    suggested_rules: list[PermissionRule] | None = None,
+) -> dict[str, Any]:
+    """Build the generic tool confirmation card using a form container."""
+    action_values = [{**base, "action": _APPROVE}]
+    button_texts = ["Yes"]
+    button_types = ["primary"]
+    first_rule = suggested_rules[0] if suggested_rules else None
+    if first_rule is not None:
+        action_values.append(
+            {
+                **base,
+                "action": _APPROVE_WITH_RULE,
+                "confirm_rules": [first_rule.model_dump(mode="json")],
+                "decision_label": (
+                    f"Allowed and applied rule for `{first_rule.tool_name}`: "
+                    f"`{first_rule.rule_content}`."
+                    if first_rule.rule_content
+                    else f"Allowed and applied a rule for `{first_rule.tool_name}`."
+                ),
+            },
+        )
+        button_texts.append(
+            (
+                f"Yes, always allow {first_rule.tool_name} "
+                f"{first_rule.rule_content or ''}"
+            ).strip(),
+        )
+        button_types.append("default")
+    action_values.append({**base, "action": _DENY})
+    button_texts.append("No")
+    button_types.append("danger")
+
+    return {
+        "schema": _CARD_SCHEMA_V2,
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "orange",
+            "title": {
+                "tag": "plain_text",
+                "content": header_title or "🛡️ Tool execution needs approval",
+            },
+        },
+        "body": {
+            "elements": [
+                {"tag": "markdown", "content": body},
+                {"tag": "hr"},
+                {
+                    "tag": "form",
+                    "name": "tool_approval_form",
+                    "elements": [
+                        {
+                            "tag": "markdown",
+                            "content": (
+                                "Choose one option to respond immediately."
+                            ),
+                        },
+                        _build_form_action_row(
+                            action_values,
+                            button_texts=button_texts,
+                            button_types=button_types,
+                            include_reset=False,
+                        ),
+                    ],
+                },
+            ],
+        },
+    }
+
+
+def _build_form_action_row(
+    values: list[dict[str, Any]],
+    *,
+    button_texts: list[str],
+    button_types: list[str] | None = None,
+    include_reset: bool = True,
+) -> dict[str, Any]:
+    """Build one action row inside a form."""
+    resolved_types = button_types or ["default"] * len(values)
+    columns: list[dict[str, Any]] = []
+    for index, (value, button_text, button_type) in enumerate(
+        zip(
+        values,
+        button_texts,
+        resolved_types,
+        strict=True,
+        ),
+        start=1,
+    ):
+        columns.append(
+            {
+                "tag": "column",
+                "width": "auto",
+                "elements": [
+                    {
+                        "tag": "button",
+                        "name": f"form_action_{index}",
+                        "text": {
+                            "tag": "plain_text",
+                            "content": button_text,
+                        },
+                        "type": button_type,
+                        "form_action_type": "submit",
+                        "behaviors": [
+                            {
+                                "type": "callback",
+                                "value": value,
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
+    if include_reset:
+        columns.append(
+            {
+                "tag": "column",
+                "width": "auto",
+                "elements": [
+                    {
+                        "tag": "button",
+                        "name": "form_reset",
+                        "text": {
+                            "tag": "plain_text",
+                            "content": "Reset",
+                        },
+                        "type": "default",
+                        "form_action_type": "reset",
+                    },
+                ],
+            },
+        )
+    return {
+        "tag": "column_set",
+        "columns": columns,
+    }
 
 
 def _build_ask_user_card(
@@ -624,29 +770,12 @@ def _build_sandbox_access_card(
 
     if resource_type == "domain":
         request_summary = f"Request permission to connect to domain `{pattern}`."
-        action_rows = [
-            _build_sandbox_scope_actions(base, parsed, operations=["connect"]),
-            _build_deny_row(base),
-        ]
     elif resource_type == "unix_socket":
         request_summary = (
             f"Request permission to connect to Unix socket `{pattern}`."
         )
-        action_rows = [
-            _build_sandbox_scope_actions(base, parsed, operations=["connect"]),
-            _build_deny_row(base),
-        ]
     else:
         request_summary = f"Request sandbox access to `{pattern}`."
-        action_rows = [
-            _build_sandbox_scope_actions(base, parsed, operations=["read"]),
-            _build_sandbox_scope_actions(
-                base,
-                parsed,
-                operations=["read", "write"],
-            ),
-            _build_deny_row(base),
-        ]
 
     body_lines = [
         request_summary,
@@ -658,6 +787,7 @@ def _build_sandbox_access_card(
         body_lines.append(f"Reason: {reason}")
 
     return {
+        "schema": _CARD_SCHEMA_V2,
         "config": {"wide_screen_mode": True},
         "header": {
             "template": "orange",
@@ -668,11 +798,50 @@ def _build_sandbox_access_card(
                 ),
             },
         },
-        "elements": [
-            {"tag": "markdown", "content": "\n\n".join(body_lines)},
-            {"tag": "hr"},
-            *action_rows,
-        ],
+        "body": {
+            "elements": [
+                {"tag": "markdown", "content": "\n\n".join(body_lines)},
+                {"tag": "hr"},
+                {
+                    "tag": "form",
+                    "name": "sandbox_access_form",
+                    "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "**Permission scope**",
+                            },
+                            _build_sandbox_scope_selector(parsed),
+                            *(
+                                [
+                                    {
+                                        "tag": "markdown",
+                                        "content": "**Allowed operations**",
+                                    },
+                                    _build_sandbox_operations_selector(parsed),
+                                ]
+                                if resource_type == "path"
+                                else []
+                            ),
+                        {
+                            "tag": "markdown",
+                            "content": (
+                                    "Select the narrowest permission range, then "
+                                    "choose Allow or Deny."
+                            ),
+                        },
+                            _build_form_action_row(
+                                [
+                                    {**base, "action": _APPROVE},
+                                    {**base, "action": _DENY},
+                                ],
+                                button_texts=["Allow", "Deny"],
+                                button_types=["primary", "danger"],
+                                include_reset=False,
+                            ),
+                    ],
+                },
+            ],
+        },
     }
 
 
@@ -685,71 +854,166 @@ def _parse_sandbox_access_input(tool_input: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _build_sandbox_scope_actions(
-    base: dict[str, str],
+def _build_sandbox_scope_options(
     raw_input: dict[str, Any],
     *,
     operations: list[str],
-) -> dict[str, Any]:
-    """Build one button row for sandbox approvals of one operation mode."""
+) -> list[tuple[str, str]]:
+    """Build sandbox scope labels for one operation mode."""
     has_write = "write" in operations
     if raw_input.get("resource_type") == "domain":
-        button_defs = [
+        return [
             ("This workspace", "workspace"),
             ("This agent", "agent"),
             ("This user", "user"),
         ]
-    elif raw_input.get("resource_type") == "unix_socket":
-        button_defs = [
+    if raw_input.get("resource_type") == "unix_socket":
+        return [
             ("Workspace connect", "workspace"),
             ("Agent connect", "agent"),
             ("User connect", "user"),
         ]
-    else:
-        suffix = "read/write" if has_write else "read-only"
-        button_defs = [
-            (f"Workspace {suffix}", "workspace"),
-            (f"Agent {suffix}", "agent"),
-            (f"User {suffix}", "user"),
-        ]
+    suffix = "read/write" if has_write else "read-only"
+    return [
+        (f"Workspace {suffix}", "workspace"),
+        (f"Agent {suffix}", "agent"),
+        (f"User {suffix}", "user"),
+    ]
 
-    actions = []
-    for label, scope in button_defs:
-        next_input = dict(raw_input)
-        next_input["scope"] = scope
-        next_input["operations"] = operations
-        actions.append(
-            {
-                "tag": "button",
-                "text": {"tag": "plain_text", "content": label},
-                "type": "primary" if scope == "workspace" else "default",
-                "value": {
-                    **base,
-                    "action": _APPROVE,
-                    "tool_input_override": json.dumps(
-                        next_input,
-                        ensure_ascii=False,
-                    ),
-                    "decision_label": f"Approved as {label}.",
-                },
+
+def _build_sandbox_scope_selector(
+    raw_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the sandbox scope selector."""
+    operations = (
+        ["connect"]
+        if raw_input.get("resource_type") in {"domain", "unix_socket"}
+        else ["read"]
+    )
+    options = [
+        {
+            "text": {
+                "tag": "plain_text",
+                "content": label,
             },
+            "value": scope,
+        }
+        for label, scope in _build_sandbox_scope_options(
+            raw_input,
+            operations=operations,
         )
-    return {"tag": "action", "actions": actions}
-
-
-def _build_deny_row(base: dict[str, str]) -> dict[str, Any]:
-    """Build the deny button row."""
+    ]
     return {
-        "tag": "action",
-        "actions": [
+        "tag": "select_static",
+        "name": _FIELD_SANDBOX_SCOPE,
+        "required": False,
+        "placeholder": {
+            "tag": "plain_text",
+            "content": "Choose permission scope",
+        },
+        "options": options,
+        "initial_option": str(raw_input.get("scope") or "workspace"),
+    }
+
+
+def _build_sandbox_operations_selector(
+    raw_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the sandbox operation selector for path-based requests."""
+    initial_value = (
+        "read_write"
+        if "write" in list(raw_input.get("operations") or [])
+        else "read_only"
+    )
+    return {
+        "tag": "select_static",
+        "name": _FIELD_SANDBOX_OPERATIONS,
+        "required": False,
+        "placeholder": {
+            "tag": "plain_text",
+            "content": "Choose allowed operations",
+        },
+        "options": [
             {
-                "tag": "button",
-                "text": {"tag": "plain_text", "content": "❌ Deny"},
-                "type": "danger",
-                "value": {**base, "action": _DENY},
+                "text": {
+                    "tag": "plain_text",
+                    "content": "Read only",
+                },
+                "value": "read_only",
+            },
+            {
+                "text": {
+                    "tag": "plain_text",
+                    "content": "Read and write",
+                },
+                "value": "read_write",
             },
         ],
+        "initial_option": initial_value,
     }
+
+
+def _parse_sandbox_form_selection(
+    tool_input: str,
+    form_values: dict[str, Any],
+) -> dict[str, str] | None:
+    """Build one sandbox input override from form selections."""
+    raw_input = _parse_sandbox_access_input(tool_input)
+    fallback_scope = str(raw_input.get("scope") or "workspace")
+    raw_scope = str(form_values.get(_FIELD_SANDBOX_SCOPE) or fallback_scope).strip()
+    if raw_scope not in {"workspace", "agent", "user"}:
+        return None
+    fallback_operations = (
+        "read_write"
+        if "write" in list(raw_input.get("operations") or [])
+        else "read_only"
+        if raw_input.get("resource_type") == "path"
+        else ""
+    )
+    raw_operations = str(
+        form_values.get(_FIELD_SANDBOX_OPERATIONS) or fallback_operations,
+    ).strip()
+    if raw_operations not in {"", "read_only", "read_write"}:
+        return None
+    override = dict(raw_input)
+    override["scope"] = raw_scope
+    operations = (
+        ["read", "write"]
+        if raw_operations == "read_write"
+        else ["read"]
+        if raw_operations == "read_only"
+        else []
+    )
+    if operations:
+        override["operations"] = operations
+    return {
+        "tool_input_override": json.dumps(override, ensure_ascii=False),
+        "decision_label": (
+            f"Approved with scope `{raw_scope}`"
+            + (
+                " and read/write access."
+                if raw_operations == "read_write"
+                else " and read-only access."
+                if raw_operations == "read_only"
+                else "."
+            )
+        ),
+    }
+
+
+def _parse_confirm_rules(raw_rules: Any) -> list[PermissionRule] | None:
+    """Parse serialized permission rules from one card action payload."""
+    if not isinstance(raw_rules, list):
+        return None
+    parsed_rules: list[PermissionRule] = []
+    for item in raw_rules:
+        if not isinstance(item, dict):
+            return None
+        try:
+            parsed_rules.append(PermissionRule.model_validate(item))
+        except Exception:  # noqa: BLE001
+            return None
+    return parsed_rules or None
 
 
 def _wrap_response(body: dict) -> Any:
