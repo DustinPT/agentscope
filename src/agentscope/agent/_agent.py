@@ -1920,6 +1920,7 @@ class Agent:
                     reply_id=self.state.reply_id,
                     tool_call_id=tool_result.id,
                     state=tool_result.state,
+                    metadata=tool_result.metadata,
                 )
 
                 self._save_to_context([tool_result])
@@ -2429,6 +2430,7 @@ class Agent:
                         if isinstance(chunk.content, str)
                         else chunk.content,
                         state=chunk.state,
+                        metadata=chunk.metadata,
                     )
 
                     # ========================================================
@@ -2511,6 +2513,7 @@ class Agent:
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call.id,
                         state=chunk.state,
+                        metadata=chunk.metadata,
                     )
 
                 else:

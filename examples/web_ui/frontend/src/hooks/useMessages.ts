@@ -5,13 +5,14 @@ import type {
 	DataBlockStartEvent,
 	DataBlockDeltaEvent,
 	DataBlockEndEvent,
+        ExternalExecutionResultEvent,
 	ReplyEndEvent,
 	ReplyStartEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
 import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
-import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
 
 import { sessionApi } from '@/api';
@@ -29,12 +30,70 @@ type JsonLike =
 
 type MsgWithFinishedReason = Msg & { finished_reason?: string | null };
 
+export type ProjectedHitlEventType = 'require_user_confirm' | 'require_external_execution';
+
+export interface ProjectedHitlEntry {
+        target_session_id: string;
+        leaf_session_id: string;
+        leaf_agent_id: string;
+        leaf_agent_name: string;
+        reply_id: string;
+        event_type: ProjectedHitlEventType;
+        event: {
+                reply_id: string;
+                tool_calls: ToolCallBlock[];
+        };
+        created_at: string;
+        projection_path_session_ids: string[];
+        projection_source: 'subagent' | 'schedule' | 'mixed';
+        target_session_source?: string;
+}
+
+export interface ProjectedHitlResolvedPayload {
+        target_session_id?: string;
+        leaf_session_id: string;
+        reply_id: string;
+}
+
+export type ToolResultMetadata = Record<string, JsonLike>;
+export type ToolResultBlockWithMetadata = ToolResultBlock & {
+        metadata?: ToolResultMetadata;
+};
+
 export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
 
 const INTERRUPT_TIMEOUT_MS = 10_000;
 
 const REPLY_CHECKPOINT_REPLAY_ENTRY_ID_METADATA_KEY = 'checkpoint_replay_entry_id';
 /** Metadata key marking the replay entry already folded into a persisted reply. */
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+        return typeof value === 'object' && value !== null;
+}
+
+function isProjectedHitlEntry(value: unknown): value is ProjectedHitlEntry {
+        if (!isRecord(value)) return false;
+        const event = value.event;
+        return (
+                typeof value.target_session_id === 'string' &&
+                typeof value.leaf_session_id === 'string' &&
+                typeof value.leaf_agent_id === 'string' &&
+                typeof value.leaf_agent_name === 'string' &&
+                typeof value.reply_id === 'string' &&
+                (value.event_type === 'require_user_confirm' ||
+                        value.event_type === 'require_external_execution') &&
+                isRecord(event) &&
+                Array.isArray(event.tool_calls)
+        );
+}
+
+function isProjectedHitlResolvedPayload(value: unknown): value is ProjectedHitlResolvedPayload {
+        return (
+                isRecord(value) &&
+                typeof value.leaf_session_id === 'string' &&
+                typeof value.reply_id === 'string'
+        );
+}
 
 function compareReplayEntryId(a: string, b: string): number {
 	const [aMsRaw = '0', aSeqRaw = '0'] = a.split('-');
@@ -124,6 +183,7 @@ export function useMessages(
 	}, []);
 
 	const [msgs, setMsgs] = useState<Msg[]>([]);
+        const [projectedHitl, setProjectedHitl] = useState<ProjectedHitlEntry[]>([]);
         const [loading, setLoading] = useState(false);
         const [phase, setPhase] = useState<ReplyPhase>('idle');
 	const [error, setError] = useState<Error | null>(null);
@@ -322,6 +382,36 @@ export function useMessages(
 					optionsRef.current?.onSessionUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
+                                } else if (
+                                        custom.name === 'projected_hitl_require' &&
+                                        isProjectedHitlEntry(custom.value)
+                                ) {
+                                        const payload = custom.value;
+                                        setProjectedHitl((prev) => {
+                                                const next = prev.filter(
+                                                        (item) =>
+                                                                !(
+                                                                        item.leaf_session_id === payload.leaf_session_id &&
+                                                                        item.reply_id === payload.reply_id
+                                                                ),
+                                                );
+                                                next.push(payload);
+                                                return next;
+                                        });
+                                } else if (
+                                        custom.name === 'projected_hitl_resolved' &&
+                                        isProjectedHitlResolvedPayload(custom.value)
+                                ) {
+                                        const payload = custom.value;
+                                        setProjectedHitl((prev) =>
+                                                prev.filter(
+                                                        (item) =>
+                                                                !(
+                                                                        item.leaf_session_id === payload.leaf_session_id &&
+                                                                        item.reply_id === payload.reply_id
+                                                                ),
+                                                ),
+                                        );
 				}
 				return;
 			}
@@ -396,6 +486,7 @@ export function useMessages(
 		currentReplyRef.current = null;
 		pendingEventsRef.current = [];
 		setMsgs([]);
+                setProjectedHitl([]);
 		setError(null);
                 clearInterruptTimer();
                 setPhase('idle');
@@ -579,6 +670,33 @@ export function useMessages(
                 setPhase(is_running ? 'streaming' : 'idle');
         }, [agentId, sessionId, normalizeInterruptedHistory, scheduleUpdate]);
 
+        const triggerExternalExecution = useCallback(
+                async (
+                        replyId: string,
+                        executionResults: ToolResultBlockWithMetadata[],
+                ) => {
+                        if (!agentId || !sessionId) return;
+
+                        currentReplyRef.current =
+                                msgsRef.current.find((message) => message.id === replyId) ?? null;
+
+                        const event: ExternalExecutionResultEvent = {
+                                type: EventType.EXTERNAL_EXECUTION_RESULT,
+                                id: crypto.randomUUID(),
+                                created_at: new Date().toISOString(),
+                                reply_id: replyId,
+                                execution_results: executionResults as ToolResultBlock[],
+                        };
+
+                        await chatApi.trigger({
+                                agent_id: agentId,
+                                session_id: sessionId,
+                                input: event,
+                        });
+                },
+                [agentId, sessionId],
+        );
+
 	/**
 	 * Confirm or deny a tool call (human-in-the-loop). Fires a
 	 * ``POST /chat/`` with a ``UserConfirmResultEvent``; events
@@ -625,6 +743,126 @@ export function useMessages(
 		[agentId, sessionId],
 	);
 
+        const onExternalExecutionSubmit = useCallback(
+                async (
+                        toolCall: ToolCallBlock,
+                        output: string,
+                        replyId: string,
+                        state: ToolResultBlock['state'] = 'success',
+                        metadata?: ToolResultMetadata,
+                ) => {
+                        const result: ToolResultBlockWithMetadata = {
+                                type: 'tool_result',
+                                id: toolCall.id,
+                                name: toolCall.name,
+                                output,
+                                state,
+                                ...(metadata ? { metadata } : {}),
+                        };
+                        try {
+                                await triggerExternalExecution(replyId, [result]);
+                        } catch (e) {
+                                setError(e as Error);
+                                throw e;
+                        }
+                },
+                [triggerExternalExecution],
+        );
+
+        const onProjectedUserConfirm = useCallback(
+                async (
+                        entry: ProjectedHitlEntry,
+                        toolCall: ToolCallBlock,
+                        confirm: boolean,
+                        rules?: ToolCallBlock['suggested_rules'],
+                ) => {
+                        if (!agentId || !sessionId) return;
+
+                        const event: UserConfirmResultEvent = {
+                                type: EventType.USER_CONFIRM_RESULT,
+                                id: crypto.randomUUID(),
+                                created_at: new Date().toISOString(),
+                                reply_id: entry.reply_id,
+                                confirm_results: [
+                                        { confirmed: confirm, tool_call: toolCall, rules: rules ?? null },
+                                ],
+                        };
+
+                        try {
+                                await chatApi.trigger({
+                                        agent_id: agentId,
+                                        session_id: sessionId,
+                                        input: event,
+                                });
+                        } catch (e) {
+                                setError(e as Error);
+                                throw e;
+                        }
+
+                        setProjectedHitl((prev) =>
+                                prev.flatMap((item) => {
+                                        if (
+                                                item.leaf_session_id !== entry.leaf_session_id ||
+                                                item.reply_id !== entry.reply_id
+                                        ) {
+                                                return [item];
+                                        }
+                                        const remaining = item.event.tool_calls.filter(
+                                                (pendingToolCall) => pendingToolCall.id !== toolCall.id,
+                                        );
+                                        return remaining.length > 0
+                                                ? [{ ...item, event: { ...item.event, tool_calls: remaining } }]
+                                                : [];
+                                }),
+                        );
+                },
+                [agentId, sessionId],
+        );
+
+        const onProjectedExternalExecutionSubmit = useCallback(
+                async (
+                        entry: ProjectedHitlEntry,
+                        toolCall: ToolCallBlock,
+                        output: string,
+                        state: ToolResultBlock['state'] = 'success',
+                        metadata?: ToolResultMetadata,
+                ) => {
+                        const result: ToolResultBlockWithMetadata = {
+                                type: 'tool_result',
+                                id: toolCall.id,
+                                name: toolCall.name,
+                                output,
+                                state,
+                                ...(metadata ? { metadata } : {}),
+                        };
+
+                        try {
+                                await triggerExternalExecution(entry.reply_id, [result]);
+                        } catch (e) {
+                                setError(e as Error);
+                                throw e;
+                        }
+
+                        setProjectedHitl((prev) =>
+                                prev.flatMap((item) => {
+                                        if (
+                                                item.leaf_session_id !== entry.leaf_session_id ||
+                                                item.reply_id !== entry.reply_id
+                                        ) {
+                                                return [item];
+                                        }
+                                        const remaining = item.event.tool_calls.filter(
+                                                (pendingToolCall) => pendingToolCall.id !== toolCall.id,
+                                        );
+                                        return remaining.length > 0
+                                                ? [{ ...item, event: { ...item.event, tool_calls: remaining } }]
+                                                : [];
+                                }),
+                        );
+                },
+                [triggerExternalExecution],
+        );
+
 	/** Abort the current SSE connection. */
 	const abort = useCallback(() => {
 		abortRef.current?.abort();
@@ -638,6 +876,10 @@ export function useMessages(
 		error,
 		send,
 		onUserConfirm,
+                onExternalExecutionSubmit,
+                onProjectedUserConfirm,
+                onProjectedExternalExecutionSubmit,
+                projectedHitl,
                 interrupt,
                 reload,
 		abort,

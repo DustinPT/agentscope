@@ -26,7 +26,11 @@ import aiofiles
 from pydantic import BaseModel, Field
 
 from ...._logging import logger
-from ....event import ReplyEndEvent, RequireUserConfirmEvent
+from ....event import (
+    ReplyEndEvent,
+    RequireExternalExecutionEvent,
+    RequireUserConfirmEvent,
+)
 from ....message import Base64Source, DataBlock, Msg, TextBlock, URLSource
 from .._base import (
     ChannelBase,
@@ -40,6 +44,7 @@ from .._base import (
 from ._card_templates import (
     _build_action_response,
     _build_approval_card,
+    _build_external_execution_card,
     _build_toast,
     _parse_action,
 )
@@ -642,19 +647,10 @@ class FeishuChannel(ChannelBase):
         Returns:
             `P2CardActionTriggerResponse`: The synchronous toast ack.
         """
-        action = getattr(getattr(data.event, "action", None), "value", None)
+        action = getattr(data.event, "action", None)
         parsed = _parse_action(action)
         if parsed is None:
             return _build_toast(False)
-        (
-            tool_call_id,
-            chat_id,
-            approved,
-            agent_id,
-            session_id,
-            tool_input_override,
-            decision_label,
-        ) = parsed
         operator = getattr(data.event, "operator", None)
         user_id = getattr(operator, "open_id", "") or ""
         if self._emit:
@@ -662,21 +658,32 @@ class FeishuChannel(ChannelBase):
                 self._emit(
                     ChannelConfirmationResultEvent(
                         channel_id=self._channel_id,
-                        chat_id=chat_id,
+                        chat_id=str(parsed["chat_id"]),
                         channel_user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        tool_call_id=tool_call_id,
-                        approved=approved,
-                        tool_input_override=tool_input_override,
-                        decision_label=decision_label,
+                        agent_id=str(parsed["agent_id"]),
+                        session_id=str(parsed["session_id"]),
+                        tool_call_id=str(parsed["tool_call_id"]),
+                        interaction_kind=str(parsed["interaction_kind"]),
+                        approved=bool(parsed["approved"]),
+                        reply_id=str(parsed["reply_id"]),
+                        tool_input_override=str(parsed["tool_input_override"]),
+                        decision_label=str(parsed["decision_label"]),
+                        tool_output=str(parsed["tool_output"]),
+                        tool_result_state=parsed["tool_result_state"],
+                        tool_result_metadata=dict(
+                            parsed["tool_result_metadata"],
+                        ),
                     ),
                 ),
                 loop,
             )
         # Update the clicked card in place via the callback response —
         # reliable even while the approved run floods the card API.
-        return _build_action_response(approved, decision_label)
+        return _build_action_response(
+            bool(parsed["approved"]),
+            str(parsed["decision_label"]),
+            interaction_kind=str(parsed["interaction_kind"]),
+        )
 
     # -- Outbound (gateway → platform) --
 
@@ -695,6 +702,7 @@ class FeishuChannel(ChannelBase):
         """
         reply: Msg | None = None
         confirm: RequireUserConfirmEvent | None = None
+        external_execution: RequireExternalExecutionEvent | None = None
         ref: str | None = None
         failed = False
         last = 0.0
@@ -702,6 +710,9 @@ class FeishuChannel(ChannelBase):
             evt = _EVENT_ADAPTER.validate_python(raw)
             if isinstance(evt, RequireUserConfirmEvent):
                 confirm = evt
+                break
+            if isinstance(evt, RequireExternalExecutionEvent):
+                external_execution = evt
                 break
             reply_id = getattr(evt, "reply_id", None)
             if reply_id is not None:
@@ -761,6 +772,11 @@ class FeishuChannel(ChannelBase):
                     )
         if confirm is not None:
             await self._present_confirm(event, confirm)
+        elif external_execution is not None:
+            await self._present_external_execution(
+                event,
+                external_execution,
+            )
 
     async def _finish_card(
         self,
@@ -895,7 +911,82 @@ class FeishuChannel(ChannelBase):
                     str(tool.input),
                     event.metadata.get("agent_id", ""),
                     event.metadata.get("session_id", ""),
+                    req.reply_id,
                 ),
+            )
+
+    async def _present_external_execution(
+        self,
+        event: ChannelEvent,
+        req: RequireExternalExecutionEvent,
+        *,
+        header_title: str | None = None,
+        body_intro: str | None = None,
+    ) -> None:
+        """Post one external-execution card per submitted tool call."""
+        for tool in req.tool_calls:
+            await self._send(
+                event.channel_message_id,
+                event.chat_id,
+                "interactive",
+                _build_external_execution_card(
+                    tool.id,
+                    event.chat_id,
+                    req.reply_id,
+                    tool.name,
+                    str(tool.input),
+                    event.metadata.get("agent_id", ""),
+                    event.metadata.get("session_id", ""),
+                    header_title=header_title,
+                    body_intro=body_intro,
+                ),
+            )
+
+    async def send_projected_hitl(
+        self,
+        *,
+        chat_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Send one projected HITL card into the top-level channel chat."""
+        tool_calls = payload.get("event", {}).get("tool_calls", [])
+        if not isinstance(tool_calls, list):
+            return
+        title = (
+            f"📌 {payload.get('leaf_agent_name') or 'Nested agent'} needs input"
+        )
+        intro = (
+            "This request was projected from a nested session. "
+            "Your response will resume the original run."
+        )
+        synthetic = ChannelEvent(
+            channel_id=self._channel_id,
+            channel_user_id="",
+            chat_id=chat_id,
+            metadata={
+                "agent_id": str(payload.get("leaf_agent_id") or ""),
+                "session_id": str(payload.get("leaf_session_id") or ""),
+            },
+        )
+        reply_id = str(payload.get("reply_id") or "")
+        event_type = str(payload.get("event_type") or "")
+        if event_type == "require_user_confirm":
+            req = RequireUserConfirmEvent(
+                reply_id=reply_id,
+                tool_calls=tool_calls,
+            )
+            await self._present_confirm(synthetic, req)
+            return
+        if event_type == "require_external_execution":
+            req = RequireExternalExecutionEvent(
+                reply_id=reply_id,
+                tool_calls=tool_calls,
+            )
+            await self._present_external_execution(
+                synthetic,
+                req,
+                header_title=title,
+                body_intro=intro,
             )
 
     async def send_reaction(

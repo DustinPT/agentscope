@@ -7,7 +7,9 @@ from ._chat import ChatService
 from ._embedding import get_embedding_model
 from ._knowledge_base import KnowledgeBaseService
 from ._model import get_model
+from ._projectors import RecursiveHitlProjector
 from ._session import SessionService
+from ._session_projection import SessionProjection
 from ._skill_library import SkillLibraryService
 from ._skill_reranker import (
     CrossEncoderSkillReranker,
@@ -33,8 +35,10 @@ __all__ = [
     "LlamaServeSkillReranker",
     "SessionService",
     "KnowledgeBaseService",
+    "RecursiveHitlProjector",
     "SkillLibraryService",
     "SkillRerankerBase",
+    "SessionProjection",
     "get_embedding_model",
     "get_model",
     "get_tts_model",

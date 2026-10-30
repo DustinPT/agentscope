@@ -142,6 +142,12 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
+    _CHANNEL_MESSAGE_DEDUP = "agentscope:channel:message_dedup:{cid}"
+    _CHANNEL_MESSAGE_DEDUP_LOCK = (
+        "agentscope:channel:message_dedup_lock:{cid}:{mid}"
+    )
+
+    CHANNEL_MESSAGE_DEDUP_TTL_SECS = 86400
 
     @classmethod
     def channel_lifecycle(cls) -> str:
@@ -171,3 +177,20 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     def channel_seen_chats(cls, channel_id: str) -> str:
         """Registry namespace of chat_ids the bot has been messaged in."""
         return cls._CHANNEL_SEEN_CHATS.format(cid=channel_id)
+
+    @classmethod
+    def channel_message_dedup(cls, channel_id: str) -> str:
+        """Registry namespace of processed inbound channel message ids."""
+        return cls._CHANNEL_MESSAGE_DEDUP.format(cid=channel_id)
+
+    @classmethod
+    def channel_message_dedup_lock(
+        cls,
+        channel_id: str,
+        message_id: str,
+    ) -> str:
+        """Distributed lock key protecting one inbound message id."""
+        return cls._CHANNEL_MESSAGE_DEDUP_LOCK.format(
+            cid=channel_id,
+            mid=message_id,
+        )

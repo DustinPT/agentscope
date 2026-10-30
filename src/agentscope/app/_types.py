@@ -1,16 +1,22 @@
 # -*- coding: utf-8 -*-
 """Shared type aliases for the agentscope app layer."""
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, Field
 
 from ..agent import ContextConfig, ReActConfig
+from ..event import AgentEvent
 from ..middleware import MiddlewareBase
 from ..permission import PermissionContext
 from ..state import TaskContext
 from ..tool import ToolBase
 from ..workspace import WorkspaceBase
 from .storage import SessionRecord
+
+if TYPE_CHECKING:
+    from ._service._session_projection import SessionProjection
+    from .storage import AgentRecord
 
 
 AgentMiddlewareFactory = (
@@ -35,6 +41,20 @@ AgentToolFactory = Callable[
 ]
 #  Async factory signature: ``(user_id, agent_id, session_id)`` →
 #  awaitable of :class:`~agentscope.tool.ToolBase` instances.
+
+
+class EventProjector(Protocol):
+    """Strategy that projects events from one session onto another."""
+
+    async def maybe_project(
+        self,
+        user_id: str,
+        session_record: "SessionRecord",
+        agent_record: "AgentRecord",
+        event: AgentEvent,
+        projection: "SessionProjection",
+    ) -> None:
+        """Project one event when it is relevant to this feed."""
 
 
 class SubAgentTemplate(BaseModel):

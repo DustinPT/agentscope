@@ -33,7 +33,12 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus, MessageBusKeys
-from .._service import ChatService, SessionService
+from .._service import (
+    ChatService,
+    RecursiveHitlProjector,
+    SessionProjection,
+    SessionService,
+)
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
@@ -45,6 +50,8 @@ from ..storage import (
     TTSModelConfig,
 )
 from ..workspace_manager import WorkspaceManagerBase
+from ...event import CustomEvent
+from ...message import ToolCallState
 from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
 
@@ -693,8 +700,34 @@ _HEARTBEAT_INTERVAL_SECS = 30
 # Interval between SSE heartbeat comment frames (``:\\n\\n``).
 
 
+async def _leaf_still_awaiting_hitl(
+    storage: StorageBase,
+    user_id: str,
+    leaf_agent_id: str,
+    leaf_session_id: str,
+    reply_id: str,
+) -> bool:
+    """Return whether one leaf session still waits on this reply."""
+    session = await storage.get_session(
+        user_id,
+        leaf_agent_id,
+        leaf_session_id,
+    )
+    if session is None or not session.state.context:
+        return False
+    last_msg = session.state.context[-1]
+    if last_msg.role != "assistant" or last_msg.id != reply_id:
+        return False
+    return any(
+        tool_call.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+        for tool_call in last_msg.get_content_blocks("tool_call")
+    )
+
+
 async def _iter_session_sse_frames(
     message_bus: MessageBus,
+    storage: StorageBase,
+    user_id: str,
     session_id: str,
     since: str | None = None,
 ) -> AsyncGenerator[str, None]:
@@ -749,6 +782,33 @@ async def _iter_session_sse_frames(
         ):
             seen_entry_ids.add(entry_id)
             yield f"data: {json.dumps({**event, '_entry_id': entry_id})}\n\n"
+
+        projection = SessionProjection(message_bus)
+        for payload in await projection.list(
+            session_id,
+            RecursiveHitlProjector.KIND,
+        ):
+            if not await _leaf_still_awaiting_hitl(
+                storage,
+                user_id,
+                payload["leaf_agent_id"],
+                payload["leaf_session_id"],
+                payload["reply_id"],
+            ):
+                await projection.delete(
+                    session_id,
+                    RecursiveHitlProjector.KIND,
+                    RecursiveHitlProjector.entry_id(
+                        payload["leaf_session_id"],
+                        payload["reply_id"],
+                    ),
+                )
+                continue
+            custom = CustomEvent(
+                name=RecursiveHitlProjector.EVT_REQUIRE,
+                value=payload,
+            )
+            yield f"data: {json.dumps(custom.model_dump(mode='json'), ensure_ascii=False)}\n\n"
 
         while True:
             try:
@@ -842,7 +902,13 @@ async def stream_session_events(
         replay_since = get_reply_checkpoint_replay_entry_id(current_reply)
 
     return StreamingResponse(
-        _iter_session_sse_frames(message_bus, session_id, since=replay_since),
+        _iter_session_sse_frames(
+            message_bus,
+            storage,
+            user_id,
+            session_id,
+            since=replay_since,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

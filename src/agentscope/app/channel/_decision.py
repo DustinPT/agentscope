@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stateless tool-approval resume.
+"""Stateless channel-interaction resume.
 
 The awaiting confirmation is read straight from the session state (the
 single source of truth) and the run is resumed with the decision — no
@@ -7,8 +7,17 @@ server-side pending record. A decision that no longer matches an
 ASKING tool call (stale click, double click) is ignored, giving
 idempotency for free.
 """
-from ...event import ConfirmResult, UserConfirmResultEvent
-from ...message import ToolCallBlock, ToolCallState
+from ...event import (
+    ConfirmResult,
+    ExternalExecutionResultEvent,
+    UserConfirmResultEvent,
+)
+from ...message import (
+    ToolCallBlock,
+    ToolCallState,
+    ToolResultBlock,
+    ToolResultState,
+)
 from .._bus_ops import enqueue_run_trigger
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
@@ -47,6 +56,30 @@ async def _load_awaiting(
         if tc.state == ToolCallState.ASKING
     ]
     return asking, session.state.reply_id
+
+
+async def _load_submitted(
+    storage: StorageBase,
+    *,
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+) -> tuple[list[ToolCallBlock], str]:
+    """Load a session's SUBMITTED tool calls and its current reply id."""
+    session = await storage.get_session(
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+    agent = await storage.get_agent(user_id=user_id, agent_id=agent_id)
+    if session is None or agent is None:
+        return [], ""
+    submitted = [
+        tc
+        for tc in session.state.get_awaiting_tool_calls(agent.data.name)
+        if tc.state == ToolCallState.SUBMITTED
+    ]
+    return submitted, session.state.reply_id
 
 
 async def resume_after_decision(
@@ -106,6 +139,58 @@ async def resume_after_decision(
                 ConfirmResult(
                     confirmed=approved,
                     tool_call=confirmed_tool_call,
+                ),
+            ],
+        ),
+    )
+    return True
+
+
+async def resume_after_external_result(
+    bus: MessageBus,
+    storage: StorageBase,
+    *,
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+    tool_call_id: str,
+    reply_id: str,
+    output: str,
+    state: ToolResultState = ToolResultState.SUCCESS,
+    metadata: dict | None = None,
+) -> bool:
+    """Resume the run with one externally produced tool result."""
+    submitted, current_reply_id = await _load_submitted(
+        storage,
+        user_id=user_id,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+    tool_call = next((t for t in submitted if t.id == tool_call_id), None)
+    if tool_call is None:
+        return False
+
+    target_reply_id = reply_id or current_reply_id
+    if not target_reply_id or (
+        current_reply_id and target_reply_id != current_reply_id
+    ):
+        return False
+
+    await enqueue_run_trigger(
+        bus,
+        user_id=user_id,
+        session_id=session_id,
+        agent_id=agent_id,
+        kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+        inputs=ExternalExecutionResultEvent(
+            reply_id=target_reply_id,
+            execution_results=[
+                ToolResultBlock(
+                    id=tool_call.id,
+                    name=tool_call.name,
+                    output=output,
+                    state=state,
+                    metadata=metadata or {},
                 ),
             ],
         ),

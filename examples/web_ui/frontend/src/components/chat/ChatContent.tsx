@@ -1,4 +1,5 @@
 import type { ContentBlock, Msg, TextBlock, ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import type { ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { TriangleAlert } from 'lucide-react';
 import React from 'react';
 import { useRef, useEffect } from 'react';
@@ -8,6 +9,7 @@ import { MessageBubble } from '@/components/chat/MessageBubble';
 import { TextInput, type ProcessedFile } from '@/components/chat/TextInput.tsx';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import type { ToolResultMetadata } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 
@@ -30,6 +32,13 @@ interface ChatContentProps {
 		replyId: string,
                 rules?: ToolCallBlock['suggested_rules'],
         ) => void;
+        onExternalExecutionSubmit: (
+                toolCall: ToolCallBlock,
+                output: string,
+                replyId: string,
+                state?: ToolResultBlock['state'],
+                metadata?: ToolResultMetadata,
+        ) => Promise<void> | void;
         autoComplete?: (input: string) => string | null;
         className?: string;
         scrollTargetMessageId?: string | null;
@@ -47,6 +56,7 @@ interface ChatContentProps {
         onValueChange?: (value: string) => void;
         files?: ProcessedFile[];
         onFilesChange?: (files: ProcessedFile[]) => void;
+        footerSlot?: React.ReactNode;
 }
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
@@ -63,6 +73,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
         onRollbackMessage,
         rollbackingMessageId,
 	onUserConfirm,
+        onExternalExecutionSubmit,
 	autoComplete,
 	className,
 	scrollTargetMessageId,
@@ -75,6 +86,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
         onValueChange,
         files,
         onFilesChange,
+        footerSlot,
 }) => {
         const { t } = useTranslation();
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -234,6 +246,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
                                                                 agentId={agentId}
                                                                 sessionId={sessionId}
 								onUserConfirm={onUserConfirm}
+                                                                onExternalExecutionSubmit={onExternalExecutionSubmit}
                                                                 onRollback={onRollbackMessage}
                                                                 rollbacking={rollbackingMessageId === message.id}
 								containerRef={registerMessageRef(message.id)}
@@ -272,6 +285,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
                                         )}
 				</div>
 			</div>
+                        {footerSlot}
 			<TextInput
 				className="min-w-full max-w-full w-full"
 				onSend={onSend}

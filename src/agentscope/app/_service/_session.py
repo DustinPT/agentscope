@@ -57,6 +57,8 @@ from ..workspace_manager import WorkspaceManagerBase
 from ..._logging import logger
 from ...state import AgentState
 from ._attachment_store import AttachmentStore
+from ._projectors import RecursiveHitlProjector
+from ._session_projection import SessionProjection
 
 if TYPE_CHECKING:
     from .._manager import ChatRunRegistry
@@ -107,6 +109,8 @@ class SessionService:
         self._attachment_store = attachment_store
         self._chat_service = chat_service
         self._chat_run_registry = chat_run_registry
+        self._projection = SessionProjection(message_bus)
+        self._recursive_hitl_projector = RecursiveHitlProjector(storage)
 
     # ------------------------------------------------------------------
     # Cancel
@@ -240,6 +244,10 @@ class SessionService:
 
         await self._cancel_runs(all_sids)
         for descendant in reversed(descendant_sessions):
+            await self._purge_recursive_hitl_for_session(
+                user_id,
+                descendant,
+            )
             await self._delete_session_attachments(
                 user_id,
                 descendant,
@@ -250,6 +258,10 @@ class SessionService:
                 descendant.id,
             )
         if session is not None:
+            await self._purge_recursive_hitl_for_session(
+                user_id,
+                session,
+            )
             await self._delete_session_attachments(user_id, session)
         deleted = await self._storage.delete_session(
             user_id,
@@ -258,6 +270,37 @@ class SessionService:
         )
         await self._purge_bus(all_sids)
         return deleted
+
+    async def _purge_recursive_hitl_for_session(
+        self,
+        user_id: str,
+        session,
+    ) -> None:
+        """Clear projected HITL entries owned by or sourced from one session."""
+        try:
+            target_session, _path, _source = (
+                await self._recursive_hitl_projector.resolve_target_session(
+                    user_id,
+                    session,
+                )
+            )
+            if target_session is None or target_session.id == session.id:
+                await RecursiveHitlProjector.purge_target(
+                    self._projection,
+                    session.id,
+                )
+                return
+            await RecursiveHitlProjector.drop_leaf(
+                self._projection,
+                target_session.id,
+                session.id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to purge recursive HITL projection for session %s: %s",
+                session.id,
+                exc,
+            )
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
         """Cancel, delete and bus-purge a team.

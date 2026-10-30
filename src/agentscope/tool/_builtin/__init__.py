@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 """The builtin tools in agentscope."""
 
+from ._ask_user import (
+    AskUser,
+    AskUserAnswer,
+    AskUserMetadata,
+    AskUserParams,
+)
 from ._backend import BackendBase, DirEntry, ExecResult, LocalBackend
 from ._meta import ResetTools
 from ._skill import SkillViewer
@@ -15,6 +21,10 @@ from ._websearch import WebSearch
 from ._write import Write
 
 __all__ = [
+    "AskUser",
+    "AskUserAnswer",
+    "AskUserMetadata",
+    "AskUserParams",
     "ResetTools",
     "SkillViewer",
     "Bash",

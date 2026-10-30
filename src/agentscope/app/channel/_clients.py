@@ -228,3 +228,46 @@ class ChannelClients:
         )
         self._deliveries.add(task)
         task.add_done_callback(self._deliveries.discard)
+
+    async def deliver_projected_hitl(
+        self,
+        *,
+        channel_id: str,
+        chat_id: str,
+        payload: dict,
+    ) -> None:
+        """Send one projected HITL card into a channel chat."""
+        channel = await self.get(channel_id)
+        if channel is None:
+            logger.error(
+                "channel '%s' has no client; projected HITL for chat '%s' "
+                "cannot be delivered",
+                channel_id,
+                chat_id,
+            )
+            return
+
+        send_projected = getattr(channel, "send_projected_hitl", None)
+        if send_projected is None:
+            logger.warning(
+                "channel '%s' does not support projected HITL delivery",
+                channel_id,
+            )
+            return
+
+        async def _run() -> None:
+            try:
+                await send_projected(chat_id=chat_id, payload=payload)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "channel '%s' failed to deliver projected HITL to chat '%s'",
+                    channel_id,
+                    chat_id,
+                )
+
+        task = asyncio.create_task(
+            _run(),
+            name=f"channel-projected-hitl:{channel_id}:{chat_id}",
+        )
+        self._deliveries.add(task)
+        task.add_done_callback(self._deliveries.discard)

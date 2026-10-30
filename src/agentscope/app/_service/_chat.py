@@ -58,9 +58,12 @@ from ..middleware import (
 from .._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
+    EventProjector,
     SubAgentTemplate,
 )
 from ._model import get_model
+from ._projectors import RecursiveHitlProjector
+from ._session_projection import SessionProjection
 from ._session_title import generate_session_title
 from ._toolkit import get_toolkit
 from ._tts_model import get_tts_model
@@ -273,6 +276,39 @@ class ChatService:
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._channel_clients = channel_clients
+        self._projection = SessionProjection(message_bus)
+        self._projectors: list[EventProjector] = [
+            RecursiveHitlProjector(
+                storage,
+                channel_clients=channel_clients,
+            ),
+        ]
+
+    async def _project_event(
+        self,
+        user_id: str,
+        session_record,
+        agent_record,
+        event,
+    ) -> None:
+        """Run all registered projectors for one just-published event."""
+        for projector in self._projectors:
+            try:
+                await projector.maybe_project(
+                    user_id,
+                    session_record,
+                    agent_record,
+                    event,
+                    self._projection,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Projector %s failed on event %s from session %s: %s",
+                    type(projector).__name__,
+                    type(event).__name__,
+                    session_record.id,
+                    exc,
+                )
 
     async def _build_team_member_middleware(
         self,
@@ -2257,6 +2293,12 @@ class ChatService:
                                 session_id,
                                 event.model_dump(mode="json"),
                             )
+                            await self._project_event(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                event,
+                            )
                             checkpoint_state.latest_replay_entry_id = entry_id
                             if isinstance(event, ReplyStartEvent):
                                 reply_started = True
@@ -2305,9 +2347,10 @@ class ChatService:
                             session_id,
                         )
                     elif input_msg and not isinstance(input_msg, CustomEvent):
-                        # Custom continuation events are runtime control
-                        # signals rather than reply-scoped events, so they
-                        # should not be appended to the persisted reply.
+                        # Continuation inputs update the parked reply before the
+                        # resumed stream emits follow-up events. This keeps
+                        # persisted state and live observers aligned with the
+                        # official event-to-message semantics.
                         reply_msg.append_event(input_msg)
                         self._record_checkpoint_event(
                             checkpoint_state,
@@ -2323,11 +2366,34 @@ class ChatService:
                             checkpoint_state=checkpoint_state,
                         )
 
+                    # Broadcast the applied decision so other subscribers
+                    # (such as the WebUI tab or channel renderer) can update
+                    # the parked reply before continuation events arrive.
+                    if isinstance(
+                        input_msg,
+                        (
+                            UserConfirmResultEvent,
+                            ExternalExecutionResultEvent,
+                        ),
+                    ):
+                        entry_id = await publish_session_event(
+                            self._message_bus,
+                            session_id,
+                            input_msg.model_dump(mode="json"),
+                        )
+                        checkpoint_state.latest_replay_entry_id = entry_id
+
                     async for event in agent.reply_stream(inputs=input_msg):
                         entry_id = await publish_session_event(
                             self._message_bus,
                             session_id,
                             event.model_dump(mode="json"),
+                        )
+                        await self._project_event(
+                            user_id,
+                            session_record,
+                            agent_record,
+                            event,
                         )
                         checkpoint_state.latest_replay_entry_id = entry_id
                         if reply_msg is not None:
@@ -2384,6 +2450,12 @@ class ChatService:
                             self._message_bus,
                             session_id,
                             event.model_dump(mode="json"),
+                        )
+                        await self._project_event(
+                            user_id,
+                            session_record,
+                            agent_record,
+                            event,
                         )
                         checkpoint_state.latest_replay_entry_id = entry_id
                         if reply_msg is not None:

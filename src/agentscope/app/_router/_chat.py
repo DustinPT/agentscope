@@ -13,10 +13,14 @@ from ..deps import (
     get_chat_run_registry,
     get_chat_service,
     get_current_user_id,
+    get_message_bus,
 )
+from .._bus_ops import enqueue_run_trigger
+from ..message_bus import MessageBus, MessageBusKeys
 from ._schema import ChatRequest, ChatTriggerResponse
 from .._manager import ChatRunRegistry
-from .._service import ChatService
+from .._service import ChatService, RecursiveHitlProjector, SessionProjection
+from ...event import ExternalExecutionResultEvent, UserConfirmResultEvent
 
 chat_router = APIRouter(
     prefix="/chat",
@@ -35,6 +39,7 @@ async def chat(
     user_id: str = Depends(get_current_user_id),
     chat_service: ChatService = Depends(get_chat_service),
     chat_run_registry: ChatRunRegistry = Depends(get_chat_run_registry),
+    message_bus: MessageBus = Depends(get_message_bus),
 ) -> ChatTriggerResponse:
     """Trigger a chat run for the specified session.
 
@@ -70,6 +75,34 @@ async def chat(
             409 if a chat run for this session is already in flight in
             this process (the registry enforces single-run-per-session).
     """
+    if isinstance(
+        request.input,
+        (UserConfirmResultEvent, ExternalExecutionResultEvent),
+    ):
+        run_session_id = request.session_id
+        run_agent_id = request.agent_id
+        target = await RecursiveHitlProjector.resolve(
+            SessionProjection(message_bus),
+            request.session_id,
+            request.input.reply_id,
+        )
+        if target is not None:
+            run_session_id = target["leaf_session_id"]
+            run_agent_id = target["leaf_agent_id"]
+
+        await enqueue_run_trigger(
+            message_bus,
+            user_id=user_id,
+            session_id=run_session_id,
+            agent_id=run_agent_id,
+            kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+            inputs=request.input,
+        )
+        return ChatTriggerResponse(
+            status="started",
+            session_id=run_session_id,
+        )
+
     try:
         chat_run_registry.spawn(
             chat_service.run(

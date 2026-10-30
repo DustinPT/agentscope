@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The content blocks of messages."""
+from datetime import datetime
 import uuid
 from enum import StrEnum
 from typing import Any, Literal, List, TypeAlias
@@ -191,6 +192,12 @@ class ToolResultBlock(BaseModel):
     text and multimodal blocks."""
     state: ToolResultState = ToolResultState.RUNNING
     """The execution state of the tool."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Structured metadata attached to the tool result."""
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    """The creation time of the block."""
+    finished_at: str | None = None
+    """The finished time of the block."""
 
 
 ContentBlock: TypeAlias = (

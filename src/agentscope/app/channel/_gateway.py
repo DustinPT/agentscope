@@ -35,7 +35,10 @@ from ..storage import (
 )
 from ..workspace_manager import WorkspaceManagerBase
 from ._base import ChatKind, ChannelEvent, ChannelConfirmationResultEvent
-from ._decision import resume_after_decision
+from ._decision import (
+    resume_after_decision,
+    resume_after_external_result,
+)
 from ._routing import resolve
 
 
@@ -114,7 +117,12 @@ class ChannelGateway:
             )
             guess = (agent_id, session_id)
 
-        if await self._resume(record.user_id, guess, event):
+        resume = (
+            self._resume_external
+            if event.interaction_kind == "external_execution"
+            else self._resume
+        )
+        if await resume(record.user_id, guess, event):
             return
 
         # A card that reports nothing but the click cannot name its run,
@@ -130,7 +138,7 @@ class ChannelGateway:
             target = (session.agent_id, session.id)
             if target == guess or session.source_chat_id != event.chat_id:
                 continue
-            if await self._resume(record.user_id, target, event):
+            if await resume(record.user_id, target, event):
                 return
 
         logger.warning(
@@ -171,6 +179,27 @@ class ChannelGateway:
             tool_input_override=event.tool_input_override,
         )
 
+    async def _resume_external(
+        self,
+        user_id: str,
+        target: tuple[str, str],
+        event: ChannelConfirmationResultEvent,
+    ) -> bool:
+        """Submit one external execution result to one session."""
+        agent_id, session_id = target
+        return await resume_after_external_result(
+            self._bus,
+            self._storage,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            tool_call_id=event.tool_call_id,
+            reply_id=event.reply_id,
+            output=event.tool_output,
+            state=event.tool_result_state,
+            metadata=event.tool_result_metadata,
+        )
+
     # -- Message path --
 
     async def _handle_message(self, event: ChannelEvent) -> None:
@@ -186,6 +215,38 @@ class ChannelGateway:
         if not record.enabled:
             return  # stale event from a since-disabled channel
 
+        message_id = (event.channel_message_id or "").strip()
+        if not message_id:
+            await self._handle_claimed_message(record, event)
+            return
+
+        lock_key = MessageBusKeys.channel_message_dedup_lock(
+            event.channel_id,
+            message_id,
+        )
+        namespace = MessageBusKeys.channel_message_dedup(event.channel_id)
+        async with self._bus.acquire_lock(lock_key, ttl_secs=30):
+            if await self._bus.registry_exists(namespace, message_id):
+                logger.info(
+                    "Skipping duplicate channel message '%s' on channel '%s'",
+                    message_id,
+                    event.channel_id,
+                )
+                return
+            await self._handle_claimed_message(record, event)
+            await self._bus.registry_set(
+                namespace,
+                message_id,
+                event.received_at,
+                ttl_secs=MessageBusKeys.CHANNEL_MESSAGE_DEDUP_TTL_SECS,
+            )
+
+    async def _handle_claimed_message(
+        self,
+        record: ChannelRecord,
+        event: ChannelEvent,
+    ) -> None:
+        """Process one inbound message after idempotency is established."""
         agent_id, session_id, scope = resolve(event, record)
         if event.chat_id:
             await self._bus.registry_set(

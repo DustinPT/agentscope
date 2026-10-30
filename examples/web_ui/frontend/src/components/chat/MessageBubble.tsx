@@ -4,6 +4,7 @@ import type {
 	Msg,
 	TextBlock,
 	ToolCallBlock,
+        ToolResultBlock,
 } from '@agentscope-ai/agentscope/message';
 import {
         AlertCircle,
@@ -26,6 +27,7 @@ import { defaultUrlTransform } from 'react-markdown';
 import { toast } from 'sonner';
 
 import { ConfirmCard } from './ConfirmCard';
+import { ExternalExecutionCard } from './ExternalExecutionCard';
 import { renderToolGroup } from './tool-renderers';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
 import type { WorkspaceFileEntry } from '@/api';
@@ -44,6 +46,7 @@ import {
 import { Item, ItemContent } from '@/components/ui/item.tsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAudioBlock, useReplayController } from '@/context/useAudio';
+import type { ToolResultMetadata } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 import { formatNumber, formatTime } from '@/utils/common';
@@ -471,22 +474,32 @@ function renderBlock(
                 confirmedToolCall?: ToolCallBlock,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => void,
+        onExternalExecutionSubmit?: (
+                toolCallBlock: ToolCallBlock,
+                output: string,
+                state?: ToolResultBlock['state'],
+                metadata?: ToolResultMetadata,
+        ) => Promise<void> | void,
 ) {
 	switch (block.type) {
 		case 'tool_call_group': {
-			const firstAsk = block.calls.findIndex((item) => item.call.state === 'asking');
-			const visible = firstAsk === -1 ? block.calls : block.calls.slice(0, firstAsk + 1);
-			const askingCall = firstAsk === -1 ? null : block.calls[firstAsk].call;
+                        const firstAwaiting = block.calls.findIndex(
+                                (item) =>
+                                        item.call.state === 'asking' || item.call.state === 'submitted',
+                        );
+                        const visible =
+                                firstAwaiting === -1 ? block.calls : block.calls.slice(0, firstAwaiting + 1);
+                        const awaitingCall = firstAwaiting === -1 ? null : block.calls[firstAwaiting].call;
 			return (
 				<div key={index} className="flex flex-col gap-y-4 text-muted-foreground">
 					{renderToolGroup(block.toolName, visible, t)}
-					{askingCall && (
+                                        {awaitingCall?.state === 'asking' && (
 						<ConfirmCard
-							toolCall={askingCall}
+                                                        toolCall={awaitingCall}
                                                         onUserConfirm={(confirm, confirmedToolCall, rules) => {
                                                                 if (onUserConfirm) {
                                                                         onUserConfirm(
-                                                                                askingCall,
+                                                                                awaitingCall,
                                                                                 confirm,
                                                                                 confirmedToolCall,
                                                                                 rules,
@@ -495,6 +508,21 @@ function renderBlock(
 							}}
 						/>
 					)}
+                                        {awaitingCall?.state === 'submitted' && onExternalExecutionSubmit && (
+                                                <ExternalExecutionCard
+                                                        toolCall={awaitingCall}
+                                                        onSubmit={(output, state, metadata) =>
+                                                                Promise.resolve(
+                                                                        onExternalExecutionSubmit(
+                                                                                awaitingCall,
+                                                                                output,
+                                                                                state,
+                                                                                metadata,
+                                                                        ),
+                                                                )
+                                                        }
+                                                />
+                                        )}
 				</div>
 			);
 		}
@@ -685,7 +713,14 @@ function renderBlock(
 							</CollapsibleTrigger>
 							<CollapsibleContent className="p-2.5 pt-0 max-w-full overflow-hidden break-all text-muted-foreground">
                                                                 {items.map((inner, i) =>
-                                                                        renderBlock(inner, i, t, options),
+                                                                        renderBlock(
+                                                                                inner,
+                                                                                i,
+                                                                                t,
+                                                                                options,
+                                                                                onUserConfirm,
+                                                                                onExternalExecutionSubmit,
+                                                                        ),
                                                                 )}
 							</CollapsibleContent>
 						</Collapsible>
@@ -709,6 +744,13 @@ interface MessageBubbleProps {
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => void;
+        onExternalExecutionSubmit?: (
+                toolCallBlock: ToolCallBlock,
+                output: string,
+                replyId: string,
+                state?: ToolResultBlock['state'],
+                metadata?: ToolResultMetadata,
+        ) => Promise<void> | void;
         onRollback?: (message: Msg) => void | Promise<void>;
         rollbacking?: boolean;
 	containerRef?: (node: HTMLDivElement | null) => void;
@@ -737,6 +779,7 @@ export function MessageBubble({
         agentId,
         sessionId,
 	onUserConfirm,
+        onExternalExecutionSubmit,
         onRollback,
         rollbacking = false,
 	containerRef,
@@ -917,6 +960,19 @@ export function MessageBubble({
                                                                 const localToolCall = confirmedToolCall ?? toolCall;
                                                                 localToolCall.state = confirm ? 'allowed' : 'finished';
 							},
+                                                        (
+                                                                toolCall: ToolCallBlock,
+                                                                output: string,
+                                                                state?: ToolResultBlock['state'],
+                                                                metadata?: ToolResultMetadata,
+                                                        ) =>
+                                                                onExternalExecutionSubmit?.(
+                                                                        toolCall,
+                                                                        output,
+                                                                        message.id,
+                                                                        state,
+                                                                        metadata,
+                                                                ),
 						),
 					)}
 				</div>

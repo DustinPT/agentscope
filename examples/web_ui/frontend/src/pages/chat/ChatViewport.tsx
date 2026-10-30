@@ -17,6 +17,7 @@ import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import {
 	buildContentBlockFromFile,
 } from '@/components/chat/inputUtils';
+import { ProjectedHitlCard } from '@/components/chat/ProjectedHitlCard';
 import { TaskPanel } from '@/components/chat/TaskPanel';
 import type { ProcessedFile } from '@/components/chat/TextInput';
 import { UserMessageDirectory } from '@/components/chat/UserMessageDirectory';
@@ -157,7 +158,18 @@ export function ChatViewport({
 		// TODO: handle permission_context updates when permission UI is built
 	}, []);
 
-        const { msgs, phase, send, onUserConfirm, interrupt, reload } = useMessages(
+        const {
+                msgs,
+                phase,
+                send,
+                onUserConfirm,
+                onExternalExecutionSubmit,
+                onProjectedUserConfirm,
+                onProjectedExternalExecutionSubmit,
+                projectedHitl,
+                interrupt,
+                reload,
+        } = useMessages(
 		agentId,
 		sessionId,
 		{
@@ -561,10 +573,51 @@ export function ChatViewport({
                                                     stopDisabled={phase === 'interrupting'}
 							disabled={selectedModel === null}
                                                         onSend={handleSend}
-                                                    onStop={interrupt}
+                                                        onStop={interrupt}
                                                         onRollbackMessage={handleRollbackMessage}
                                                         rollbackingMessageId={rollbackingMessageId}
 							onUserConfirm={onUserConfirm}
+                                                        onExternalExecutionSubmit={
+                                                                onExternalExecutionSubmit
+                                                        }
+                                                        footerSlot={
+                                                                projectedHitl.length > 0 ? (
+                                                                        <div className="space-y-3">
+                                                                                {projectedHitl.map((entry) => (
+                                                                                        <ProjectedHitlCard
+                                                                                                key={`${entry.leaf_session_id}:${entry.reply_id}`}
+                                                                                                entry={entry}
+                                                                                                onUserConfirm={(
+                                                                                                        toolCall,
+                                                                                                        confirm,
+                                                                                                        rules,
+                                                                                                ) =>
+                                                                                                        onProjectedUserConfirm(
+                                                                                                                entry,
+                                                                                                                toolCall,
+                                                                                                                confirm,
+                                                                                                                rules,
+                                                                                                        )
+                                                                                                }
+                                                                                                onExternalExecutionSubmit={(
+                                                                                                        toolCall,
+                                                                                                        output,
+                                                                                                        state,
+                                                                                                        metadata,
+                                                                                                ) =>
+                                                                                                        onProjectedExternalExecutionSubmit(
+                                                                                                                entry,
+                                                                                                                toolCall,
+                                                                                                                output,
+                                                                                                                state,
+                                                                                                                metadata,
+                                                                                                        )
+                                                                                                }
+                                                                                        />
+                                                                                ))}
+                                                                        </div>
+                                                                ) : null
+                                                        }
                                                         allowedInputTypes={undefined}
 							fileProcessor={buildContentBlockFromFile}
                                                         value={draftText}

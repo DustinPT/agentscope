@@ -28,6 +28,7 @@ from ..storage import AgentRecord, SessionRecord, SessionSource, StorageBase
 from .._manager import ChatRunRegistry
 from ...middleware import MiddlewareBase
 from ...tool import (
+    AskUser,
     TaskCreate,
     TaskGet,
     TaskList,
@@ -161,6 +162,18 @@ optional):
 
     # Planning tools — always on.
     tools += [TaskCreate(), TaskList(), TaskGet(), TaskUpdate()]
+
+    # AskUser is available by default in top-level web UI sessions and
+    # in channel-originated sessions so user-facing conversations can
+    # explicitly pause for structured input.
+    if (
+        (
+            session_record.source == SessionSource.USER
+            and session_record.parent_session_id is None
+        )
+        or session_record.source == SessionSource.CHANNEL
+    ):
+        tools.append(AskUser())
 
     # Schedule control. Requires a model config on this session because
     # ``ScheduleCreate`` records it into new ``ScheduleRecord`` instances.

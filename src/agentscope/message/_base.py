@@ -427,6 +427,8 @@ class Msg(BaseModel):
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state
+                    block.metadata = event.metadata
+                    block.finished_at = event.created_at
                 # The paired ToolCallBlock's lifecycle ends with its
                 # result — flip it to FINISHED here so the SSE-rebuilt
                 # reply_msg matches ``agent.state.context``, which
@@ -465,7 +467,18 @@ class Msg(BaseModel):
                         b.state = ToolCallState.SUBMITTED
 
             case EventType.EXTERNAL_EXECUTION_RESULT:
+                # Skip results whose tool_call already has a tool_result
+                # (e.g. late arrival after an interrupt).
+                existing_ids = {
+                    b.id
+                    for b in self.content
+                    if isinstance(b, ToolResultBlock)
+                }
                 for result in event.execution_results:
+                    if result.id in existing_ids:
+                        continue
+                    if result.finished_at is None:
+                        result.finished_at = event.created_at
                     self.content.append(result)
 
         return self

@@ -30,6 +30,7 @@ from ...message import (
     ThinkingBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
 )
 
 if TYPE_CHECKING:
@@ -130,8 +131,14 @@ class ChannelConfirmationResultEvent(BaseModel):
     """Id of the tool call being answered — the correlation key, matched
     against the session's awaiting confirmations."""
 
+    interaction_kind: str = "confirm"
+    """Interaction type: confirmation or external execution result."""
+
     approved: bool
     """The user's decision."""
+
+    reply_id: str = ""
+    """Reply id of the parked run, used for external execution resumes."""
 
     tool_input_override: str = ""
     """Optional replacement ``tool_call.input`` chosen by the channel UI.
@@ -143,6 +150,15 @@ class ChannelConfirmationResultEvent(BaseModel):
     decision_label: str = ""
     """Human-readable decision detail from the channel UI, used only for
     presentation such as resolved approval cards."""
+
+    tool_output: str = ""
+    """External execution output text returned from the channel UI."""
+
+    tool_result_state: ToolResultState = ToolResultState.SUCCESS
+    """Result state for external execution submissions."""
+
+    tool_result_metadata: dict[str, Any] = Field(default_factory=dict)
+    """Structured metadata for external execution submissions."""
 
     actor: str = ""
     """Platform-side id of whoever made the decision (for audit)."""
