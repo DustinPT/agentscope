@@ -225,6 +225,13 @@ class ReMeMiddleware(MiddlewareBase):
         # agents keeps each session's retrieval isolated — a concurrent reply
         # in another session never clobbers this one's task.
         self._retrieval_tasks: dict[Any, asyncio.Task] = {}
+        # Background write-back tasks spawned after a reply completes. This is
+        # intentionally decoupled from the reply path: if ``on_reply`` waits
+        # for ReMe write-back synchronously, the UI can already see the reply as
+        # finished while the backend ``run`` is still blocked in middleware
+        # teardown. Keep these tasks fire-and-track, and let ``close()`` own the
+        # process-shutdown cleanup.
+        self._write_back_tasks: set[asyncio.Task] = set()
 
     # ==================================================================
     # Embedded ReMe application lifecycle
@@ -303,6 +310,12 @@ class ReMeMiddleware(MiddlewareBase):
         AgentScope does not manage middleware lifecycle, so call this
         explicitly for clean teardown (e.g. on application shutdown).
         """
+        pending_tasks = list(self._write_back_tasks)
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        self._write_back_tasks.clear()
         if self._app is not None and self._started:
             await self._app.close()
         self._started = False
@@ -509,11 +522,40 @@ class ReMeMiddleware(MiddlewareBase):
             # complete in a later turn.
             increment = self._collect_completed_exchange(agent)
             if increment:
-                await self._write_back(
-                    increment,
-                    session_id,
-                    memory_hint=self._build_memory_hint(agent),
-                )
+                memory_hint = self._build_memory_hint(agent)
+
+                async def _bg_write_back() -> None:
+                    try:
+                        logger.info(
+                            "ReMe background write started for session_id=%s "
+                            "messages=%d",
+                            session_id,
+                            len(increment),
+                        )
+                        await self._write_back(
+                            increment,
+                            session_id,
+                            memory_hint=memory_hint,
+                        )
+                        logger.info(
+                            "ReMe background write finished for session_id=%s",
+                            session_id,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "ReMe background write failed for session_id=%s: %s",
+                            session_id,
+                            e,
+                        )
+
+                # Do not change this back to ``await self._write_back(...)``:
+                # ``on_reply`` still runs after the reply stream has yielded
+                # its terminal event, so a synchronous write here makes the
+                # frontend look finished while the backend session ``run``
+                # lingers until ReMe storage completes.
+                task = asyncio.create_task(_bg_write_back())
+                self._write_back_tasks.add(task)
+                task.add_done_callback(self._write_back_tasks.discard)
 
     # ------------------------------------------------------------------
     # Hook: on_reasoning (inject retrieved memories once ready)
