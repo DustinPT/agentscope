@@ -174,11 +174,13 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
             cached = self._cache.get(workspace_id)
             if cached is not None:
                 ws, _ = cached
-                if await self._workspace_requires_rebuild(
+                needs_rebuild = await self._workspace_requires_rebuild(
                     workspace_id=workspace_id,
                     user_id=user_id,
                     agent_id=agent_id,
-                ):
+                )
+                is_healthy = False if needs_rebuild else await ws.is_runtime_healthy()
+                if needs_rebuild or not is_healthy:
                     self._cache.pop(workspace_id, None)
                     rebuild.append(ws)
                     hit = None
@@ -211,11 +213,13 @@ class SRTWorkspaceManager(LocalWorkspaceManager):
             cached = self._cache.get(workspace_id)
             if cached is not None:
                 ws, _ = cached
-                if await self._workspace_requires_rebuild(
+                needs_rebuild = await self._workspace_requires_rebuild(
                     workspace_id=workspace_id,
                     user_id=user_id,
                     agent_id=agent_id,
-                ):
+                )
+                is_healthy = False if needs_rebuild else await ws.is_runtime_healthy()
+                if needs_rebuild or not is_healthy:
                     self._cache.pop(workspace_id, None)
                     await self._safe_close(ws)
                 else:

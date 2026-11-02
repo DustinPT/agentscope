@@ -144,6 +144,17 @@ class SRTWorkspace(LocalWorkspace):
                 if os.path.isdir(path):
                     await asyncio.to_thread(shutil.rmtree, path)
 
+    async def is_runtime_healthy(self) -> bool:
+        """Return whether the cached runtime process and gateway are usable."""
+        if not self.is_alive or self._gateway is None:
+            return False
+        if (
+            self._runtime_process is not None
+            and self._runtime_process.returncode is not None
+        ):
+            return False
+        return await self._gateway.health()
+
     async def close(self) -> None:
         """Stop the runtime process and release host-side clients."""
         if self._gateway is not None:
