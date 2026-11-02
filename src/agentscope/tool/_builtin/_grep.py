@@ -121,6 +121,11 @@ class Grep(ToolBase):
                 "description": "Case insensitive search.",
                 "default": False,
             },
+            "-i": {
+                "type": "boolean",
+                "description": "Case insensitive search (CLI-style alias for i).",
+                "default": False,
+            },
             "case_insensitive": {
                 "type": "boolean",
                 "description": "Case insensitive search (alias for i).",
@@ -131,6 +136,11 @@ class Grep(ToolBase):
                 "description": "Enable multiline mode where . matches "
                 "newlines and patterns can span lines. "
                 "Default: false.",
+                "default": False,
+            },
+            "multi_line": {
+                "type": "boolean",
+                "description": "Multiline mode (alias for multiline).",
                 "default": False,
             },
             "head_limit": {
@@ -339,10 +349,12 @@ class Grep(ToolBase):
         # Multiline mode
         if multiline:
             args.extend(["-U", "--multiline-dotall"])
+        elif kwargs.get("multi_line", False):
+            args.extend(["-U", "--multiline-dotall"])
 
         # Case-insensitive (support both i and case_insensitive
         # for compatibility)
-        if i or case_insensitive:
+        if i or case_insensitive or kwargs.get("-i", False):
             args.append("-i")
 
         # Output mode flags
