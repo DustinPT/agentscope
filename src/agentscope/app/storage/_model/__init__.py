@@ -35,6 +35,7 @@ from ._session import (
     SessionWithState,
     TTSModelConfig,
 )
+from ._session_secret import SessionSecretBinding, SessionSecretRecord
 from ._session_state import SessionStateRecord
 from ._team import TeamRecord, TeamData
 from ._subagent_task import SubAgentTaskRecord
@@ -60,6 +61,8 @@ __all__ = [
     "SandboxPermissionGrant",
     "SandboxPermissionRecord",
     "SessionConfig",
+    "SessionSecretBinding",
+    "SessionSecretRecord",
     "SessionRecord",
     "SessionScope",
     "SessionSettings",

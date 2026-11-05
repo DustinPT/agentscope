@@ -22,6 +22,7 @@ from ...permission import PermissionRule
 from .._bus_ops import enqueue_run_trigger
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
+from ..._request_secret import sanitize_request_secret_result
 
 
 async def _load_awaiting(
@@ -179,6 +180,16 @@ async def resume_after_external_result(
     ):
         return False
 
+    output, metadata = await sanitize_request_secret_result(
+        storage=storage,
+        user_id=user_id,
+        session_id=session_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_call.name,
+        output=output,
+        metadata=metadata,
+    )
+
     await enqueue_run_trigger(
         bus,
         user_id=user_id,
@@ -193,7 +204,7 @@ async def resume_after_external_result(
                     name=tool_call.name,
                     output=output,
                     state=state,
-                    metadata=metadata or {},
+                    metadata=metadata,
                 ),
             ],
         ),

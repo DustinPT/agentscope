@@ -88,8 +88,15 @@ class SRTBackend(BackendBase):
         *,
         cwd: str | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         tool_call = get_current_tool_call()
+        if env:
+            command = [
+                "env",
+                *[f"{key}={value}" for key, value in env.items()],
+                *command,
+            ]
         result = await self._executor.exec_command(
             command=command,
             cwd=cwd or self._workdir,

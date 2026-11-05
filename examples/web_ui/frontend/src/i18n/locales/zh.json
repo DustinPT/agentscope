@@ -195,6 +195,11 @@
                 "askUserOtherPlaceholder": "可选，填写自定义答案",
                 "askUserMutuallyExclusiveHint": "自定义答案和提供的选项互斥；填写自定义答案会清空已选项，选择选项也会清空自定义答案。",
                 "askUserSubmitHint": "确认答案后提交，Agent 会基于你的选择继续执行。",
+                "requestSecretFieldRequired": "必须填写 {{field}}",
+                "requestSecretBoundAs": "后续会在 Bash 中绑定为",
+                "requestSecretBoundAsSuffix": "",
+                "requestSecretSubmitSuccess": "密钥已采集，并绑定到当前会话的 Bash 环境变量中。",
+                "requestSecretSubmitHint": "密钥会存储在聊天上下文之外。",
                 "projectedHitlTitle": "{{name}} 正在等待你的处理",
                 "projectedExternalExecutionTitle": "为 {{name}} 提交外部执行结果",
                 "projectedHitlSource": {

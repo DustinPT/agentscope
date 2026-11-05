@@ -26,9 +26,16 @@ class E2BBackend(BackendBase):
         *,
         cwd: str | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         from e2b import CommandExitException
 
+        if env:
+            command = [
+                "env",
+                *[f"{key}={value}" for key, value in env.items()],
+                *command,
+            ]
         command_line = " ".join(shlex.quote(arg) for arg in command)
         kwargs: dict[str, Any] = {"cwd": cwd or self._workdir}
         if timeout is not None:

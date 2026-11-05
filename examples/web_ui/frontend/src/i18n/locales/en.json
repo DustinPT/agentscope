@@ -195,6 +195,11 @@
                 "askUserOtherPlaceholder": "Optional custom answer",
                 "askUserMutuallyExclusiveHint": "Custom answers are mutually exclusive with the provided options. Typing a custom answer clears selected options, and selecting an option clears the custom answer.",
                 "askUserSubmitHint": "Submit your answers and the agent will continue from them.",
+                "requestSecretFieldRequired": "{{field}} is required.",
+                "requestSecretBoundAs": "Bound later as",
+                "requestSecretBoundAsSuffix": "in Bash.",
+                "requestSecretSubmitSuccess": "Secrets captured and bound to this session's Bash environment.",
+                "requestSecretSubmitHint": "Secrets are stored outside the chat context.",
                 "projectedHitlTitle": "{{name}} is waiting for your input",
                 "projectedExternalExecutionTitle": "Submit an external result for {{name}}",
                 "projectedHitlSource": {

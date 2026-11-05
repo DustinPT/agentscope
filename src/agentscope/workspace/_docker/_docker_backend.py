@@ -30,11 +30,13 @@ class DockerBackend(BackendBase):
         *,
         cwd: str | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         async def _run() -> ExecResult:
             exec_obj = await self._container.exec(
                 cmd=command,
                 workdir=cwd or self._workdir,
+                environment=env,
             )
             stdout_parts: list[bytes] = []
             stderr_parts: list[bytes] = []

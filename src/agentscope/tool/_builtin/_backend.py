@@ -78,6 +78,7 @@ class BackendBase(ABC):
         *,
         cwd: str | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         """Run a program directly from an argument vector."""
 
@@ -298,10 +299,13 @@ class LocalBackend(BackendBase):
         *,
         cwd: str | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         kwargs = _subprocess_creation_kwargs()
         if cwd is not None:
             kwargs["cwd"] = cwd
+        if env:
+            kwargs["env"] = {**os.environ, **env}
 
         try:
             process = await asyncio.create_subprocess_exec(

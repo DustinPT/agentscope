@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The bash tool in agentscope."""
 import os
-from typing import AsyncGenerator, Any, List
+from typing import TYPE_CHECKING, AsyncGenerator, Any, List
 import re
 
 from ._backend import BackendBase, LocalBackend, _normalize_newlines
@@ -20,6 +20,13 @@ from ...permission import (
 )
 from ...message import TextBlock, ToolResultState
 from .._response import ToolChunk
+from ..._request_secret import (
+    get_session_secret_env_map,
+    redact_text_by_secret_values,
+)
+
+if TYPE_CHECKING:
+    from ...app.storage import StorageBase
 
 
 class Bash(ToolBase):
@@ -162,6 +169,9 @@ easier to review tool calls and give permission.
         cwd: str | os.PathLike[str] | None = None,
         middlewares: List[ToolMiddlewareBase] | None = None,
         backend: BackendBase | None = None,
+        storage: "StorageBase | None" = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         """Initialize the bash tool.
 
@@ -190,6 +200,22 @@ easier to review tool calls and give permission.
         self.dangerous_directories = list(dangerous_directories)
         self._cwd = os.fspath(cwd) if cwd is not None else None
         self._backend = backend or LocalBackend()
+        self._storage = storage
+        self._user_id = user_id
+        self._session_id = session_id
+
+    def configure_secret_context(
+        self,
+        *,
+        storage: "StorageBase",
+        user_id: str,
+        session_id: str,
+    ) -> "Bash":
+        """Attach session-scoped secret storage used during execution."""
+        self._storage = storage
+        self._user_id = user_id
+        self._session_id = session_id
+        return self
 
     async def check_read_only(
         self,
@@ -692,19 +718,33 @@ easier to review tool calls and give permission.
         # Clamp timeout to max 600000ms and convert to seconds
         timeout_ms = min(timeout, 600000)
         timeout_sec = timeout_ms / 1000.0
+        session_secret_env: dict[str, str] = {}
 
         try:
+            if (
+                self._storage is not None
+                and self._user_id
+                and self._session_id
+            ):
+                session_secret_env = await get_session_secret_env_map(
+                    self._storage,
+                    user_id=self._user_id,
+                    session_id=self._session_id,
+                )
             result = await self._backend.exec_shell(
                 ["sh", "-c", command],
                 cwd=self._cwd,
                 timeout=timeout_sec,
+                env=session_secret_env or None,
             )
-            stdout = _normalize_newlines(
-                result.stdout.decode("utf-8", errors="replace"),
-            )
-            stderr = _normalize_newlines(
-                result.stderr.decode("utf-8", errors="replace"),
-            )
+            stdout = result.stdout.decode("utf-8", errors="replace")
+            stderr = result.stderr.decode("utf-8", errors="replace")
+            if session_secret_env:
+                secret_values = list(session_secret_env.values())
+                stdout = redact_text_by_secret_values(stdout, secret_values)
+                stderr = redact_text_by_secret_values(stderr, secret_values)
+            stdout = _normalize_newlines(stdout)
+            stderr = _normalize_newlines(stderr)
 
             # Combine output
             output = stdout

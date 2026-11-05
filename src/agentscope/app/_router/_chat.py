@@ -14,13 +14,16 @@ from ..deps import (
     get_chat_service,
     get_current_user_id,
     get_message_bus,
+    get_storage,
 )
 from .._bus_ops import enqueue_run_trigger
 from ..message_bus import MessageBus, MessageBusKeys
+from ..storage import StorageBase
 from ._schema import ChatRequest, ChatTriggerResponse
 from .._manager import ChatRunRegistry
 from .._service import ChatService, RecursiveHitlProjector, SessionProjection
 from ...event import ExternalExecutionResultEvent, UserConfirmResultEvent
+from ..._request_secret import sanitize_request_secret_result
 
 chat_router = APIRouter(
     prefix="/chat",
@@ -40,6 +43,7 @@ async def chat(
     chat_service: ChatService = Depends(get_chat_service),
     chat_run_registry: ChatRunRegistry = Depends(get_chat_run_registry),
     message_bus: MessageBus = Depends(get_message_bus),
+    storage: StorageBase = Depends(get_storage),
 ) -> ChatTriggerResponse:
     """Trigger a chat run for the specified session.
 
@@ -89,6 +93,30 @@ async def chat(
         if target is not None:
             run_session_id = target["leaf_session_id"]
             run_agent_id = target["leaf_agent_id"]
+
+        if isinstance(request.input, ExternalExecutionResultEvent):
+            sanitized_results = []
+            for result in request.input.execution_results:
+                output, metadata = await sanitize_request_secret_result(
+                    storage=storage,
+                    user_id=user_id,
+                    session_id=run_session_id,
+                    tool_call_id=result.id,
+                    tool_name=result.name,
+                    output=result.output,
+                    metadata=result.metadata,
+                )
+                sanitized_results.append(
+                    result.model_copy(
+                        update={
+                            "output": output,
+                            "metadata": metadata,
+                        },
+                    ),
+                )
+            request.input = request.input.model_copy(
+                update={"execution_results": sanitized_results},
+            )
 
         await enqueue_run_trigger(
             message_bus,

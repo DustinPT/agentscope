@@ -7,6 +7,12 @@ from ._ask_user import (
     AskUserMetadata,
     AskUserParams,
 )
+from ._request_secret import (
+    RequestSecret,
+    RequestSecretField,
+    RequestSecretParams,
+    RequestSecretResultMetadata,
+)
 from ._backend import BackendBase, DirEntry, ExecResult, LocalBackend
 from ._meta import ResetTools
 from ._skill import SkillViewer
@@ -25,6 +31,10 @@ __all__ = [
     "AskUserAnswer",
     "AskUserMetadata",
     "AskUserParams",
+    "RequestSecret",
+    "RequestSecretField",
+    "RequestSecretParams",
+    "RequestSecretResultMetadata",
     "ResetTools",
     "SkillViewer",
     "Bash",

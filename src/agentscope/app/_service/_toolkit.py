@@ -29,6 +29,8 @@ from .._manager import ChatRunRegistry
 from ...middleware import MiddlewareBase
 from ...tool import (
     AskUser,
+    Bash,
+    RequestSecret,
     TaskCreate,
     TaskGet,
     TaskList,
@@ -158,6 +160,12 @@ optional):
             None,
         )
         if group_name is None or group_name in enabled_builtin_tool_groups:
+            if isinstance(tool, Bash):
+                tool.configure_secret_context(
+                    storage=storage,
+                    user_id=user_id,
+                    session_id=session_record.id,
+                )
             tools.append(tool)
 
     # Planning tools — always on.
@@ -174,6 +182,7 @@ optional):
         or session_record.source == SessionSource.CHANNEL
     ):
         tools.append(AskUser())
+        tools.append(RequestSecret())
 
     # Schedule control. Requires a model config on this session because
     # ``ScheduleCreate`` records it into new ``ScheduleRecord`` instances.

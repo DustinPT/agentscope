@@ -13,6 +13,7 @@ from ._model import (
     SandboxPermissionRecord,
     SkillLibraryRecord,
     SessionConfig,
+    SessionSecretRecord,
     SessionRecord,
     SessionSource,
     SessionWithState,
@@ -173,6 +174,41 @@ class StorageBase(ABC):
             `bool`:
                 True if deleted, False if not found.
         """
+
+    @abstractmethod
+    async def upsert_session_secret(
+        self,
+        user_id: str,
+        session_id: str,
+        env_bindings: dict[str, str],
+        expires_at: Any,
+        source_tool_call_id: str | None = None,
+    ) -> SessionSecretRecord:
+        """Create or update session-scoped secret bindings."""
+
+    @abstractmethod
+    async def get_session_secret(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> SessionSecretRecord | None:
+        """Fetch the session-scoped secret bindings for one session."""
+
+    @abstractmethod
+    async def delete_session_secret(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> bool:
+        """Delete all secret bindings for one session."""
+
+    @abstractmethod
+    async def cleanup_expired_session_secret(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> SessionSecretRecord | None:
+        """Remove expired bindings and return the remaining record."""
 
     @abstractmethod
     async def upsert_agent(

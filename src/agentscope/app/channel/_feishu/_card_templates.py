@@ -13,7 +13,16 @@ from typing import Any
 
 from ....message import ToolResultState
 from ....permission import PermissionRule
-from ....tool import AskUserAnswer, AskUserMetadata, AskUserParams
+from ....tool import (
+    AskUserAnswer,
+    AskUserMetadata,
+    AskUserParams,
+    RequestSecretParams,
+)
+from ...._request_secret import (
+    REQUEST_SECRET_SUBMISSION_KEY,
+    REQUEST_SECRET_SUCCESS_OUTPUT,
+)
 
 _ACTION_TYPE = "tool_guard_approval"
 _APPROVE = "approve"
@@ -22,6 +31,7 @@ _DENY = "deny"
 _EXTERNAL_SUBMIT = "external_submit"
 _REQUEST_SANDBOX_ACCESS = "RequestSandboxAccess"
 _ASK_USER = "AskUser"
+_REQUEST_SECRET = "RequestSecret"
 _CARD_SCHEMA_V2 = "2.0"
 _FIELD_SANDBOX_SCOPE = "sandbox_scope"
 _FIELD_SANDBOX_OPERATIONS = "sandbox_operations"
@@ -101,8 +111,8 @@ def _build_external_execution_card(
     header_title: str | None = None,
     body_intro: str | None = None,
 ) -> str:
-    """Build the external-execution card for AskUser."""
-    if tool_name != _ASK_USER:
+    """Build the external-execution card for supported external tools."""
+    if tool_name not in {_ASK_USER, _REQUEST_SECRET}:
         raise ValueError(f"Unsupported external tool card: {tool_name}")
     base = {
         "type": _ACTION_TYPE,
@@ -115,15 +125,21 @@ def _build_external_execution_card(
         "tool_name": tool_name,
         "tool_input": tool_input,
     }
-    return json.dumps(
-        _build_ask_user_card(
+    if tool_name == _ASK_USER:
+        card = _build_ask_user_card(
             base,
             tool_input,
             header_title=header_title,
             body_intro=body_intro,
-        ),
-        ensure_ascii=False,
-    )
+        )
+    else:
+        card = _build_request_secret_card(
+            base,
+            tool_input,
+            header_title=header_title,
+            body_intro=body_intro,
+        )
+    return json.dumps(card, ensure_ascii=False)
 
 
 def _resolved_confirm_card_v2(
@@ -233,6 +249,11 @@ def _parse_action(action: Any) -> dict[str, Any] | None:
         tool_input = str(value.get("tool_input") or "")
         if tool_name == _ASK_USER:
             output, metadata, state = _parse_ask_user_submission(
+                tool_input,
+                form_values,
+            )
+        elif tool_name == _REQUEST_SECRET:
+            output, metadata, state = _parse_request_secret_submission(
                 tool_input,
                 form_values,
             )
@@ -704,6 +725,148 @@ def _build_ask_user_card(
     }
 
 
+def _build_request_secret_card(
+    base: dict[str, str],
+    tool_input: str,
+    *,
+    header_title: str | None = None,
+    body_intro: str | None = None,
+) -> dict[str, Any]:
+    """Build one RequestSecret submission card."""
+    try:
+        params = RequestSecretParams.model_validate_json(tool_input)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": "red",
+                "title": {
+                    "tag": "plain_text",
+                    "content": header_title or "RequestSecret submission failed",
+                },
+            },
+            "body": {
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": (
+                            f"{body_intro}\n\nInvalid RequestSecret input: {exc}"
+                            if body_intro
+                            else f"Invalid RequestSecret input: {exc}"
+                        ),
+                    },
+                ],
+            },
+        }
+
+    form_elements: list[dict[str, Any]] = []
+    for index, field in enumerate(params.fields):
+        form_elements.append(
+            {
+                "tag": "markdown",
+                "content": f"**{field.label}**\nBound as `{field.key}`",
+            },
+        )
+        if field.description:
+            form_elements.append(
+                {"tag": "markdown", "content": field.description},
+            )
+        form_elements.append(
+            {
+                "tag": "input",
+                "name": f"secret_{index}",
+                "required": field.required,
+                "input_type": "multiline_text",
+                "rows": 3,
+                "auto_resize": True,
+                "placeholder": {
+                    "tag": "plain_text",
+                    "content": field.placeholder or "",
+                },
+            },
+        )
+        if index < len(params.fields) - 1:
+            form_elements.append({"tag": "hr"})
+
+    form_elements.append(
+        {
+            "tag": "column_set",
+            "columns": [
+                {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                        {
+                            "tag": "button",
+                            "name": "request_secret_submit",
+                            "text": {
+                                "tag": "plain_text",
+                                "content": "Submit secrets",
+                            },
+                            "type": "primary",
+                            "form_action_type": "submit",
+                            "behaviors": [
+                                {
+                                    "type": "callback",
+                                    "value": {
+                                        **base,
+                                        "action": _EXTERNAL_SUBMIT,
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                        {
+                            "tag": "button",
+                            "name": "request_secret_reset",
+                            "text": {
+                                "tag": "plain_text",
+                                "content": "Reset",
+                            },
+                            "type": "default",
+                            "form_action_type": "reset",
+                        },
+                    ],
+                },
+            ],
+        },
+    )
+
+    return {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "blue",
+            "title": {
+                "tag": "plain_text",
+                "content": header_title or params.title,
+            },
+        },
+        "body": {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": body_intro
+                    or params.description
+                    or "Please provide the requested secrets below.",
+                },
+                {"tag": "hr"},
+                {
+                    "tag": "form",
+                    "name": "request_secret_form",
+                    "elements": form_elements,
+                },
+            ],
+        },
+    }
+
+
 def _parse_ask_user_submission(
     tool_input: str,
     form_values: dict[str, Any],
@@ -741,6 +904,53 @@ def _parse_ask_user_submission(
         value = answer.other or ", ".join(answer.selected)
         lines.append(f"{answer.question}\n{value}")
     return "\n\n".join(lines), metadata, ToolResultState.SUCCESS
+
+
+def _parse_request_secret_submission(
+    tool_input: str,
+    form_values: dict[str, Any],
+) -> tuple[str, dict[str, Any], ToolResultState]:
+    """Convert one RequestSecret form submission into safe output + metadata."""
+    try:
+        params = RequestSecretParams.model_validate_json(tool_input)
+    except Exception as exc:  # noqa: BLE001
+        return str(exc), {}, ToolResultState.ERROR
+
+    bindings = []
+    for index, field in enumerate(params.fields):
+        raw_value = form_values.get(f"secret_{index}")
+        secret_value = str(raw_value or "")
+        if field.required and len(secret_value) == 0:
+            return (
+                f"{field.label} is required.",
+                {},
+                ToolResultState.ERROR,
+            )
+        if len(secret_value) > 0:
+            bindings.append(
+                {
+                    "env_var_name": field.key,
+                    "secret_value": secret_value,
+                },
+            )
+
+    if not bindings:
+        return (
+            "At least one secret value is required.",
+            {},
+            ToolResultState.ERROR,
+        )
+
+    return (
+        REQUEST_SECRET_SUCCESS_OUTPUT,
+        {
+            REQUEST_SECRET_SUBMISSION_KEY: {
+                "bindings": bindings,
+                "ttl_minutes": params.ttl_minutes,
+            },
+        },
+        ToolResultState.SUCCESS,
+    )
 
 
 def _toast(approved: bool) -> dict:

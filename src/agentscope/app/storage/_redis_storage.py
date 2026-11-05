@@ -19,6 +19,8 @@ from ._model import (
     SkillLibraryRecord,
     SubAgentTaskRecord,
     SessionConfig,
+    SessionSecretBinding,
+    SessionSecretRecord,
     SessionRecord,
     SessionSource,
     SessionStateRecord,
@@ -61,6 +63,9 @@ class RedisStorage(StorageBase):
         session: str = "agentscope:user:{user_id}:session:{session_id}"
         session_state: str = (
             "agentscope:user:{user_id}:session_state:{session_id}"
+        )
+        session_secret: str = (
+            "agentscope:user:{user_id}:session_secret:{session_id}"
         )
         sandbox_permissions_user: str = (
             "agentscope:user:{user_id}:sandbox_permissions:user"
@@ -1000,6 +1005,103 @@ class RedisStorage(StorageBase):
         deleted = await self._client.delete(key)
         await self._client.srem(index_key, credential_id)
         return deleted > 0
+
+    async def upsert_session_secret(
+        self,
+        user_id: str,
+        session_id: str,
+        env_bindings: dict[str, str],
+        expires_at: datetime,
+        source_tool_call_id: str | None = None,
+    ) -> SessionSecretRecord:
+        """Create or update session-scoped secret bindings."""
+        key = self._key(
+            self.key_config.session_secret,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        raw = await self._client.get(key)
+        if raw:
+            record = SessionSecretRecord.model_validate_json(raw)
+            record.updated_at = datetime.now()
+        else:
+            record = SessionSecretRecord(
+                user_id=user_id,
+                session_id=session_id,
+            )
+
+        created_at = datetime.now()
+        for env_var_name, secret_value in env_bindings.items():
+            record.bindings[env_var_name] = SessionSecretBinding(
+                env_var_name=env_var_name,
+                secret_value=secret_value,
+                source_tool_call_id=source_tool_call_id,
+                expires_at=expires_at,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+        await self._set_with_ttl(key, record.model_dump_json())
+        return record
+
+    async def get_session_secret(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> SessionSecretRecord | None:
+        """Fetch one session secret record by user/session."""
+        key = self._key(
+            self.key_config.session_secret,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        raw = await self._client.get(key)
+        return SessionSecretRecord.model_validate_json(raw) if raw else None
+
+    async def delete_session_secret(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> bool:
+        """Delete all secret bindings for one session."""
+        key = self._key(
+            self.key_config.session_secret,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        deleted = await self._client.delete(key)
+        return deleted > 0
+
+    async def cleanup_expired_session_secret(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> SessionSecretRecord | None:
+        """Remove expired secret bindings for one session."""
+        record = await self.get_session_secret(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if record is None:
+            return None
+
+        now = datetime.now()
+        record.bindings = {
+            env_var_name: binding
+            for env_var_name, binding in record.bindings.items()
+            if binding.expires_at > now
+        }
+        key = self._key(
+            self.key_config.session_secret,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if not record.bindings:
+            await self._client.delete(key)
+            return None
+
+        record.updated_at = now
+        await self._set_with_ttl(key, record.model_dump_json())
+        return record
 
     async def upsert_agent(
         self,
