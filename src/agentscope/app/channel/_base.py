@@ -42,6 +42,10 @@ _NO_TEXT_REPLY = "(Agent returned no text content)"
 _AGENT_ERROR_REPLY = (
     "❌ Agent encountered an error. Please check the agent configuration."
 )
+_AGENT_PARTIAL_ERROR_REPLY = (
+    "❌ Agent encountered an error before completing the reply. "
+    "The content above may be incomplete."
+)
 _AGENT_EXCEED_MAX_ITERS_REPLY = (
     "⚠️ Agent reached the maximum reasoning-acting iterations. "
     "The reply below is a partial result so far, and you can continue "
@@ -409,7 +413,11 @@ class ChannelBase(ABC):
         # line between them or thinking runs into the text that follows.
         text = "\n\n".join(part for part in parts if part.strip()).strip()
         if reply.finished_reason == ReplyFinishedReason.ERROR:
-            text = text or _AGENT_ERROR_REPLY
+            text = (
+                f"{text}\n\n{_AGENT_PARTIAL_ERROR_REPLY}"
+                if text
+                else _AGENT_ERROR_REPLY
+            )
         elif reply.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
             text = (
                 f"{_AGENT_EXCEED_MAX_ITERS_REPLY}\n\n{text}"
