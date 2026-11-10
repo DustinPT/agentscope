@@ -51,6 +51,7 @@ from ._team_create import TeamCreate
 from ._team_delete import TeamDelete
 from ._team_say import TeamSay
 from ._upload_skill_to_library import UploadSkillToLibrary
+from ._wait_agent import WaitAgent
 from ._wait_new_messages import WaitNewMessages
 
 __all__ = [
@@ -82,5 +83,6 @@ __all__ = [
     "TeamDelete",
     "TeamSay",
     "UploadSkillToLibrary",
+    "WaitAgent",
     "WaitNewMessages",
 ]

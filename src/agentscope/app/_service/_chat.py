@@ -1799,7 +1799,10 @@ class ChatService:
                     agent_id=agent_record.id,
                 ),
             )
-        if runtime_session.source == SessionSource.SUBAGENT:
+        if (
+            runtime_session.source == SessionSource.SUBAGENT
+            or agent_record.data.allow_subagent_calls
+        ):
             middlewares.append(
                 SubAgentPromptMiddleware(
                     storage=self._storage,
@@ -1807,6 +1810,13 @@ class ChatService:
                     user_id=user_id,
                     agent_id=agent_record.id,
                     session_id=session_id,
+                    session_is_subagent=(
+                        runtime_session.source == SessionSource.SUBAGENT
+                    ),
+                    enable_subagent_controls=(
+                        agent_record.data.allow_subagent_calls
+                        or runtime_session.source == SessionSource.SUBAGENT
+                    ),
                 ),
             )
         team_member_middleware = await self._build_team_member_middleware(
@@ -2292,7 +2302,10 @@ class ChatService:
                     agent_id=agent_id,
                 ),
             )
-        if session_record.source == SessionSource.SUBAGENT:
+        if (
+            session_record.source == SessionSource.SUBAGENT
+            or agent_record.data.allow_subagent_calls
+        ):
             middlewares.append(
                 SubAgentPromptMiddleware(
                     storage=self._storage,
@@ -2300,6 +2313,13 @@ class ChatService:
                     user_id=user_id,
                     agent_id=agent_id,
                     session_id=session_id,
+                    session_is_subagent=(
+                        session_record.source == SessionSource.SUBAGENT
+                    ),
+                    enable_subagent_controls=(
+                        agent_record.data.allow_subagent_calls
+                        or session_record.source == SessionSource.SUBAGENT
+                    ),
                 ),
             )
         team_member_middleware = await self._build_team_member_middleware(

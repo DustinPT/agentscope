@@ -139,6 +139,11 @@ class ToolContext(BaseModel):
     )
     """Per-target-session incremental cursors for ``WaitNewMessages``."""
 
+    wait_agent_reported_inputs: dict[str, list[str]] = Field(
+        default_factory=dict,
+    )
+    """Per-tool-call pending inbox signatures already reported by ``wait_agent``."""
+
     runtime_context: ToolRuntimeContext | None = Field(
         default=None,
         exclude=True,

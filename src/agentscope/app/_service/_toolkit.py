@@ -21,6 +21,7 @@ from .._tools import (
     Subagent,
     SubagentFork,
     InterruptAgent,
+    WaitAgent,
     SubmitExternalResults,
     TeamCreate,
     TeamDelete,
@@ -87,10 +88,13 @@ async def get_toolkit(
        worker (``"team"``) gets only ``TeamSay``; everyone else gets
        the full leader-side toolset
        (``TeamCreate / AgentCreate / TeamSay / TeamDelete``)
-    5. DSH-style subagent tools (``subagent`` / ``subagent_fork`` /
-       ``send_message`` / ``list_agents`` / ``interrupt_agent``) when
-       enabled by agent config (independent of the ``team``
-       builtin-tool-group switch)
+    5. DSH-style subagent tools:
+       - control/discovery tools (``send_message`` / ``list_agents`` /
+         ``interrupt_agent`` / ``wait_agent``) for delegating agents and
+         continuable child sessions;
+       - delegation tools (``subagent`` / ``subagent_fork``) only when
+         enabled by agent config.
+       These are independent of the ``team`` builtin-tool-group switch.
     6. Caller-supplied extras (``extra_factory``)
     7. Channel platform tools — the caller resolves them (once, shared
        with the system-prompt attachment) and passes ``channel_tools``.
@@ -267,6 +271,32 @@ optional):
         "session_id": session_record.id,
         "agent_id": agent_record.id,
     }
+    expose_subagent_controls = (
+        agent_record.data.allow_subagent_calls
+        or session_record.source == SessionSource.SUBAGENT
+    )
+    if expose_subagent_controls:
+        tools.extend(
+            [
+                SendMessage(
+                    storage=storage,
+                    message_bus=message_bus,
+                    user_id=user_id,
+                    session_id=session_record.id,
+                    agent_id=agent_record.id,
+                ),
+                ListAgents(
+                    storage=storage,
+                    message_bus=message_bus,
+                    user_id=user_id,
+                    session_id=session_record.id,
+                    agent_id=agent_record.id,
+                ),
+                InterruptAgent(**managed_tool_kwargs),
+                WaitAgent(**managed_tool_kwargs),
+            ],
+        )
+
     if agent_record.data.allow_subagent_calls:
         allowed_subagents: list[dict[str, str]] = []
         for allowed_agent_id in agent_record.data.allowed_subagent_ids:
@@ -300,21 +330,6 @@ optional):
                     allowed_subagents=allowed_subagents,
                     max_active_subagents=max_active_subagents,
                 ),
-                SendMessage(
-                    storage=storage,
-                    message_bus=message_bus,
-                    user_id=user_id,
-                    session_id=session_record.id,
-                    agent_id=agent_record.id,
-                ),
-                ListAgents(
-                    storage=storage,
-                    message_bus=message_bus,
-                    user_id=user_id,
-                    session_id=session_record.id,
-                    agent_id=agent_record.id,
-                ),
-                InterruptAgent(**managed_tool_kwargs),
             ],
         )
 

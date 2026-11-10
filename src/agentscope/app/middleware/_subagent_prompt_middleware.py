@@ -3,41 +3,28 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncGenerator, Callable
 
 from ..message_bus import MessageBus
+from .._subagent_runtime import ROOT_AGENT_NAME, agent_name_for, get_subagent_meta
 from ..storage import StorageBase
 from ...middleware import MiddlewareBase
 
 _SUBAGENT_SYSTEM_PROMPT_SUFFIX = """
-How to handle delegated sub-agent tasks:
-- When you receive a message wrapped in `<subagent-task ...>...</subagent-task>`,
-  the content inside that message is the delegated task from the parent agent.
-- Complete that delegated task directly.
-- When you are done, end your turn with one complete, self-contained final
-  answer.
-- The parent agent will receive your last assistant reply as the delegated
-  task result. Treat your final answer as that last assistant reply.
-- Do not refer to earlier messages with phrases like "as explained above" or
-  "see previous analysis" when the missing context can be restated directly in
-  the final answer.
-- After sending the final answer, do not call tools, do not continue
-  reasoning, and do not send any additional assistant message.
-- If another instruction asks you to do post-task housekeeping such as version
-  checks, telemetry, or optional follow-up actions, do that before
-  the final answer when possible.
-- If such housekeeping would require acting after the final answer, skip it
-  instead of sending a second assistant message.
-- If the final answer includes attachments or other data blocks, include them
-  in the same last assistant reply.
+When you receive a message wrapped in `<subagent-task ...>...</subagent-task>`,
+the content inside that message is the delegated task from the parent agent.
 
-Use a single complete, self-contained final answer as your last assistant
-reply.
+Your final answer is delivered automatically if your parent is still online.
+Include the result and relevant evidence in that answer; the parent does not
+receive your full transcript, tool output, or reasoning. If your last action
+is a message to your parent, the completion notice omits your final answer;
+include the result and relevant evidence in that message.
 """.strip()
 
 
 class SubAgentPromptMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
-    """Apply only child-session prompt guidance.
+    """Apply DSH-style subagent identity guidance and child task protocol.
 
     Terminal result settlement is runtime-owned and handled by ChatService.
     """
@@ -49,19 +36,58 @@ class SubAgentPromptMiddleware(MiddlewareBase):  # pylint: disable=abstract-meth
         user_id: str,
         agent_id: str,
         session_id: str,
+        session_is_subagent: bool,
+        enable_subagent_controls: bool,
     ) -> None:
         """Bind dependencies and request-scoped identifiers."""
         _ = (storage, message_bus, user_id, agent_id, session_id)
+        self._session_is_subagent = session_is_subagent
+        self._enable_subagent_controls = enable_subagent_controls
+
+    def _build_identity_prompt(self, agent: Any) -> str:
+        """Build DSH-style identity guidance for root or child agents."""
+        if not self._enable_subagent_controls:
+            return ""
+
+        state = getattr(agent, "state", None)
+        meta = get_subagent_meta(state)
+        if self._session_is_subagent:
+            parent_name = (
+                meta.get("parent_name")
+                if isinstance(meta, dict) and isinstance(meta.get("parent_name"), str)
+                else ROOT_AGENT_NAME
+            )
+            self_name = agent_name_for(None, state)  # type: ignore[arg-type]
+            identity = (
+                f"You are a subagent delegated by agent {json.dumps(parent_name, ensure_ascii=False)}.\n"
+                f"Your name is {json.dumps(self_name, ensure_ascii=False)}.\n"
+                f"The root agent of your collaboration tree is {json.dumps(ROOT_AGENT_NAME, ensure_ascii=False)}."
+            )
+        else:
+            identity = (
+                f"You are the root agent. Your name is "
+                f"{json.dumps(ROOT_AGENT_NAME, ensure_ascii=False)}."
+            )
+
+        guidance = [
+            'To message other agents, use send_message({ agent: "<agent-name>", message: "..." }).',
+            'Use list_agents({}) to find your collaborator agents and their names.',
+        ]
+        return f"{identity}\n\n" + "\n".join(guidance)
 
     async def on_system_prompt(  # type: ignore[override]
         self,
         agent: Any,
         current_prompt: str,
     ) -> str:
-        """Inject child-session protocol into the system prompt."""
-        if _SUBAGENT_SYSTEM_PROMPT_SUFFIX in current_prompt:
-            return current_prompt
-        return f"{current_prompt}\n\n{_SUBAGENT_SYSTEM_PROMPT_SUFFIX}"
+        """Inject DSH-style subagent identity guidance and child protocol."""
+        prompt = current_prompt
+        identity_prompt = self._build_identity_prompt(agent)
+        if identity_prompt and identity_prompt not in prompt:
+            prompt = f"{prompt}\n\n{identity_prompt}"
+        if self._session_is_subagent and _SUBAGENT_SYSTEM_PROMPT_SUFFIX not in prompt:
+            prompt = f"{prompt}\n\n{_SUBAGENT_SYSTEM_PROMPT_SUFFIX}"
+        return prompt
 
     async def on_reply(
         self,

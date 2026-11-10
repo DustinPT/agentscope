@@ -19,7 +19,7 @@ from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._manager import ChatRunRegistry
 from agentscope.app._manager._subagent_reaper import SubAgentReaper
 from agentscope.app._service._chat import ChatService
-from agentscope.app._tools import InterruptAgent, ListAgents, SendMessage, Subagent, SubagentFork
+from agentscope.app._tools import InterruptAgent, ListAgents, SendMessage, Subagent, SubagentFork, WaitAgent
 from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
 from agentscope.app.storage import (
     AgentData,
@@ -443,6 +443,7 @@ class TestSubagentTools(IsolatedAsyncioTestCase):
         self.assertEqual(
             second.metadata,
             {
+                "name": "SubagentError",
                 "error": (
                     "subagent limit reached (active child limit: 1); "
                     "wait for an existing child to finish or complete this work "
@@ -749,7 +750,7 @@ class TestSubagentTools(IsolatedAsyncioTestCase):
             agent_id=self.agent.id,
         )
         chunk = await tool()
-        rows = json.loads(chunk.content[0].text)
+        rows = chunk.metadata["agents"]
         self.assertEqual(
             rows,
             [
@@ -766,6 +767,104 @@ class TestSubagentTools(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(chunk.metadata, {"agents": rows})
+        self.assertEqual(
+            chunk.content[0].text,
+            "lead [inactive] — root agent\nreviewer [inactive] — Review code",
+        )
+
+    async def test_wait_agent_returns_immediately_for_pending_inbox_input(self) -> None:
+        tool = WaitAgent(
+            storage=self.storage,
+            message_bus=self.bus,
+            chat_service=SimpleNamespace(),
+            chat_run_registry=SimpleNamespace(),
+            workspace=SimpleNamespace(),
+            user_id=self.user_id,
+            session_id=self.root_session.id,
+            agent_id=self.agent.id,
+            workspace_id="ws",
+            agent_asset_store=None,
+        )
+        await self.bus.queue_push(
+            MessageBusKeys.inbox(self.root_session.id),
+            {
+                "kind": "subagent_message",
+                "text": "child finished analysis",
+            },
+        )
+
+        chunk = await tool(
+            timeout_ms=10_000,
+            _agent_state=_make_runtime_state(
+                session_id=self.root_session.id,
+                workspace_id="ws",
+                tool_call_id="tool-wait-1",
+            ),
+        )
+
+        self.assertEqual(chunk.metadata, {"timedOut": False})
+
+    async def test_wait_agent_does_not_repeat_same_pending_input_in_one_tool_call(self) -> None:
+        tool = WaitAgent(
+            storage=self.storage,
+            message_bus=self.bus,
+            chat_service=SimpleNamespace(),
+            chat_run_registry=SimpleNamespace(),
+            workspace=SimpleNamespace(),
+            user_id=self.user_id,
+            session_id=self.root_session.id,
+            agent_id=self.agent.id,
+            workspace_id="ws",
+            agent_asset_store=None,
+        )
+        state = _make_runtime_state(
+            session_id=self.root_session.id,
+            workspace_id="ws",
+            tool_call_id="tool-wait-repeat",
+        )
+        await self.bus.queue_push(
+            MessageBusKeys.inbox(self.root_session.id),
+            {
+                "kind": "subagent_message",
+                "text": "child finished analysis",
+            },
+        )
+
+        first = await tool(timeout_ms=10_000, _agent_state=state)
+        second = await tool(timeout_ms=10_000, _agent_state=state)
+
+        self.assertEqual(first.metadata, {"timedOut": False})
+        self.assertEqual(second.metadata, {"timedOut": True})
+
+    async def test_wait_agent_returns_unavailable_when_calling_session_disappears(self) -> None:
+        tool = WaitAgent(
+            storage=self.storage,
+            message_bus=self.bus,
+            chat_service=SimpleNamespace(),
+            chat_run_registry=SimpleNamespace(),
+            workspace=SimpleNamespace(),
+            user_id=self.user_id,
+            session_id=self.root_session.id,
+            agent_id=self.agent.id,
+            workspace_id="ws",
+            agent_asset_store=None,
+        )
+        await self.storage.delete_session(
+            self.user_id,
+            self.agent.id,
+            self.root_session.id,
+        )
+
+        chunk = await tool(
+            timeout_ms=10_000,
+            _agent_state=_make_runtime_state(
+                session_id=self.root_session.id,
+                workspace_id="ws",
+                tool_call_id="tool-wait-missing",
+            ),
+        )
+
+        self.assertEqual(chunk.metadata["code"], "WAIT_UNAVAILABLE")
 
     async def test_list_agents_includes_self_and_descendants_for_child_session(self) -> None:
         self.specialist_agent.data.allowed_subagent_ids = [self.specialist_agent.id]
@@ -800,7 +899,7 @@ class TestSubagentTools(IsolatedAsyncioTestCase):
             agent_id=self.specialist_agent.id,
         )
         chunk = await tool()
-        rows = json.loads(chunk.content[0].text)
+        rows = chunk.metadata["agents"]
         self.assertEqual(
             rows,
             [
@@ -822,6 +921,10 @@ class TestSubagentTools(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(chunk.metadata, {"agents": rows})
+        self.assertEqual(
+            chunk.content[0].text,
+            "lead [inactive] — root agent\nreviewer [inactive] — Review code\nreviewer/tester [inactive] — Check tests",
+        )
 
     async def test_reaper_emits_runtime_owned_error_settlement(self) -> None:
         spawn = Subagent(
@@ -1037,3 +1140,46 @@ class TestSubagentTools(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_interrupt_agent_accepts_request_even_if_target_not_stopped_yet(self) -> None:
+        spawn = Subagent(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.root_session.id,
+            agent_id=self.agent.id,
+        )
+        await spawn(
+            description="Review code",
+            prompt="Inspect the latest change carefully.",
+            agent_id=self.specialist_agent.id,
+            name="reviewer",
+            _agent_state=_make_runtime_state(
+                session_id=self.root_session.id,
+                workspace_id="ws",
+                tool_call_id="tool-1",
+            ),
+        )
+
+        fake_chat_service = self._FakeChatService()
+        tool = InterruptAgent(
+            storage=self.storage,
+            message_bus=self.bus,
+            chat_service=fake_chat_service,
+            chat_run_registry=object(),
+            workspace=object(),
+            user_id=self.user_id,
+            session_id=self.root_session.id,
+            agent_id=self.agent.id,
+            workspace_id="ws",
+        )
+
+        with patch.object(
+            InterruptAgent,
+            "_interrupt_managed_session",
+            new=AsyncMock(return_value=(False, None)),
+        ):
+            chunk = await tool(agent="reviewer")
+
+        self.assertEqual(chunk.content[0].text, "interrupt requested for agent reviewer")
+        self.assertDictEqual(chunk.metadata, {"accepted": True})

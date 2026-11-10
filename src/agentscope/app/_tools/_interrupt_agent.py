@@ -68,16 +68,11 @@ class InterruptAgent(_SessionToolBase):
             await load_session_state(self._storage, self._user_id, target),
         )
 
-        released, _updated_session = await self._interrupt_managed_session(
+        _released, _updated_session = await self._interrupt_managed_session(
             agent_id=target.agent_id,
             session_id=target.id,
             reason=f"interrupt_agent:{self._session_id}",
         )
-        if not released:
-            return self._result(
-                {"error": f"interrupt_agent could not interrupt agent '{target_path}'."},
-                state=ToolResultState.ERROR,
-            )
         return ToolChunk(
             content=[TextBlock(text=f"interrupt requested for agent {target_path}")],
             metadata={"accepted": True},

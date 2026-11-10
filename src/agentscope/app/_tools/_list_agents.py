@@ -2,7 +2,6 @@
 """DSH-style list_agents tool for managed subagent trees."""
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ...message import TextBlock
@@ -63,4 +62,13 @@ class ListAgents(ToolBase):
             self._user_id,
             root_session,
         )
-        return ToolChunk(content=[TextBlock(text=json.dumps(rows, ensure_ascii=False))], metadata={"agents": rows})
+        rendered = "\n".join(
+            f'{row["name"]} [{row["status"]}]'
+            + (
+                f' — {row["description"]}'
+                if isinstance(row.get("description"), str) and row["description"]
+                else ""
+            )
+            for row in rows
+        )
+        return ToolChunk(content=[TextBlock(text=rendered)], metadata={"agents": rows})

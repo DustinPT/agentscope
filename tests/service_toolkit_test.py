@@ -14,8 +14,9 @@ Verifies the assembly rules:
   ``agent_record.source``: ``"team"`` → one ``TeamSay`` (worker variant);
   anything else → the full leader-side toolset of four;
 - ``TaskStop`` and ``reset_tools`` are not exposed;
-- DSH-style subagent tools follow the sub-agent permissions flag independently
-  of the ``team`` builtin tool group;
+- DSH-style subagent spawn tools follow the sub-agent permissions flag
+-  independently of the ``team`` builtin tool group, while continuable
+-  child sessions still receive the control tools;
 - caller-supplied ``extra_factory`` results land at the end.
 """
 from typing import Any
@@ -130,6 +131,7 @@ def _make_session(
     user_id: str,
     agent_id: str,
     with_model: bool,
+    source: str = "user",
 ) -> SessionRecord:
     """Build a minimal :class:`SessionRecord`, optionally with a chat
     model config."""
@@ -146,7 +148,12 @@ def _make_session(
             else None
         ),
     )
-    return SessionRecord(user_id=user_id, agent_id=agent_id, config=cfg)
+    return SessionRecord(
+        user_id=user_id,
+        agent_id=agent_id,
+        config=cfg,
+        source=source,
+    )
 
 
 def _tool_names(toolkit: Any) -> list[str]:
@@ -534,7 +541,7 @@ class TestGetToolkitSubagentTools(IsolatedAsyncioTestCase):
         self.assertIn(specialist.data.description, agent_id_schema["description"])
 
     async def test_subagent_tools_disabled_when_flag_is_off(self) -> None:
-        """Subagent tools are omitted when delegation is disabled."""
+        """Root agents without delegation do not get subagent tools."""
         agent = _make_agent(
             enabled_builtin_tool_groups=["read"],
             allow_subagent_calls=False,
@@ -560,8 +567,40 @@ class TestGetToolkitSubagentTools(IsolatedAsyncioTestCase):
             extra_factory=None,
         )
         names = set(_tool_names(toolkit))
-        for tool_name in ("subagent", "subagent_fork", "send_message", "list_agents", "interrupt_agent"):
+        for tool_name in ("subagent", "subagent_fork", "send_message", "list_agents", "interrupt_agent", "wait_agent"):
             self.assertNotIn(tool_name, names)
+
+    async def test_child_session_gets_control_tools_without_spawn_tools(self) -> None:
+        """Continuable child sessions keep control tools even without spawn permission."""
+        agent = _make_agent(
+            enabled_builtin_tool_groups=["read"],
+            allow_subagent_calls=False,
+            allowed_subagent_ids=[],
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+            source="subagent",
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            scheduler_manager=_make_scheduler_manager(),
+            background_task_manager=BackgroundTaskManager(),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+        )
+        names = set(_tool_names(toolkit))
+        self.assertTrue({"send_message", "list_agents", "interrupt_agent", "wait_agent"} <= names)
+        self.assertNotIn("subagent", names)
+        self.assertNotIn("subagent_fork", names)
 
 
 class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):

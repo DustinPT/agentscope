@@ -204,6 +204,7 @@ class Subagent(ToolBase):
         if active_descendants >= self._max_active_subagents:
             return self._json_result(
                 {
+                    "name": "SubagentError",
                     "error": (
                         "subagent limit reached "
                         f"(active child limit: {self._max_active_subagents}); "
