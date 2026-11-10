@@ -41,7 +41,11 @@ from ._search_knowledge_base import SearchKnowledgeBase
 from ._search_skills import SearchSkills
 from ._send_session_hint import SendSessionHint
 from ._send_session_message import SendSessionMessage
-from ._subagent_run import SubAgentRun
+from ._send_message import SendMessage
+from ._list_agents import ListAgents
+from ._subagent import Subagent
+from ._subagent_fork import SubagentFork
+from ._interrupt_agent import InterruptAgent
 from ._submit_external_results import SubmitExternalResults
 from ._team_create import TeamCreate
 from ._team_delete import TeamDelete
@@ -66,9 +70,13 @@ __all__ = [
     "RequestSandboxAccess",
     "SearchKnowledgeBase",
     "SearchSkills",
+    "SendMessage",
+    "ListAgents",
     "SendSessionHint",
     "SendSessionMessage",
-    "SubAgentRun",
+    "Subagent",
+    "SubagentFork",
+    "InterruptAgent",
     "SubmitExternalResults",
     "TeamCreate",
     "TeamDelete",

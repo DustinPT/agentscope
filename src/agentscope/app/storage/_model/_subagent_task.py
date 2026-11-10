@@ -26,6 +26,30 @@ class SubAgentTaskRecord(_RecordBase):
     parent_task_id: str | None = None
     """The direct parent task id if this invocation is a descendant."""
 
+    root_session_id: str | None = None
+    """The durable root session for the current subagent tree."""
+
+    parent_agent_id: str | None = None
+    """The direct parent agent id that created or resumed this task."""
+
+    name: str | None = None
+    """The child name unique among siblings, if known."""
+
+    path: str | None = None
+    """The root-relative child path used for runtime settlement notices."""
+
+    label: str | None = None
+    """The delegated task label shown to the parent."""
+
+    mode: str | None = None
+    """The task mode, such as spawn or message."""
+
+    continuable: bool = True
+    """Whether the child can accept follow-up input after settling."""
+
+    delivery: str = "parent"
+    """How the terminal result should be delivered."""
+
     status: str = "running"
     """Protocol status for this delegated invocation."""
 

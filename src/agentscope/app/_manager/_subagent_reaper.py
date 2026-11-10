@@ -12,9 +12,9 @@ from ..._logging import logger
 from ...message import HintBlock
 from .._bus_ops import deliver_to_inbox
 from ..message_bus import MessageBus, MessageBusKeys
-from ..middleware._subagent_result_middleware import (
-    _build_error_hint_content,
-    _extract_run_error_text,
+from .._subagent_runtime import (
+    build_settlement_hint_content,
+    extract_run_error_text,
     is_msg_awaiting_tool_interaction,
     is_terminal_parent_invocation_status,
     load_session_current_reply,
@@ -124,8 +124,8 @@ class SubAgentReaper:
         await self._deliver_reaper_error(
             user_id=user_id,
             task=task,
-            child_session_name=child_session.config.name,
-            current_reply_text=_extract_run_error_text(current_reply),
+            child_name=task.path or task.name or child_session.config.name,
+            current_reply_text=extract_run_error_text(current_reply),
         )
 
     async def _decrement_parent_task_descendant_count(
@@ -172,7 +172,7 @@ class SubAgentReaper:
         *,
         user_id: str,
         task: SubAgentTaskRecord,
-        child_session_name: str,
+        child_name: str,
         current_reply_text: str | None = None,
     ) -> None:
         """Send one synthetic terminal error for a stalled child invocation."""
@@ -203,24 +203,22 @@ class SubAgentReaper:
         )
 
         hint = HintBlock(
-            hint=_build_error_hint_content(
-                agent_id=task.child_agent_id,
-                agent_name=child_agent.data.name,
-                session_id=task.child_session_id,
-                session_name=child_session_name,
-                error_text=current_reply_text
+            hint=build_settlement_hint_content(
+                child_name=child_name,
+                stop_reason="error",
+                content_blocks=[],
+                diagnostic=current_reply_text
                 or (
-                    "The child session finished running but did not produce "
-                    "a final reply."
+                    "The subagent stopped running but did not produce a final settlement."
                 ),
             ),
             source=json.dumps(
                 {
-                    "label": "subagent_error",
-                    "sublabel": child_agent.data.name,
+                    "label": "subagent_settled",
+                    "sublabel": child_name,
                     "session_id": task.child_session_id,
-                    "session_name": child_session_name,
                     "state": "error",
+                    "stop_reason": "error",
                     "subagent_task_id": task.id,
                 },
                 ensure_ascii=False,

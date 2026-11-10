@@ -14,8 +14,8 @@ Verifies the assembly rules:
   ``agent_record.source``: ``"team"`` → one ``TeamSay`` (worker variant);
   anything else → the full leader-side toolset of four;
 - ``TaskStop`` and ``reset_tools`` are not exposed;
-- ``SubAgentRun`` follows the sub-agent permissions config independently
-  of the ``team`` builtin tool group and requires a non-empty allow-list;
+- DSH-style subagent tools follow the sub-agent permissions flag independently
+  of the ``team`` builtin tool group;
 - caller-supplied ``extra_factory`` results land at the end.
 """
 from typing import Any
@@ -67,6 +67,21 @@ class _FakeWorkspace:
 class _NullBus:
     """``MessageBus`` placeholder. Team tools only carry the reference;
     nothing in :func:`get_toolkit` actually awaits it."""
+
+
+class _NullWorkspaceManager:
+    """Workspace-manager placeholder for scheduler tool construction."""
+
+    async def assign_workspace_id(
+        self,
+        *,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> str:
+        """Return a stable workspace id for schedule tests."""
+        _ = (user_id, agent_id, session_id)
+        return "ws"
 
 
 class _NoOpStorage:
@@ -140,6 +155,24 @@ def _tool_names(toolkit: Any) -> list[str]:
     return [t.name for group in toolkit.tool_groups for t in group.tools]
 
 
+def _tool_by_name(toolkit: Any, name: str) -> ToolBase:
+    """Return one registered tool by name."""
+    for group in toolkit.tool_groups:
+        for tool in group.tools:
+            if tool.name == name:
+                return tool
+    raise AssertionError(f"Tool not found: {name}")
+
+
+def _make_scheduler_manager() -> SchedulerManager:
+    """Build a scheduler manager with lightweight test doubles."""
+    return SchedulerManager(
+        storage=_NoOpStorage(),  # type: ignore[arg-type]
+        message_bus=_NullBus(),  # type: ignore[arg-type]
+        workspace_manager=_NullWorkspaceManager(),  # type: ignore[arg-type]
+    )
+
+
 class _StubTool(ToolBase):
     """Minimal :class:`ToolBase` subclass that satisfies the abstract
     methods so :func:`get_toolkit` can register the instance.
@@ -150,7 +183,7 @@ class _StubTool(ToolBase):
 
     name: str = "stub"
     description: str = "stub tool"
-    input_schema: dict = {}
+    input_schema: dict = {"type": "object", "properties": {}}
     is_concurrency_safe: bool = True
     is_read_only: bool = False
     is_state_injected: bool = False
@@ -203,12 +236,12 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=workspace,  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
+            scheduler_manager=_make_scheduler_manager(),
             background_task_manager=BackgroundTaskManager(),
             message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
             session_record=session,
@@ -270,12 +303,12 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=workspace,  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
+            scheduler_manager=_make_scheduler_manager(),
             background_task_manager=BackgroundTaskManager(),
             message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
             session_record=session,
@@ -312,12 +345,12 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
+            scheduler_manager=_make_scheduler_manager(),
             background_task_manager=BackgroundTaskManager(),
             message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
             session_record=session,
@@ -344,12 +377,12 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
+            scheduler_manager=_make_scheduler_manager(),
             background_task_manager=BackgroundTaskManager(),
             message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
             session_record=session,
@@ -375,12 +408,12 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
+            scheduler_manager=_make_scheduler_manager(),
             background_task_manager=BackgroundTaskManager(),
             message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
             session_record=session,
@@ -408,12 +441,12 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
+            scheduler_manager=_make_scheduler_manager(),
             background_task_manager=BackgroundTaskManager(),
             message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
             session_record=session,
@@ -429,40 +462,11 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
             self.assertNotIn(missing, names)
 
 
-class TestGetToolkitSubAgentRun(IsolatedAsyncioTestCase):
-    """Sub-agent execution follows the existing allow-list strategy."""
+class TestGetToolkitSubagentTools(IsolatedAsyncioTestCase):
+    """Sub-agent tools follow the DSH-style visibility strategy."""
 
-    async def test_subagentrun_enabled_without_team_group(self) -> None:
-        """SubAgentRun only depends on the sub-agent permission flags."""
-        allowed_agent = _make_agent(name="child")
-        agent = _make_agent(
-            enabled_builtin_tool_groups=["read"],
-            allow_subagent_calls=True,
-            allowed_subagent_ids=[allowed_agent.id],
-        )
-        session = _make_session(
-            user_id="u",
-            agent_id=agent.id,
-            with_model=True,
-        )
-        toolkit = await get_toolkit(
-            storage=_NoOpStorage({allowed_agent.id: allowed_agent}),  # type: ignore[arg-type]
-            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
-            background_task_manager=BackgroundTaskManager(),
-            message_bus=_NullBus(),  # type: ignore[arg-type]
-            user_id="u",
-            agent_record=agent,
-            session_record=session,
-            extra_factory=None,
-        )
-        self.assertIn("SubAgentRun", set(_tool_names(toolkit)))
-
-    async def test_subagentrun_disabled_when_allowlist_empty(self) -> None:
-        """SubAgentRun is omitted when no callable sub-agents are configured."""
+    async def test_subagent_tools_enabled_without_team_group(self) -> None:
+        """Subagent tools only depend on the sub-agent permission flag."""
         agent = _make_agent(
             enabled_builtin_tool_groups=["read"],
             allow_subagent_calls=True,
@@ -476,18 +480,88 @@ class TestGetToolkitSubAgentRun(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
+            scheduler_manager=_make_scheduler_manager(),
             background_task_manager=BackgroundTaskManager(),
             message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
             session_record=session,
             extra_factory=None,
         )
-        self.assertNotIn("SubAgentRun", set(_tool_names(toolkit)))
+        names = set(_tool_names(toolkit))
+        self.assertTrue({"subagent", "subagent_fork", "send_message", "list_agents", "interrupt_agent"} <= names)
+
+    async def test_subagent_schema_lists_allowed_agent_ids(self) -> None:
+        """Subagent schema enumerates callable agent presets."""
+        specialist = _make_agent(name="Specialist")
+        specialist.data.description = "Focuses on migration reviews."
+        agent = _make_agent(
+            enabled_builtin_tool_groups=["read"],
+            allow_subagent_calls=True,
+            allowed_subagent_ids=[specialist.id],
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(
+                agents={
+                    specialist.id: specialist,
+                },
+            ),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            scheduler_manager=_make_scheduler_manager(),
+            background_task_manager=BackgroundTaskManager(),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+        )
+        subagent = _tool_by_name(toolkit, "subagent")
+        agent_id_schema = subagent.input_schema["properties"]["agent_id"]
+        self.assertEqual(agent_id_schema["enum"], [specialist.id])
+        self.assertIn("Available sub-agents:", agent_id_schema["description"])
+        self.assertIn(specialist.data.name, agent_id_schema["description"])
+        self.assertIn(specialist.data.description, agent_id_schema["description"])
+
+    async def test_subagent_tools_disabled_when_flag_is_off(self) -> None:
+        """Subagent tools are omitted when delegation is disabled."""
+        agent = _make_agent(
+            enabled_builtin_tool_groups=["read"],
+            allow_subagent_calls=False,
+            allowed_subagent_ids=[],
+        )
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=True,
+        )
+        toolkit = await get_toolkit(
+            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            scheduler_manager=_make_scheduler_manager(),
+            background_task_manager=BackgroundTaskManager(),
+            message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
+            user_id="u",
+            agent_record=agent,
+            session_record=session,
+            extra_factory=None,
+        )
+        names = set(_tool_names(toolkit))
+        for tool_name in ("subagent", "subagent_fork", "send_message", "list_agents", "interrupt_agent"):
+            self.assertNotIn(tool_name, names)
 
 
 class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
@@ -522,12 +596,12 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
-            scheduler_manager=SchedulerManager(
-                storage=_NoOpStorage(),  # type: ignore[arg-type]
-                message_bus=_NullBus(),  # type: ignore[arg-type]
-            ),
+            scheduler_manager=_make_scheduler_manager(),
             background_task_manager=BackgroundTaskManager(),
             message_bus=_NullBus(),  # type: ignore[arg-type]
+            middlewares=[],
+            chat_service=object(),  # type: ignore[arg-type]
+            chat_run_registry=object(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
             session_record=session,

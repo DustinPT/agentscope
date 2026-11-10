@@ -9,7 +9,7 @@ from ._protocol import ProtocolMiddlewareBase, AGUIProtocolMiddleware
 from ._sandbox_violation_hint_middleware import SandboxViolationHintMiddleware
 from ._skill_library_middleware import SkillLibraryMiddleware
 from ._state_change_middleware import StateChangeMiddleware
-from ._subagent_result_middleware import SubAgentMiddleware
+from ._subagent_prompt_middleware import SubAgentPromptMiddleware
 from ._team_member_middleware import TeamMemberMiddleware
 from ._tool_offload_middleware import ToolOffloadMiddleware
 
@@ -24,7 +24,7 @@ __all__ = [
     "SandboxViolationHintMiddleware",
     "SkillLibraryMiddleware",
     "StateChangeMiddleware",
-    "SubAgentMiddleware",
+    "SubAgentPromptMiddleware",
     "TeamMemberMiddleware",
     "ToolOffloadMiddleware",
 ]

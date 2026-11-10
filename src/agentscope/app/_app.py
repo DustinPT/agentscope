@@ -50,6 +50,7 @@ def create_app(
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
     channels: list[Type[ChannelBase]] | None = None,
+    max_active_subagents: int = 8,
     title: str = "AgentScope",
     version: str = __version__,
 ) -> FastAPI:
@@ -146,6 +147,9 @@ def create_app(
         channels (`list[Type[ChannelBase]] | None`, optional):
             Channel adapter classes this service allows. When ``None``,
             the channel feature stays disabled.
+        max_active_subagents (`int`, optional):
+            Maximum number of live or resident child subagent sessions
+            permitted in one subagent tree. Defaults to ``8``.
         title (`str`, defaults to ``"AgentScope"``):
             OpenAPI title shown in the docs UI.
         version (`str`, defaults to the package version):
@@ -155,6 +159,9 @@ def create_app(
         `FastAPI`: A fully configured application ready to serve requests.
     """
     from fastapi import FastAPI
+
+    if isinstance(max_active_subagents, bool) or max_active_subagents < 1:
+        raise ValueError("max_active_subagents must be a positive integer.")
 
     # Register any user-supplied credential types before the app starts
     for cls in extra_credentials or []:
@@ -176,6 +183,7 @@ def create_app(
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
     app.state.channel_type_registry = ChannelTypeRegistry(channels or [])
+    app.state.max_active_subagents = max_active_subagents
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state

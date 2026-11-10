@@ -16,7 +16,11 @@ from .._tools import (
     RequestSandboxAccess,
     SendSessionHint,
     SendSessionMessage,
-    SubAgentRun,
+    SendMessage,
+    ListAgents,
+    Subagent,
+    SubagentFork,
+    InterruptAgent,
     SubmitExternalResults,
     TeamCreate,
     TeamDelete,
@@ -63,6 +67,7 @@ async def get_toolkit(
     extra_factory: AgentToolFactory | None = None,
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
     channel_tools: list[ToolBase] | None = None,
+    max_active_subagents: int = 8,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -82,8 +87,10 @@ async def get_toolkit(
        worker (``"team"``) gets only ``TeamSay``; everyone else gets
        the full leader-side toolset
        (``TeamCreate / AgentCreate / TeamSay / TeamDelete``)
-    5. Sub-agent execution (`SubAgentRun`) when enabled by agent config
-       (independent of the ``team`` builtin-tool-group switch)
+    5. DSH-style subagent tools (``subagent`` / ``subagent_fork`` /
+       ``send_message`` / ``list_agents`` / ``interrupt_agent``) when
+       enabled by agent config (independent of the ``team``
+       builtin-tool-group switch)
     6. Caller-supplied extras (``extra_factory``)
     7. Channel platform tools — the caller resolves them (once, shared
        with the system-prompt attachment) and passes ``channel_tools``.
@@ -260,31 +267,55 @@ optional):
         "session_id": session_record.id,
         "agent_id": agent_record.id,
     }
-    allowed_subagents = []
-    if (
-        agent_record.data.allow_subagent_calls
-        and agent_record.data.allowed_subagent_ids
-    ):
-        for subagent_id in agent_record.data.allowed_subagent_ids:
-            subagent_record = await storage.get_agent(user_id, subagent_id)
-            if subagent_record is None or subagent_record.user_id != user_id:
+    if agent_record.data.allow_subagent_calls:
+        allowed_subagents: list[dict[str, str]] = []
+        for allowed_agent_id in agent_record.data.allowed_subagent_ids:
+            allowed_agent = await storage.get_agent(user_id, allowed_agent_id)
+            if allowed_agent is None:
                 continue
             allowed_subagents.append(
                 {
-                    "agent_id": subagent_record.id,
-                    "name": subagent_record.data.name,
-                    "description": subagent_record.data.description,
+                    "agent_id": allowed_agent.id,
+                    "name": allowed_agent.data.name,
+                    "description": allowed_agent.data.description,
                 },
             )
-        tools.append(
-            SubAgentRun(
-                storage=storage,
-                message_bus=message_bus,
-                user_id=user_id,
-                session_id=session_record.id,
-                agent_id=agent_record.id,
-                allowed_subagents=allowed_subagents,
-            ),
+        tools.extend(
+            [
+                Subagent(
+                    storage=storage,
+                    message_bus=message_bus,
+                    user_id=user_id,
+                    session_id=session_record.id,
+                    agent_id=agent_record.id,
+                    allowed_subagents=allowed_subagents,
+                    max_active_subagents=max_active_subagents,
+                ),
+                SubagentFork(
+                    storage=storage,
+                    message_bus=message_bus,
+                    user_id=user_id,
+                    session_id=session_record.id,
+                    agent_id=agent_record.id,
+                    allowed_subagents=allowed_subagents,
+                    max_active_subagents=max_active_subagents,
+                ),
+                SendMessage(
+                    storage=storage,
+                    message_bus=message_bus,
+                    user_id=user_id,
+                    session_id=session_record.id,
+                    agent_id=agent_record.id,
+                ),
+                ListAgents(
+                    storage=storage,
+                    message_bus=message_bus,
+                    user_id=user_id,
+                    session_id=session_record.id,
+                    agent_id=agent_record.id,
+                ),
+                InterruptAgent(**managed_tool_kwargs),
+            ],
         )
 
     if "team" in enabled_builtin_tool_groups and agent_record.source == "team":

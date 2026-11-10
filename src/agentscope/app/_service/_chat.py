@@ -16,12 +16,14 @@ import inspect
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+import json
 from typing import Any
 
 from fastapi import HTTPException, Request
 
 from .._bus_ops import (
     abandon_inbox_consumer,
+    deliver_to_inbox,
     enqueue_run_trigger,
     has_pending_inbox_or_release,
     publish_session_event,
@@ -51,9 +53,16 @@ from ..middleware import (
     InboxMiddleware,
     SandboxViolationHintMiddleware,
     StateChangeMiddleware,
-    SubAgentMiddleware,
+    SubAgentPromptMiddleware,
     TeamMemberMiddleware,
     ToolOffloadMiddleware,
+)
+from .._subagent_runtime import (
+    build_settlement_hint_content,
+    extract_result_blocks,
+    extract_run_error_text,
+    is_subagent_session,
+    is_terminal_parent_invocation_status,
 )
 from .._types import (
     AgentMiddlewareFactory,
@@ -84,7 +93,7 @@ from ...event import (
 )
 from ...formatter import FormatterBase
 from ...middleware import MiddlewareBase, TTSMiddleware
-from ...message import AssistantMsg, Msg, SystemMsg
+from ...message import AssistantMsg, HintBlock, Msg, SystemMsg
 from ...permission import AdditionalWorkingDirectory
 from ...state import ToolRuntimeContext
 from ...types import ReplyFinishedReason
@@ -190,6 +199,7 @@ class ChatService:
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
         channel_clients=None,
+        max_active_subagents: int = 8,
     ) -> None:
         """Initialize chat service.
 
@@ -238,6 +248,10 @@ class ChatService:
             channel_clients:
                 Factory for unconnected channel instances. Stored for
                 channel-originated session integration.
+            max_active_subagents (`int`, optional):
+                Maximum number of child subagent sessions allowed in one
+                subagent tree. Existing resident children continue to count
+                while they remain available for follow-up messaging.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
@@ -276,6 +290,7 @@ class ChatService:
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._channel_clients = channel_clients
+        self._max_active_subagents = max_active_subagents
         self._projection = SessionProjection(message_bus)
         self._projectors: list[EventProjector] = [
             RecursiveHitlProjector(
@@ -833,6 +848,218 @@ class ChatService:
             ),
         )
         return target_reply
+
+    async def _persist_subagent_runtime_task(
+        self,
+        *,
+        user_id: str,
+        task,
+        status: str,
+        terminal_reason: str | None = None,
+        clear_active: bool = False,
+    ) -> None:
+        """Persist one runtime-owned subagent task update."""
+        task.status = status
+        task.last_progress_at = datetime.now()
+        if terminal_reason is not None:
+            task.terminal_reason = terminal_reason
+        await self._storage.upsert_subagent_task(user_id, task)
+        if clear_active:
+            await self._storage.unmark_active_subagent_task(
+                user_id,
+                task.child_session_id,
+                task.id,
+            )
+
+    async def _decrement_subagent_parent_descendants(
+        self,
+        *,
+        user_id: str,
+        task,
+    ) -> None:
+        """Release one descendant slot on the direct parent task."""
+        if not task.parent_task_id:
+            return
+        parent_task = await self._storage.get_subagent_task(
+            user_id,
+            task.parent_task_id,
+        )
+        if parent_task is None or parent_task.open_descendant_count <= 0:
+            return
+        parent_task.open_descendant_count -= 1
+        parent_task.last_progress_at = datetime.now()
+        await self._storage.upsert_subagent_task(user_id, parent_task)
+
+    async def _deliver_subagent_settlement(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        task,
+        stop_reason: str,
+        hint_state: str,
+        hint_content,
+        child_name: str,
+    ) -> None:
+        """Deliver one runtime-owned settlement notice to the direct parent."""
+        if is_terminal_parent_invocation_status(task.status):
+            return
+        parent_session = await self._storage.get_session_meta(
+            user_id,
+            task.parent_session_id,
+        )
+        if parent_session is None:
+            await self._persist_subagent_runtime_task(
+                user_id=user_id,
+                task=task,
+                status="error_delivered",
+                terminal_reason=f"{stop_reason}: parent_session_missing",
+                clear_active=True,
+            )
+            return
+        await self._decrement_subagent_parent_descendants(
+            user_id=user_id,
+            task=task,
+        )
+        hint = HintBlock(
+            hint=hint_content,
+            source=json.dumps(
+                {
+                    "label": "subagent_settled",
+                    "sublabel": child_name,
+                    "session_id": session_id,
+                    "state": hint_state,
+                    "stop_reason": stop_reason,
+                    "subagent_task_id": task.id,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        await deliver_to_inbox(
+            self._message_bus,
+            user_id=user_id,
+            session_id=parent_session.id,
+            agent_id=parent_session.agent_id,
+            payload=hint.model_dump(mode="json"),
+        )
+        await self._persist_subagent_runtime_task(
+            user_id=user_id,
+            task=task,
+            status="final_delivered" if hint_state in {"success", "warning"} else "error_delivered",
+            terminal_reason=stop_reason,
+            clear_active=True,
+        )
+
+    async def _maybe_settle_subagent_runtime(
+        self,
+        *,
+        user_id: str,
+        session_record,
+        agent_record: AgentRecord,
+        agent: Agent,
+        reply_msg: Msg | None,
+        has_pending_inbox: bool,
+        restart_requested: bool,
+    ) -> None:
+        """Own subagent settlement from the runtime instead of child middleware."""
+        if not is_subagent_session(session_record, agent.state):
+            return
+        task = await self._storage.get_active_subagent_task_by_child_session(
+            user_id,
+            session_record.id,
+        )
+        if task is None or is_terminal_parent_invocation_status(task.status):
+            return
+        if is_reply_awaiting_tool_interaction(agent) or has_pending_inbox or restart_requested:
+            await self._persist_subagent_runtime_task(
+                user_id=user_id,
+                task=task,
+                status="running",
+            )
+            return
+        if task.open_descendant_count > 0:
+            await self._persist_subagent_runtime_task(
+                user_id=user_id,
+                task=task,
+                status="waiting_descendants",
+            )
+            return
+
+        final_msg = reply_msg or get_current_reply_msg(agent)
+        if final_msg is None:
+            return
+
+        child_name = task.path or task.name or agent_record.data.name
+        content_blocks = extract_result_blocks(final_msg.content)
+        finished_reason = final_msg.finished_reason
+
+        if finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
+            await self._deliver_subagent_settlement(
+                user_id=user_id,
+                session_id=session_record.id,
+                task=task,
+                stop_reason="max-iters",
+                hint_state="warning" if content_blocks else "error",
+                hint_content=build_settlement_hint_content(
+                    child_name=child_name,
+                    stop_reason="max-iters",
+                    content_blocks=content_blocks,
+                    diagnostic=(
+                        None
+                        if content_blocks
+                        else "The subagent stopped at the maximum iteration limit before finishing."
+                    ),
+                ),
+                child_name=child_name,
+            )
+            return
+
+        if finished_reason == ReplyFinishedReason.ERROR:
+            await self._deliver_subagent_settlement(
+                user_id=user_id,
+                session_id=session_record.id,
+                task=task,
+                stop_reason="error",
+                hint_state="error",
+                hint_content=build_settlement_hint_content(
+                    child_name=child_name,
+                    stop_reason="error",
+                    content_blocks=content_blocks,
+                    diagnostic=extract_run_error_text(final_msg),
+                ),
+                child_name=child_name,
+            )
+            return
+
+        if finished_reason == ReplyFinishedReason.INTERRUPTED:
+            await self._deliver_subagent_settlement(
+                user_id=user_id,
+                session_id=session_record.id,
+                task=task,
+                stop_reason="interrupted",
+                hint_state="error",
+                hint_content=build_settlement_hint_content(
+                    child_name=child_name,
+                    stop_reason="interrupted",
+                    content_blocks=content_blocks,
+                ),
+                child_name=child_name,
+            )
+            return
+
+        await self._deliver_subagent_settlement(
+            user_id=user_id,
+            session_id=session_record.id,
+            task=task,
+            stop_reason="completed",
+            hint_state="success",
+            hint_content=build_settlement_hint_content(
+                child_name=child_name,
+                stop_reason="completed",
+                content_blocks=content_blocks,
+            ),
+            child_name=child_name,
+        )
 
     async def _finalize_interrupted_reply(
         self,
@@ -1572,9 +1799,9 @@ class ChatService:
                     agent_id=agent_record.id,
                 ),
             )
-        if runtime_session.parent_session_id is not None:
+        if runtime_session.source == SessionSource.SUBAGENT:
             middlewares.append(
-                SubAgentMiddleware(
+                SubAgentPromptMiddleware(
                     storage=self._storage,
                     message_bus=self._message_bus,
                     user_id=user_id,
@@ -1628,6 +1855,7 @@ class ChatService:
             extra_factory=self._extra_agent_tools,
             sub_agent_templates=self._sub_agent_templates,
             channel_tools=channel_tools,
+            max_active_subagents=self._max_active_subagents,
         )
 
         system_prompt = agent_record.data.system_prompt
@@ -2064,9 +2292,9 @@ class ChatService:
                     agent_id=agent_id,
                 ),
             )
-        if session_record.parent_session_id is not None:
+        if session_record.source == SessionSource.SUBAGENT:
             middlewares.append(
-                SubAgentMiddleware(
+                SubAgentPromptMiddleware(
                     storage=self._storage,
                     message_bus=self._message_bus,
                     user_id=user_id,
@@ -2120,6 +2348,7 @@ class ChatService:
             extra_factory=self._extra_agent_tools,
             sub_agent_templates=self._sub_agent_templates,
             channel_tools=channel_tools,
+            max_active_subagents=self._max_active_subagents,
         )
 
         # ----------------------------------------------------------------
@@ -2552,6 +2781,15 @@ class ChatService:
                             "after tool execution; scheduling wakeup.",
                             session_id,
                         )
+                await self._maybe_settle_subagent_runtime(
+                    user_id=user_id,
+                    session_record=session_record,
+                    agent_record=agent_record,
+                    agent=agent,
+                    reply_msg=reply_msg,
+                    has_pending_inbox=needs_followup_wakeup,
+                    restart_requested=needs_restart_wakeup,
+                )
             except asyncio.CancelledError:
                 try:
                     reply_msg = await asyncio.shield(
@@ -2565,6 +2803,17 @@ class ChatService:
                             reply_started=reply_started,
                             checkpoint_state=checkpoint_state,
                             reason="Session cancelled before reply completed.",
+                        ),
+                    )
+                    await asyncio.shield(
+                        self._maybe_settle_subagent_runtime(
+                            user_id=user_id,
+                            session_record=session_record,
+                            agent_record=agent_record,
+                            agent=agent,
+                            reply_msg=reply_msg,
+                            has_pending_inbox=False,
+                            restart_requested=False,
                         ),
                     )
                 except Exception:
@@ -2585,6 +2834,15 @@ class ChatService:
                     reply_started=reply_started,
                     checkpoint_state=checkpoint_state,
                     exc=exc,
+                )
+                await self._maybe_settle_subagent_runtime(
+                    user_id=user_id,
+                    session_record=session_record,
+                    agent_record=agent_record,
+                    agent=agent,
+                    reply_msg=reply_msg,
+                    has_pending_inbox=False,
+                    restart_requested=False,
                 )
                 raise
             finally:
