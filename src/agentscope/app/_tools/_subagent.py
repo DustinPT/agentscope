@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import Field
 
-from .._bus_ops import deliver_to_inbox
+from .._bus_ops import deliver_to_inbox, publish_session_event
 from .._subagent_runtime import (
     ROOT_AGENT_NAME,
     agent_name_for,
@@ -24,6 +24,7 @@ from ...message import TextBlock, ToolResultState
 from ...permission import PermissionBehavior, PermissionContext, PermissionDecision
 from ...state import AgentState
 from ...tool import ParamsBase, ToolBase, ToolChunk
+from ...event import CustomEvent
 from ..storage import SessionConfig, SessionSource
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
@@ -295,6 +296,14 @@ class Subagent(ToolBase):
             session_id=child_session.id,
             agent_id=child_agent.id,
             payload=hint.model_dump(mode="json"),
+        )
+        await publish_session_event(
+            self._message_bus,
+            self._session_id,
+            CustomEvent(
+                name="subagent_sessions_updated",
+                value={"session_id": child_session.id},
+            ).model_dump(mode="json"),
         )
         payload = {
             "status": "started",

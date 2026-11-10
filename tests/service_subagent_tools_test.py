@@ -348,6 +348,18 @@ class TestSubagentTools(IsolatedAsyncioTestCase):
         self.assertIn("Inspect the latest change carefully.", hint_payload["hint"])
         self.assertIn('"mode": "spawn"', hint_payload["source"])
 
+        session_events = await self.bus.log_read(
+            MessageBusKeys.session_events(self.root_session.id),
+        )
+        self.assertTrue(
+            any(
+                event["type"] == "CUSTOM"
+                and event["name"] == "subagent_sessions_updated"
+                and event["value"] == {"session_id": child.id}
+                for _entry_id, event in session_events
+            ),
+        )
+
     async def test_subagent_supports_explicit_agent_preset(self) -> None:
         tool = Subagent(
             storage=self.storage,
