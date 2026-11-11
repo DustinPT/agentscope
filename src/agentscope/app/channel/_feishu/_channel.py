@@ -63,6 +63,11 @@ _API = "https://open.feishu.cn/open-apis"
 _TOKEN_EXPIRED_CODES = frozenset({99991663, 99991664})
 _MEDIA_TYPES = frozenset({"image", "audio", "media", "file"})
 _STREAM_ELEMENT_ID = "md"
+_STREAM_TIMEOUT_CODE = 200510
+_STREAM_CLOSED_MARKERS = (
+    "card streaming timeout",
+    "streaming mode is closed",
+)
 # Minimum seconds between live streaming-card updates (throttle).
 _STREAM_MIN_INTERVAL = 0.7
 
@@ -743,7 +748,10 @@ class FeishuChannel(ChannelBase):
             now = time.monotonic()
             if now - last >= _STREAM_MIN_INTERVAL:
                 last = now
-                await self._card_push(ref, text)
+                if not await self._push_with_recovery(ref, text):
+                    self._stream_seq.pop(ref, None)
+                    ref = None
+                    failed = True
         blocks = self._render(
             reply,
             show_thinking=self._config.show_thinking,
@@ -793,17 +801,28 @@ class FeishuChannel(ChannelBase):
             text (`str`): The complete reply text.
         """
         if ref is not None:
-            await self._card_push(ref, text)
-            await self._close_stream(ref)
+            pushed = await self._push_with_recovery(ref, text)
+            if pushed:
+                await self._close_stream(ref)
+                self._stream_seq.pop(ref, None)
+                return
             self._stream_seq.pop(ref, None)
-        elif text:
-            for part in self._split_long_message(text):
-                await self._send(
-                    event.channel_message_id,
-                    event.chat_id,
-                    "text",
-                    json.dumps({"text": part}),
-                )
+        if text:
+            await self._send_text_reply(event, text)
+
+    async def _send_text_reply(
+        self,
+        event: ChannelEvent,
+        text: str,
+    ) -> None:
+        """Send a plain text reply, splitting it when Feishu limits require."""
+        for part in self._split_long_message(text):
+            await self._send(
+                event.channel_message_id,
+                event.chat_id,
+                "text",
+                json.dumps({"text": part}),
+            )
 
     # -- Streaming card (Feishu CardKit) --
     # NOTE: needs a real bot to verify end-to-end; on any API failure
@@ -855,20 +874,67 @@ class FeishuChannel(ChannelBase):
         self._stream_seq[card_id] = 0
         return card_id
 
-    async def _card_push(self, card_id: str, text: str) -> None:
+    @staticmethod
+    def _card_result_ok(result: dict | None) -> bool:
+        """Whether a CardKit API call completed successfully."""
+        return bool(result and result.get("code") == 0)
+
+    @staticmethod
+    def _can_recover_stream(result: dict | None) -> bool:
+        """Whether a failed CardKit response is worth one streaming reopen."""
+        if not result:
+            return False
+        if result.get("code") == _STREAM_TIMEOUT_CODE:
+            return True
+        msg = str(result.get("msg") or "").lower()
+        return any(marker in msg for marker in _STREAM_CLOSED_MARKERS)
+
+    def _next_stream_sequence(self, card_id: str) -> int:
+        """Return the next strictly increasing CardKit sequence number."""
+        seq = self._stream_seq.get(card_id, 0) + 1
+        self._stream_seq[card_id] = seq
+        return seq
+
+    async def _set_streaming_mode(
+        self,
+        card_id: str,
+        enabled: bool,
+    ) -> dict | None:
+        """Toggle the card's streaming mode with a fresh sequence number."""
+        return await self._api(
+            "PATCH",
+            f"{_API}/cardkit/v1/cards/{card_id}/settings",
+            {
+                "settings": json.dumps({"config": {"streaming_mode": enabled}}),
+                "sequence": self._next_stream_sequence(card_id),
+            },
+        )
+
+    async def _push_with_recovery(self, card_id: str, text: str) -> bool:
+        """Push text once, reopening streaming mode if Feishu timed it out."""
+        result = await self._card_push(card_id, text)
+        if self._card_result_ok(result):
+            return True
+        if not self._can_recover_stream(result):
+            return False
+        reopened = await self._set_streaming_mode(card_id, True)
+        if not self._card_result_ok(reopened):
+            return False
+        retry = await self._card_push(card_id, text)
+        return self._card_result_ok(retry)
+
+    async def _card_push(self, card_id: str, text: str) -> dict | None:
         """Write the current text to the card with a rising sequence.
 
         Args:
             card_id (`str`): The streaming card id.
             text (`str`): Text to render.
         """
-        seq = self._stream_seq.get(card_id, 0) + 1
-        self._stream_seq[card_id] = seq
-        await self._api(
+        return await self._api(
             "PUT",
             f"{_API}/cardkit/v1/cards/{card_id}/elements/"
             f"{_STREAM_ELEMENT_ID}/content",
-            {"content": text, "sequence": seq},
+            {"content": text, "sequence": self._next_stream_sequence(card_id)},
         )
 
     async def _close_stream(self, card_id: str) -> None:
@@ -877,16 +943,7 @@ class FeishuChannel(ChannelBase):
         Args:
             card_id (`str`): The streaming card to finalise.
         """
-        seq = self._stream_seq.get(card_id, 0) + 1
-        self._stream_seq[card_id] = seq
-        await self._api(
-            "PATCH",
-            f"{_API}/cardkit/v1/cards/{card_id}/settings",
-            {
-                "settings": json.dumps({"config": {"streaming_mode": False}}),
-                "sequence": seq,
-            },
-        )
+        await self._set_streaming_mode(card_id, False)
 
     async def _present_confirm(
         self,
