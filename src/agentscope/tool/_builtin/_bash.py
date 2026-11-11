@@ -4,7 +4,12 @@ import os
 from typing import TYPE_CHECKING, AsyncGenerator, Any, List
 import re
 
-from ._backend import BackendBase, LocalBackend, _normalize_newlines
+from ._backend import (
+    BackendBase,
+    LocalBackend,
+    _normalize_newlines,
+    _subprocess_creation_kwargs,
+)
 from ._bash_parser import BashCommandParser
 from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
@@ -27,6 +32,7 @@ from ..._request_secret import (
 
 if TYPE_CHECKING:
     from ...app.storage import StorageBase
+    from ...app._manager import BackgroundTaskManager
 
 
 class Bash(ToolBase):
@@ -35,11 +41,11 @@ class Bash(ToolBase):
     name: str = "Bash"
     """The tool name presented to the agent."""
 
-    description: str = """Executes a bash command and returns its output.
+    description: str = """Execute a bash command (`bash -lc`) and return its stdout/stderr.
 
-The working directory persists between commands, but shell state does
-not. The shell environment is initialized from the user's profile
-(bash or zsh).
+Each call runs in a fresh shell. Working directory, variables, and
+functions do not persist across calls. Pass `workdir` instead of
+relying on `cd`.
 
 IMPORTANT: Avoid using this tool to run `find`, `grep`, `cat`, `head`,
 `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed
@@ -68,8 +74,9 @@ easier to review tool calls and give permission.
    session by using absolute paths and avoiding usage of `cd`. You may
    use `cd` if the User explicitly requests it.
  - You may specify an optional timeout in milliseconds (up to 600000ms
-   / 10 minutes). By default, your command will timeout after 120000ms
-   (2 minutes).
+   / 10 minutes). By default, the tool waits 120000ms (2 minutes). If
+   the command is still running after the timeout, it moves to the
+   background as a job instead of being killed.
  - Write a clear, concise, user-facing description of what your
    command does. This description is shown directly to the user, so
    phrase it in the user's language, avoid shell jargon when possible,
@@ -120,40 +127,61 @@ easier to review tool calls and give permission.
  - Do not use `head`, `tail`, or similar truncation commands merely to
    limit tool output size. The Bash tool already truncates overly long
    output safely. Use `head` or `tail` only when the task itself
-   explicitly needs the first or last N lines or results."""
+   explicitly needs the first or last N lines or results.
+ - `run_in_background: true` returns a job id immediately; use
+   `job_output` to collect it, `job_list` to inspect it, and `job_kill`
+   to stop it.
+ - Check the `[exit code: N]` marker on every bash result. Non-zero
+   exit codes are results to interpret, not automatic tool failures."""
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
+            "description": {
+                "type": "string",
+                "description": (
+                    "Clear, concise description of what this command "
+                    "does in active voice, 5-10 words when possible "
+                    "(shown in the UI). Example: 'git status' -> "
+                    "'Show working tree status'."
+                ),
+            },
             "command": {
                 "type": "string",
                 "description": "The bash command to execute.",
             },
-            "description": {
-                "type": "string",
-                "description": (
-                    "Clear, concise, user-facing description of what "
-                    "this command does. This text is shown directly to "
-                    "the user, so write it in the user's language, use "
-                    "friendly wording, and describe the intended action "
-                    "or outcome rather than repeating the command. For "
-                    "simple commands, keep it brief (5-10 words). For "
-                    "complex commands, include enough context."
-                ),
-            },
             "timeout": {
                 "type": "integer",
                 "description": (
-                    "Optional timeout in milliseconds "
-                    "(default: 120000, max: 600000)"
+                    "Timeout in milliseconds (default: 120000, max: "
+                    "600000). On expiry the command moves to the "
+                    "background as a job instead of being killed."
                 ),
                 "default": 120000,
                 "maximum": 600000,
                 "minimum": 0,
             },
+            "workdir": {
+                "type": "string",
+                "description": (
+                    "Working directory for this command. Defaults to "
+                    "the session workspace; a relative path is "
+                    "resolved against it."
+                ),
+            },
+            "run_in_background": {
+                "type": "boolean",
+                "description": (
+                    "Run in the background and return a job id "
+                    "immediately (collect with job_output, inspect "
+                    "with job_list, stop with job_kill). No timeout "
+                    "applies."
+                ),
+                "default": False,
+            },
         },
-        "required": ["command"],
+        "required": ["description", "command"],
     }
 
     is_mcp: bool = False
@@ -172,6 +200,8 @@ easier to review tool calls and give permission.
         storage: "StorageBase | None" = None,
         user_id: str | None = None,
         session_id: str | None = None,
+        agent_id: str | None = None,
+        background_task_manager: "BackgroundTaskManager | None" = None,
     ) -> None:
         """Initialize the bash tool.
 
@@ -203,6 +233,8 @@ easier to review tool calls and give permission.
         self._storage = storage
         self._user_id = user_id
         self._session_id = session_id
+        self._agent_id = agent_id
+        self._background_task_manager = background_task_manager
 
     def configure_secret_context(
         self,
@@ -210,12 +242,102 @@ easier to review tool calls and give permission.
         storage: "StorageBase",
         user_id: str,
         session_id: str,
+        agent_id: str | None = None,
+        background_task_manager: "BackgroundTaskManager | None" = None,
     ) -> "Bash":
         """Attach session-scoped secret storage used during execution."""
         self._storage = storage
         self._user_id = user_id
         self._session_id = session_id
+        self._agent_id = agent_id
+        self._background_task_manager = background_task_manager
         return self
+
+    async def _resolve_cwd(self, workdir: str | None) -> str | None:
+        base_cwd = self._cwd or await self._backend.getcwd()
+        if workdir is None:
+            return base_cwd
+        if self._backend.isabs(workdir):
+            return self._backend.normpath(workdir)
+        if base_cwd is None:
+            return self._backend.normpath(workdir)
+        return self._backend.abspath(workdir, cwd=base_cwd)
+
+    async def _get_secret_env(self) -> dict[str, str]:
+        if (
+            self._storage is None
+            or not self._user_id
+            or not self._session_id
+        ):
+            return {}
+        return await get_session_secret_env_map(
+            self._storage,
+            user_id=self._user_id,
+            session_id=self._session_id,
+        )
+
+    def _render_text_output(
+        self,
+        stdout: bytes,
+        stderr: bytes,
+        *,
+        secret_values: list[str],
+    ) -> str:
+        stdout_text = _normalize_newlines(
+            stdout.decode("utf-8", errors="replace"),
+        )
+        stderr_text = _normalize_newlines(
+            stderr.decode("utf-8", errors="replace"),
+        )
+        if secret_values:
+            stdout_text = redact_text_by_secret_values(stdout_text, secret_values)
+            stderr_text = redact_text_by_secret_values(stderr_text, secret_values)
+
+        body = stdout_text
+        if stderr_text:
+            if body and not body.endswith("\n"):
+                body += "\n"
+            body += "[stderr]\n" + stderr_text
+        return body.rstrip("\n") or "(no output)"
+
+    def _truncate_output(self, text: str, limit: int = 30000) -> str:
+        if len(text) <= limit:
+            return text
+        return (
+            "... (output truncated)\n"
+            + text[-limit:]
+        )
+
+    def _render_result_text(
+        self,
+        *,
+        stdout: bytes,
+        stderr: bytes,
+        secret_values: list[str],
+        exit_code: int | None,
+        timeout_ms: int | None = None,
+        promoted_job_id: str | None = None,
+    ) -> str:
+        body = self._render_text_output(
+            stdout,
+            stderr,
+            secret_values=secret_values,
+        )
+        lines = [body]
+        if promoted_job_id is not None and timeout_ms is not None:
+            lines.append(
+                "[still running after "
+                f"{timeout_ms}ms; moved to background job {promoted_job_id}]",
+            )
+        elif timeout_ms is not None:
+            lines.append(f"[timed out after {timeout_ms}ms]")
+        if promoted_job_id is None or exit_code is not None:
+            lines.append(
+                "[exit code: null]"
+                if exit_code is None
+                else f"[exit code: {exit_code}]",
+            )
+        return self._truncate_output("\n".join(lines))
 
     async def check_read_only(
         self,
@@ -703,6 +825,8 @@ easier to review tool calls and give permission.
         command: str,
         description: str = "",
         timeout: int = 120000,
+        workdir: str | None = None,
+        run_in_background: bool = False,
     ) -> AsyncGenerator[ToolChunk, None]:
         """Execute the bash and return the output.
 
@@ -715,92 +839,149 @@ easier to review tool calls and give permission.
             ToolChunk: The tool execution result with stdout/stderr content.
         """
 
-        # Clamp timeout to max 600000ms and convert to seconds
+        if not command.strip():
+            yield ToolChunk(
+                content=[
+                    TextBlock(
+                        text="Error: invalid command: expected a non-empty string",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+            return
+        if not description.strip():
+            yield ToolChunk(
+                content=[
+                    TextBlock(
+                        text=(
+                            "Error: invalid description: expected a "
+                            "non-empty string"
+                        ),
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+            return
+
         timeout_ms = min(timeout, 600000)
         timeout_sec = timeout_ms / 1000.0
-        session_secret_env: dict[str, str] = {}
+        session_secret_env = await self._get_secret_env()
+        secret_values = list(session_secret_env.values())
+        resolved_cwd = await self._resolve_cwd(workdir)
 
         try:
-            if (
-                self._storage is not None
-                and self._user_id
-                and self._session_id
-            ):
-                session_secret_env = await get_session_secret_env_map(
-                    self._storage,
-                    user_id=self._user_id,
-                    session_id=self._session_id,
-                )
-            result = await self._backend.exec_shell(
-                # Execute through bash so the runtime matches the tool name
-                # and supports bash-specific syntax commonly generated by
-                # the model, such as [[ ... ]] and arrays.
-                ["bash", "-c", command],
-                cwd=self._cwd,
-                timeout=timeout_sec,
+            handle = await self._backend.start_shell(
+                ["bash", "-lc", command],
+                cwd=resolved_cwd,
                 env=session_secret_env or None,
             )
-            stdout = result.stdout.decode("utf-8", errors="replace")
-            stderr = result.stderr.decode("utf-8", errors="replace")
-            if session_secret_env:
-                secret_values = list(session_secret_env.values())
-                stdout = redact_text_by_secret_values(stdout, secret_values)
-                stderr = redact_text_by_secret_values(stderr, secret_values)
-            stdout = _normalize_newlines(stdout)
-            stderr = _normalize_newlines(stderr)
 
-            # Combine output
-            output = stdout
-            if stderr:
-                if output:
-                    output += "\n"
-                output += stderr
-
-            # Truncate if exceeds 30000 characters
-            if len(output) > 30000:
-                output = output[:30000] + "\n... (output truncated)"
-
-            if result.exit_code == -1 and result.stderr == b"timed out":
+            if run_in_background:
+                if (
+                    self._background_task_manager is None
+                    or self._user_id is None
+                    or self._session_id is None
+                ):
+                    yield ToolChunk(
+                        content=[
+                            TextBlock(
+                                text=(
+                                    "Error: background jobs unavailable: "
+                                    "job tools are not configured"
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.ERROR,
+                        is_last=True,
+                    )
+                    return
+                job_id = await self._background_task_manager.adopt_shell_handle(
+                    handle=handle,
+                    session_id=self._session_id,
+                    agent_id=self._agent_id or self.name,
+                    user_id=self._user_id,
+                    title=command,
+                    cwd=resolved_cwd,
+                    notify_on_completion=True,
+                    secret_values=secret_values,
+                )
                 yield ToolChunk(
                     content=[
                         TextBlock(
-                            text=f"Command timed out after {timeout_ms}ms: {command}",
+                            text=f"started background job {job_id}",
                         ),
                     ],
-                    state=ToolResultState.ERROR,
+                    state=ToolResultState.SUCCESS,
                     is_last=True,
                 )
                 return
 
-            # Check exit code
-            if not result.ok():
-                # Command failed
-                error_result = f"Command failed: {command}\n"
-                if stdout:
-                    error_result += f"\nStdout:\n{stdout}"
-                if stderr:
-                    error_result += f"\nStderr:\n{stderr}"
-
-                # Truncate error message if needed
-                if len(error_result) > 30000:
-                    error_result = (
-                        error_result[:30000] + "\n... (output truncated)"
+            result = await handle.wait(timeout=timeout_sec)
+            if result is None:
+                snapshot = handle.snapshot()
+                if (
+                    self._background_task_manager is not None
+                    and self._user_id is not None
+                    and self._session_id is not None
+                ):
+                    job_id = await self._background_task_manager.adopt_shell_handle(
+                        handle=handle,
+                        session_id=self._session_id,
+                        agent_id=self._agent_id or self.name,
+                        user_id=self._user_id,
+                        title=command,
+                        cwd=resolved_cwd,
+                        notify_on_completion=True,
+                        initial_stdout_cursor=len(snapshot.stdout),
+                        initial_stderr_cursor=len(snapshot.stderr),
+                        secret_values=secret_values,
                     )
+                    text = self._render_result_text(
+                        stdout=snapshot.stdout,
+                        stderr=snapshot.stderr,
+                        secret_values=secret_values,
+                        exit_code=None,
+                        timeout_ms=timeout_ms,
+                        promoted_job_id=job_id,
+                    )
+                    yield ToolChunk(
+                        content=[TextBlock(text=text)],
+                        state=ToolResultState.SUCCESS,
+                        is_last=True,
+                    )
+                    return
 
+                await handle.terminate()
+                text = self._render_result_text(
+                    stdout=snapshot.stdout,
+                    stderr=snapshot.stderr,
+                    secret_values=secret_values,
+                    exit_code=None,
+                    timeout_ms=timeout_ms,
+                )
                 yield ToolChunk(
-                    content=[TextBlock(text=error_result)],
-                    state=ToolResultState.ERROR,
+                    content=[TextBlock(text=text)],
+                    state=ToolResultState.SUCCESS,
                     is_last=True,
                 )
-            else:
-                yield ToolChunk(
-                    content=[TextBlock(text=output)],
-                    state=ToolResultState.RUNNING,
-                    is_last=True,
-                )
+                return
+
+            text = self._render_result_text(
+                stdout=result.stdout,
+                stderr=result.stderr,
+                secret_values=secret_values,
+                exit_code=result.exit_code,
+            )
+            yield ToolChunk(
+                content=[TextBlock(text=text)],
+                state=ToolResultState.SUCCESS,
+                is_last=True,
+            )
 
         except Exception as e:
-            error_msg = f"Command failed: {command}\nError: {str(e)}"
+            error_msg = f"Error: {str(e)}"
             yield ToolChunk(
                 content=[TextBlock(text=error_msg)],
                 state=ToolResultState.ERROR,

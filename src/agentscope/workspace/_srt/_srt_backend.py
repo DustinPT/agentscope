@@ -8,9 +8,16 @@ import base64
 import json
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
-from ...tool import BackendBase, DirEntry, ExecResult, LocalBackend
+from ...tool import (
+    BackendBase,
+    DirEntry,
+    ExecResult,
+    LocalBackend,
+    ShellHandle,
+    ShellSnapshot,
+)
 from ...tool._tool_call_context import get_current_tool_call
 from ._sandbox_runtime_executor import SandboxCommandResult, SandboxRuntimeExecutor
 
@@ -29,6 +36,54 @@ class PreviewFileStat:
 
     entry: DirEntry | None
     sample_bytes: bytes | None = None
+
+
+class _SRTShellHandle(ShellHandle):
+    """Shell handle backed by sandbox-runtime streaming execution."""
+
+    def __init__(
+        self,
+        stream: SandboxCommandStream,
+        record_violations: Callable[[SandboxCommandResult], None],
+    ) -> None:
+        self._stream = stream
+        self._record_violations = record_violations
+        self._result: ExecResult | None = None
+
+    def snapshot(self) -> ShellSnapshot:
+        return ShellSnapshot(
+            exit_code=None if self._result is None else self._result.exit_code,
+            stdout=self._stream.stdout_snapshot(),
+            stderr=b"" if self._result is None else self._result.stderr,
+        )
+
+    async def wait(
+        self,
+        timeout: float | None = None,
+    ) -> ExecResult | None:
+        if self._result is not None:
+            return self._result
+        try:
+            if timeout is None:
+                result = await self._stream.wait_result()
+            else:
+                result = await asyncio.wait_for(
+                    self._stream.wait_result(),
+                    timeout=timeout,
+                )
+        except asyncio.TimeoutError:
+            return None
+
+        self._result = ExecResult(
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+        self._record_violations(result)
+        return self._result
+
+    async def terminate(self) -> None:
+        await self._stream.aclose()
 
 
 class SRTBackend(BackendBase):
@@ -90,6 +145,24 @@ class SRTBackend(BackendBase):
         timeout: float | None = None,
         env: dict[str, str] | None = None,
     ) -> ExecResult:
+        handle = await self.start_shell(
+            command,
+            cwd=cwd,
+            env=env,
+        )
+        result = await handle.wait(timeout=timeout)
+        if result is not None:
+            return result
+        await handle.terminate()
+        return ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
+
+    async def start_shell(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> ShellHandle:
         tool_call = get_current_tool_call()
         if env:
             command = [
@@ -97,19 +170,13 @@ class SRTBackend(BackendBase):
                 *[f"{key}={value}" for key, value in env.items()],
                 *command,
             ]
-        result = await self._executor.exec_command(
+        stream = await self._executor.exec_command_stream(
             command=command,
             cwd=cwd or self._workdir,
-            timeout=timeout,
             tool_call_id=None if tool_call is None else tool_call.tool_call_id,
             tool_name=None if tool_call is None else tool_call.tool_name,
         )
-        self._record_violations(result)
-        return ExecResult(
-            exit_code=result.exit_code,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+        return _SRTShellHandle(stream, self._record_violations)
 
     async def read_file(self, path: str) -> bytes:
         if self._should_use_local_file_backend(path):

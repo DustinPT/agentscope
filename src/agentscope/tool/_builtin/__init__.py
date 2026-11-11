@@ -13,7 +13,14 @@ from ._request_secret import (
     RequestSecretParams,
     RequestSecretResultMetadata,
 )
-from ._backend import BackendBase, DirEntry, ExecResult, LocalBackend
+from ._backend import (
+    BackendBase,
+    DirEntry,
+    ExecResult,
+    LocalBackend,
+    ShellHandle,
+    ShellSnapshot,
+)
 from ._meta import ResetTools
 from ._skill import SkillViewer
 from ._bash import Bash
@@ -50,4 +57,6 @@ __all__ = [
     "DirEntry",
     "LocalBackend",
     "ExecResult",
+    "ShellHandle",
+    "ShellSnapshot",
 ]

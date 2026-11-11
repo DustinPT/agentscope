@@ -145,9 +145,6 @@ optional):
     Returns:
         `Toolkit`: Fully populated toolkit (tools + skills + MCPs).
     """
-    _ = background_task_manager
-
-
     enabled_builtin_tool_groups = set(
         agent_record.data.react_config.enabled_builtin_tool_groups,
     )
@@ -176,8 +173,18 @@ optional):
                     storage=storage,
                     user_id=user_id,
                     session_id=session_record.id,
+                    agent_id=agent_record.id,
+                    background_task_manager=background_task_manager,
                 )
             tools.append(tool)
+
+    if hasattr(background_task_manager, "list_tools"):
+        tools.extend(
+            await background_task_manager.list_tools(
+                user_id=user_id,
+                session_id=session_record.id,
+            ),
+        )
 
     # Planning tools — always on.
     tools += [TaskCreate(), TaskList(), TaskGet(), TaskUpdate()]

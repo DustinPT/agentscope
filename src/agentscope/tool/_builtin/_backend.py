@@ -7,6 +7,7 @@ import asyncio
 import os
 import posixpath
 import shlex
+import signal
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import ModuleType
@@ -39,6 +40,34 @@ class DirEntry:
     is_dir: bool
     size_bytes: int | None = None
     mtime: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ShellSnapshot:
+    """Best-effort snapshot of one running shell command."""
+
+    exit_code: int | None
+    stdout: bytes
+    stderr: bytes
+
+
+class ShellHandle(ABC):
+    """Lifecycle handle for one started shell command."""
+
+    @abstractmethod
+    def snapshot(self) -> ShellSnapshot:
+        """Return the latest buffered stdout/stderr snapshot."""
+
+    @abstractmethod
+    async def wait(
+        self,
+        timeout: float | None = None,
+    ) -> ExecResult | None:
+        """Wait for completion, or return ``None`` on timeout."""
+
+    @abstractmethod
+    async def terminate(self) -> None:
+        """Stop the command and release its resources."""
 
 
 def _normalize_newlines(text: str) -> str:
@@ -81,6 +110,16 @@ class BackendBase(ABC):
         env: dict[str, str] | None = None,
     ) -> ExecResult:
         """Run a program directly from an argument vector."""
+
+    @abstractmethod
+    async def start_shell(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> ShellHandle:
+        """Start a program and return a handle for later observation."""
 
     @abstractmethod
     async def read_file(self, path: str) -> bytes:
@@ -293,6 +332,100 @@ class LocalBackend(BackendBase):
 
     _path_module = os.path
 
+    class _LocalShellHandle(ShellHandle):
+        """Buffered subprocess handle for host-local shell execution."""
+
+        def __init__(
+            self,
+            process: asyncio.subprocess.Process,
+            stdout_task: asyncio.Task[None],
+            stderr_task: asyncio.Task[None],
+            stdout_buffer: bytearray,
+            stderr_buffer: bytearray,
+        ) -> None:
+            self._process = process
+            self._stdout_task = stdout_task
+            self._stderr_task = stderr_task
+            self._stdout_buffer = stdout_buffer
+            self._stderr_buffer = stderr_buffer
+
+        def snapshot(self) -> ShellSnapshot:
+            return ShellSnapshot(
+                exit_code=self._process.returncode,
+                stdout=bytes(self._stdout_buffer),
+                stderr=bytes(self._stderr_buffer),
+            )
+
+        async def wait(
+            self,
+            timeout: float | None = None,
+        ) -> ExecResult | None:
+            try:
+                if timeout is None:
+                    await self._process.wait()
+                else:
+                    await asyncio.wait_for(self._process.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                return None
+
+            await asyncio.gather(
+                self._stdout_task,
+                self._stderr_task,
+                return_exceptions=True,
+            )
+            snapshot = self.snapshot()
+            return ExecResult(
+                exit_code=snapshot.exit_code or 0,
+                stdout=snapshot.stdout,
+                stderr=snapshot.stderr,
+            )
+
+        async def terminate(self) -> None:
+            if self._process.returncode is None:
+                if os.name != "nt":
+                    try:
+                        os.killpg(
+                            os.getpgid(self._process.pid),
+                            signal.SIGTERM,
+                        )
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        await asyncio.wait_for(
+                            self._process.wait(),
+                            timeout=1.0,
+                        )
+                    except asyncio.TimeoutError:
+                        try:
+                            os.killpg(
+                                os.getpgid(self._process.pid),
+                                signal.SIGKILL,
+                            )
+                        except ProcessLookupError:
+                            pass
+                        await self._process.wait()
+                else:
+                    self._process.kill()
+                    await self._process.wait()
+            await asyncio.gather(
+                self._stdout_task,
+                self._stderr_task,
+                return_exceptions=True,
+            )
+
+    @staticmethod
+    async def _read_pipe(
+        stream: asyncio.StreamReader | None,
+        buffer: bytearray,
+    ) -> None:
+        if stream is None:
+            return
+        while True:
+            chunk = await stream.read(DEFAULT_READ_CHUNK_SIZE)
+            if not chunk:
+                return
+            buffer.extend(chunk)
+
     async def exec_shell(
         self,
         command: list[str],
@@ -301,18 +434,11 @@ class LocalBackend(BackendBase):
         timeout: float | None = None,
         env: dict[str, str] | None = None,
     ) -> ExecResult:
-        kwargs = _subprocess_creation_kwargs()
-        if cwd is not None:
-            kwargs["cwd"] = cwd
-        if env:
-            kwargs["env"] = {**os.environ, **env}
-
         try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                **kwargs,
+            handle = await self.start_shell(
+                command,
+                cwd=cwd,
+                env=env,
             )
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             return ExecResult(
@@ -321,20 +447,48 @@ class LocalBackend(BackendBase):
                 stderr=str(exc).encode("utf-8"),
             )
 
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.communicate()
-            return ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
+        result = await handle.wait(timeout=timeout)
+        if result is not None:
+            return result
 
-        return ExecResult(
-            exit_code=process.returncode or 0,
-            stdout=stdout,
-            stderr=stderr,
+        await handle.terminate()
+        return ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
+
+    async def start_shell(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> ShellHandle:
+        kwargs = _subprocess_creation_kwargs()
+        if cwd is not None:
+            kwargs["cwd"] = cwd
+        if env:
+            kwargs["env"] = {**os.environ, **env}
+        if os.name != "nt":
+            kwargs["start_new_session"] = True
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            **kwargs,
+        )
+        stdout_buffer = bytearray()
+        stderr_buffer = bytearray()
+        stdout_task = asyncio.create_task(
+            self._read_pipe(process.stdout, stdout_buffer),
+        )
+        stderr_task = asyncio.create_task(
+            self._read_pipe(process.stderr, stderr_buffer),
+        )
+        return self._LocalShellHandle(
+            process=process,
+            stdout_task=stdout_task,
+            stderr_task=stderr_task,
+            stdout_buffer=stdout_buffer,
+            stderr_buffer=stderr_buffer,
         )
 
     async def read_file(self, path: str) -> bytes:

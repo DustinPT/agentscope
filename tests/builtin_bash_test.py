@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """Bash tool test case."""
+import asyncio
+import os
 import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from agentscope.tool import ToolChunk, Bash
+from agentscope.tool import ToolChunk, Bash, LocalBackend
 from agentscope.tool._builtin._bash import _subprocess_creation_kwargs
 from agentscope.permission import (
     PermissionContext,
@@ -37,21 +39,71 @@ class BashCwdTest(IsolatedAsyncioTestCase):
 
     async def test_cwd_is_passed_to_subprocess(self) -> None:
         """The constructor-level cwd should be used for each command."""
-        process = MagicMock()
-        process.returncode = 0
-        process.communicate = AsyncMock(return_value=(b"ok\n", b""))
+        handle = MagicMock()
+        handle.wait = AsyncMock(return_value=MagicMock(
+            stdout=b"ok\n",
+            stderr=b"",
+            exit_code=0,
+        ))
+        backend = MagicMock()
+        backend.start_shell = AsyncMock(return_value=handle)
 
-        create_process = AsyncMock(return_value=process)
-        with patch(
-            "agentscope.tool._builtin._bash.asyncio.create_subprocess_shell",
-            create_process,
+        chunks = []
+        async for chunk in Bash(cwd="workspace", backend=backend).call(
+            command="pwd",
+            description="Print directory",
         ):
-            chunks = []
-            async for chunk in Bash(cwd="workspace")(command="pwd"):
-                chunks.append(chunk)
+            chunks.append(chunk)
 
-        self.assertEqual(create_process.call_args.kwargs["cwd"], "workspace")
-        self.assertEqual(chunks[0].state, "running")
+        self.assertEqual(backend.start_shell.call_args.kwargs["cwd"], "workspace")
+        self.assertEqual(chunks[0].state, "success")
+
+
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Process-group termination test is POSIX-specific",
+)
+class LocalBackendProcessGroupTest(IsolatedAsyncioTestCase):
+    """Regression tests for background process-tree termination."""
+
+    async def test_terminate_kills_child_processes(self) -> None:
+        """Terminating a shell handle also kills its child process group."""
+        backend = LocalBackend()
+        handle = await backend.start_shell(
+            [
+                "bash",
+                "-lc",
+                "sleep 30 & child=$!; echo $child; wait $child",
+            ],
+        )
+        child_pid: int | None = None
+        try:
+            for _ in range(50):
+                snapshot = handle.snapshot()
+                stdout = snapshot.stdout.decode("utf-8", errors="replace").strip()
+                if stdout:
+                    child_pid = int(stdout.splitlines()[0].strip())
+                    break
+                await asyncio.sleep(0.02)
+
+            self.assertIsNotNone(child_pid)
+            await handle.terminate()
+
+            for _ in range(50):
+                try:
+                    assert child_pid is not None
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                self.fail(f"child process {child_pid} still alive after terminate()")
+        finally:
+            if child_pid is not None:
+                try:
+                    os.kill(child_pid, 9)
+                except ProcessLookupError:
+                    pass
 
 
 @unittest.skipIf(
@@ -86,26 +138,34 @@ class BashToolTest(IsolatedAsyncioTestCase):
     async def test_simple_command(self) -> None:
         """Test executing a simple bash command."""
         chunks = []
-        async for chunk in self.bash_tool(command="echo 'Hello World'"):
+        async for chunk in self.bash_tool.call(
+            command="echo 'Hello World'",
+            description="Print greeting",
+        ):
             chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
         self.assertIsInstance(chunks[0], ToolChunk)
-        self.assertEqual(chunks[0].state, "running")
+        self.assertEqual(chunks[0].state, "success")
         self.assertTrue(chunks[0].is_last)
         self.assertEqual(len(chunks[0].content), 1)
         self.assertIsInstance(chunks[0].content[0], TextBlock)
         self.assertIn("Hello World", chunks[0].content[0].text)
+        self.assertIn("[exit code: 0]", chunks[0].content[0].text)
 
     async def test_command_with_error(self) -> None:
-        """Test executing a command that fails."""
+        """Non-zero exits are returned as results, not tool errors."""
         chunks = []
-        async for chunk in self.bash_tool(command="exit 1"):
+        async for chunk in self.bash_tool.call(
+            command="exit 1",
+            description="Exit with failure",
+        ):
             chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "error")
+        self.assertEqual(chunks[0].state, "success")
         self.assertTrue(chunks[0].is_last)
+        self.assertIn("[exit code: 1]", chunks[0].content[0].text)
 
     @unittest.skipIf(
         sys.platform == "win32",
@@ -114,15 +174,55 @@ class BashToolTest(IsolatedAsyncioTestCase):
     async def test_command_timeout(self) -> None:
         """Test command timeout."""
         chunks = []
-        async for chunk in self.bash_tool(
+        async for chunk in self.bash_tool.call(
             command="sleep 10",
+            description="Sleep briefly",
             timeout=100,  # 100ms timeout
         ):
             chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "error")
+        self.assertEqual(chunks[0].state, "success")
         self.assertIn("timed out", chunks[0].content[0].text.lower())
+
+    async def test_timeout_promoted_to_background_has_no_null_exit_code(self) -> None:
+        """Promoted runs match DSH and omit the null exit marker."""
+
+        handle = MagicMock()
+        handle.wait = AsyncMock(side_effect=[None])
+        handle.snapshot.return_value = MagicMock(
+            stdout=b"tick 1\ntick 2\n",
+            stderr=b"",
+        )
+        backend = MagicMock()
+        backend.start_shell = AsyncMock(return_value=handle)
+        backend.getcwd = AsyncMock(return_value="/tmp")
+
+        bg_manager = MagicMock()
+        bg_manager.adopt_shell_handle = AsyncMock(return_value="job-123")
+
+        bash = Bash(
+            backend=backend,
+            background_task_manager=bg_manager,
+            user_id="u",
+            session_id="s",
+            agent_id="a",
+        )
+
+        chunks = []
+        async for chunk in bash.call(
+            command="sleep 10",
+            description="Promote job",
+            timeout=2000,
+        ):
+            chunks.append(chunk)
+
+        text = chunks[0].content[0].text
+        self.assertIn(
+            "[still running after 2000ms; moved to background job job-123]",
+            text,
+        )
+        self.assertNotIn("[exit code: null]", text)
 
 
 @unittest.skipIf(

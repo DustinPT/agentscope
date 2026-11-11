@@ -35,6 +35,7 @@ class _FakeBus(MessageBus):
     def __init__(self) -> None:
         self._channels: dict[str, asyncio.Queue] = {}
         self._locks: set[str] = set()
+        self._registry: dict[str, dict[str, str]] = {}
 
     def _channel(self, key: str) -> asyncio.Queue:
         return self._channels.setdefault(key, asyncio.Queue())
@@ -116,6 +117,32 @@ class _FakeBus(MessageBus):
 
     async def is_locked(self, key: str) -> bool:
         return key in self._locks
+
+    async def registry_get(self, key: str, field: str) -> str | None:
+        return self._registry.get(key, {}).get(field)
+
+    async def registry_getall(self, key: str) -> dict[str, str]:
+        return dict(self._registry.get(key, {}))
+
+    async def registry_set(
+        self,
+        key: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        _ = ttl_secs
+        self._registry.setdefault(key, {})[field] = value
+
+    async def registry_del(self, key: str, field: str) -> None:
+        self._registry.get(key, {}).pop(field, None)
+
+    async def registry_exists(self, key: str, field: str) -> bool:
+        return field in self._registry.get(key, {})
+
+    async def registry_drop(self, key: str) -> None:
+        self._registry.pop(key, None)
 
 
 async def _yield_a_few_times(ticks: int = 8) -> None:

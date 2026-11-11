@@ -3,10 +3,29 @@ import { spawn } from "node:child_process";
 
 let activeChild = null;
 
-function terminateActiveChild() {
-  if (activeChild && !activeChild.killed) {
-    activeChild.kill("SIGKILL");
+function signalActiveChild(signal) {
+  if (!activeChild || activeChild.exitCode !== null) {
+    return;
   }
+
+  if (process.platform !== "win32" && activeChild.pid) {
+    try {
+      process.kill(-activeChild.pid, signal);
+      return;
+    } catch (error) {
+      if (error?.code !== "ESRCH") {
+        throw error;
+      }
+    }
+  }
+
+  if (!activeChild.killed) {
+    activeChild.kill(signal);
+  }
+}
+
+function terminateActiveChild() {
+  signalActiveChild("SIGKILL");
 }
 
 process.on("SIGTERM", () => {
@@ -36,7 +55,15 @@ function waitForExit(child, timeoutMs) {
       timeout = setTimeout(() => {
         if (finished) return;
         finished = true;
-        child.kill("SIGKILL");
+        if (process.platform !== "win32" && child.pid) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            child.kill("SIGKILL");
+          }
+        } else {
+          child.kill("SIGKILL");
+        }
         resolve({ timedOut: true, code: -1 });
       }, timeoutMs);
     }
@@ -121,6 +148,7 @@ async function main() {
       cwd: payload.cwd ?? undefined,
       env: wrapped.env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
       activeChild = child;
 

@@ -47,20 +47,39 @@ class SandboxCommandStream:
         self._command_id = command_id
         self._tool_name = tool_name
         self._result: SandboxCommandResult | None = None
+        self._stdout_buffer = bytearray()
+        self._stdout_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._stdout_task = asyncio.create_task(self._pump_stdout())
+
+    async def _pump_stdout(self) -> None:
+        """Buffer stdout while keeping incremental iteration available."""
+        while True:
+            chunk = await self._process.stdout.read(1024 * 1024)
+            if not chunk:
+                await self._stdout_queue.put(None)
+                return
+            self._stdout_buffer.extend(chunk)
+            await self._stdout_queue.put(chunk)
 
     async def iter_chunks(self, chunk_size: int = 1024 * 1024):
         """Yield stdout chunks from the sandboxed command."""
+        _ = chunk_size
         while True:
-            chunk = await self._process.stdout.read(chunk_size)
-            if not chunk:
+            chunk = await self._stdout_queue.get()
+            if chunk is None:
                 break
             yield chunk
+
+    def stdout_snapshot(self) -> bytes:
+        """Return the buffered stdout collected so far."""
+        return bytes(self._stdout_buffer)
 
     async def wait_result(self) -> SandboxCommandResult:
         """Wait until the sandbox command finishes and return metadata."""
         if self._result is not None:
             return self._result
 
+        await self._stdout_task
         stderr = await self._stderr_task
         returncode = await self._process.wait()
         try:
@@ -71,7 +90,7 @@ class SandboxCommandStream:
         if returncode != 0:
             self._result = SandboxCommandResult(
                 exit_code=returncode,
-                stdout=b"",
+                stdout=self.stdout_snapshot(),
                 stderr=stderr,
                 annotated_stderr=stderr,
                 violations=[],
@@ -86,7 +105,7 @@ class SandboxCommandStream:
         )
         self._result = SandboxCommandResult(
             exit_code=int(bridge_result["exit_code"]),
-            stdout=b"",
+            stdout=self.stdout_snapshot(),
             stderr=base64.b64decode(bridge_result["stderr"].encode("ascii")),
             annotated_stderr=base64.b64decode(
                 bridge_result["annotated_stderr"].encode("ascii"),
@@ -104,11 +123,10 @@ class SandboxCommandStream:
             except asyncio.TimeoutError:
                 self._process.kill()
                 await self._process.wait()
-        if self._process.stdout is not None:
-            try:
-                await self._process.stdout.read()
-            except Exception:
-                pass
+        try:
+            await self._stdout_task
+        except Exception:
+            pass
         try:
             await self._stderr_task
         except Exception:
@@ -256,6 +274,45 @@ class SandboxRuntimeExecutor:
             "timeoutMs": None,
             "commandId": command_id,
             "commandText": f"read-file {path}",
+            "streamStdout": True,
+        }
+        process = await asyncio.create_subprocess_exec(
+            self._node_executable,
+            self._bridge_path,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        assert process.stdin is not None
+        process.stdin.write(json.dumps(payload).encode("utf-8"))
+        await process.stdin.drain()
+        process.stdin.close()
+        return SandboxCommandStream(
+            process=process,
+            stderr_task=asyncio.create_task(process.stderr.read()),
+            command_id=command_id,
+            tool_name=tool_name,
+        )
+
+    async def exec_command_stream(
+        self,
+        *,
+        command: list[str],
+        cwd: str | None,
+        tool_call_id: str | None,
+        tool_name: str | None,
+        command_text: str | None = None,
+    ) -> SandboxCommandStream:
+        """Execute one sandboxed command with live stdout buffering."""
+        command_id = tool_call_id or f"srt-{uuid.uuid4().hex}"
+        payload = {
+            "sandboxRuntimeModulePath": self._sandbox_runtime_module_path,
+            "runtimeConfig": self._runtime_config,
+            "command": shlex.join(command),
+            "cwd": cwd,
+            "timeoutMs": None,
+            "commandId": command_id,
+            "commandText": command_text or shlex.join(command),
             "streamStdout": True,
         }
         process = await asyncio.create_subprocess_exec(

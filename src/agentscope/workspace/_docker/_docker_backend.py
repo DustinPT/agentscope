@@ -7,11 +7,87 @@ import asyncio
 import io
 import os
 import posixpath
+import shlex
 import tarfile
 import time
 from typing import Any
 
-from ...tool import BackendBase, ExecResult
+from ...tool import BackendBase, ExecResult, ShellHandle, ShellSnapshot
+
+
+class _DockerShellHandle(ShellHandle):
+    """Buffered docker exec handle."""
+
+    def __init__(
+        self,
+        *,
+        container: Any,
+        exec_obj: Any,
+        stream_task: asyncio.Task[None],
+        stdout_buffer: bytearray,
+        stderr_buffer: bytearray,
+        cwd: str,
+    ) -> None:
+        self._container = container
+        self._exec_obj = exec_obj
+        self._stream_task = stream_task
+        self._stdout_buffer = stdout_buffer
+        self._stderr_buffer = stderr_buffer
+        self._cwd = cwd
+        self._exit_code: int | None = None
+
+    def snapshot(self) -> ShellSnapshot:
+        return ShellSnapshot(
+            exit_code=self._exit_code,
+            stdout=bytes(self._stdout_buffer),
+            stderr=bytes(self._stderr_buffer),
+        )
+
+    async def wait(
+        self,
+        timeout: float | None = None,
+    ) -> ExecResult | None:
+        try:
+            if timeout is None:
+                await self._stream_task
+            else:
+                await asyncio.wait_for(self._stream_task, timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+
+        inspect = await self._exec_obj.inspect()
+        code = inspect.get("ExitCode", -1)
+        self._exit_code = -1 if code is None else int(code)
+        snapshot = self.snapshot()
+        return ExecResult(
+            exit_code=snapshot.exit_code or 0,
+            stdout=snapshot.stdout,
+            stderr=snapshot.stderr,
+        )
+
+    async def terminate(self) -> None:
+        inspect = await self._exec_obj.inspect()
+        pid = inspect.get("Pid")
+        if inspect.get("Running") and pid:
+            await self._signal_process("TERM", int(pid))
+            try:
+                await asyncio.wait_for(self._stream_task, timeout=1.0)
+            except asyncio.TimeoutError:
+                await self._signal_process("KILL", int(pid))
+        await asyncio.gather(self._stream_task, return_exceptions=True)
+
+    async def _signal_process(self, signal_name: str, pid: int) -> None:
+        signal_script = (
+            f"kill -{signal_name} -- -{pid} 2>/dev/null "
+            f"|| kill -{signal_name} {pid} 2>/dev/null || true"
+        )
+        kill_exec = await self._container.exec(
+            cmd=["sh", "-lc", signal_script],
+            workdir=self._cwd,
+        )
+        async with kill_exec.start() as stream:
+            while await stream.read_out() is not None:
+                pass
 
 
 class DockerBackend(BackendBase):
@@ -32,39 +108,57 @@ class DockerBackend(BackendBase):
         timeout: float | None = None,
         env: dict[str, str] | None = None,
     ) -> ExecResult:
-        async def _run() -> ExecResult:
-            exec_obj = await self._container.exec(
-                cmd=command,
-                workdir=cwd or self._workdir,
-                environment=env,
-            )
-            stdout_parts: list[bytes] = []
-            stderr_parts: list[bytes] = []
+        handle = await self.start_shell(
+            command,
+            cwd=cwd,
+            env=env,
+        )
+        result = await handle.wait(timeout=timeout)
+        if result is not None:
+            return result
+        await handle.terminate()
+        return ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
+
+    async def start_shell(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> ShellHandle:
+        command_line = shlex.join(command)
+        wrapped_command = (
+            "if command -v setsid >/dev/null 2>&1; then "
+            f"exec setsid {command_line}; "
+            f"else exec {command_line}; fi"
+        )
+        exec_obj = await self._container.exec(
+            cmd=["sh", "-lc", wrapped_command],
+            workdir=cwd or self._workdir,
+            environment=env,
+        )
+        stdout_buffer = bytearray()
+        stderr_buffer = bytearray()
+
+        async def _drain_stream() -> None:
             async with exec_obj.start() as stream:
                 while True:
                     msg = await stream.read_out()
                     if msg is None:
-                        break
+                        return
                     if msg.stream == 1:
-                        stdout_parts.append(msg.data)
+                        stdout_buffer.extend(msg.data)
                     else:
-                        stderr_parts.append(msg.data)
-            inspect = await exec_obj.inspect()
-            code = inspect.get("ExitCode", -1)
-            if code is None:
-                code = -1
-            return ExecResult(
-                exit_code=int(code),
-                stdout=b"".join(stdout_parts),
-                stderr=b"".join(stderr_parts),
-            )
+                        stderr_buffer.extend(msg.data)
 
-        if timeout is None:
-            return await _run()
-        try:
-            return await asyncio.wait_for(_run(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
+        return _DockerShellHandle(
+            container=self._container,
+            exec_obj=exec_obj,
+            stream_task=asyncio.create_task(_drain_stream()),
+            stdout_buffer=stdout_buffer,
+            stderr_buffer=stderr_buffer,
+            cwd=cwd or self._workdir,
+        )
 
     async def read_file(self, path: str) -> bytes:
         from aiodocker import exceptions as aiodocker_exceptions

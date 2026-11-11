@@ -13,7 +13,8 @@ Verifies the assembly rules:
 - team tools are gated by the ``team`` builtin tool group and then by
   ``agent_record.source``: ``"team"`` → one ``TeamSay`` (worker variant);
   anything else → the full leader-side toolset of four;
-- ``TaskStop`` and ``reset_tools`` are not exposed;
+- `job_list` / `job_output` / `job_kill` and `reset_tools` are exposed as
+  the background-job control surface;
 - DSH-style subagent spawn tools follow the sub-agent permissions flag
 -  independently of the ``team`` builtin tool group, while continuable
 -  child sessions still receive the control tools;
@@ -221,7 +222,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
 
     async def test_user_agent_gets_enabled_sources_without_taskstop(self) -> None:
         """A user-owned agent receives enabled workspace, planning,
-        scheduling, and leader-side team tools, but not TaskStop."""
+        scheduling, background job controls, and leader-side team tools."""
         agent = _make_agent(source="user")
         session = _make_session(
             user_id="u",
@@ -264,8 +265,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         self.assertTrue(
             {"TaskCreate", "TaskList", "TaskGet", "TaskUpdate"} <= names,
         )
-        # Background task control removed.
-        self.assertNotIn("TaskStop", names)
+        self.assertTrue({"job_list", "job_output", "job_kill"} <= names)
         # Schedule control present (model_config is set).
         self.assertTrue(
             {

@@ -29,6 +29,8 @@ from ._builtin import (
     DirEntry,
     ExecResult,
     LocalBackend,
+    ShellHandle,
+    ShellSnapshot,
 )
 from ._task import (
     TaskUpdate,
@@ -65,6 +67,8 @@ __all__ = [
     "LocalBackend",
     "DirEntry",
     "ExecResult",
+    "ShellHandle",
+    "ShellSnapshot",
     "ResetTools",
     "Bash",
     "PowerShell",

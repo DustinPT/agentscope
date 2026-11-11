@@ -155,7 +155,9 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         #   agent would lose track of the pending confirmation.
         tool = await agent.toolkit.get_tool(tool_call.name)
         if tool is not None and (
-            tool.is_state_injected or tool.is_external_tool
+            tool.is_state_injected
+            or tool.is_external_tool
+            or tool.name in {"Bash", "PowerShell"}
         ):
             async for item in next_handler(**input_kwargs):
                 yield item
@@ -235,6 +237,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             session_id,
             agent.name,
         )
+
+        task_id_holder: dict[str, str] = {}
 
         async def _deliver_when_done() -> None:
             """Wait for the offloaded tool to finish, then push its
@@ -335,6 +339,15 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     source=hint_source,
                 )
 
+            task_id = task_id_holder.get("id")
+            if task_id is not None:
+                rendered_output = "\n".join(
+                    block.text
+                    for block in hint.hint
+                    if isinstance(block, TextBlock)
+                ) if isinstance(hint.hint, list) else str(hint.hint)
+                self._bg_manager.append_text_output(task_id, rendered_output)
+
             # Deliver via inbox + wakeup — same path as a team message.
             # InboxMiddleware drains the inbox into context on the next
             # reasoning step, and WakeupDispatcher kicks an idle session
@@ -359,7 +372,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             session_id=session_id,
             agent_id=self._agent_id,
             user_id=self._user_id,
+            kind="tool",
+            title=f"{tool_name} · {tool_call.id}",
         )
+        task_id_holder["id"] = task_id
 
         logger.info(
             "Synthetic ToolResponse yielded for offloaded tool '%s': "
