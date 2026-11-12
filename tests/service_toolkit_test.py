@@ -598,7 +598,9 @@ class TestGetToolkitSubagentTools(IsolatedAsyncioTestCase):
             extra_factory=None,
         )
         names = set(_tool_names(toolkit))
-        self.assertTrue({"send_message", "list_agents", "interrupt_agent", "wait_agent"} <= names)
+        self.assertTrue({"send_message", "list_agents", "interrupt_agent"} <= names)
+        # wait_agent 暂不挂载，但工具实现保留。
+        self.assertNotIn("wait_agent", names)
         self.assertNotIn("subagent", names)
         self.assertNotIn("subagent_fork", names)
 

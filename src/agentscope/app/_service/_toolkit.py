@@ -21,7 +21,7 @@ from .._tools import (
     Subagent,
     SubagentFork,
     InterruptAgent,
-    WaitAgent,
+    WaitAgent,  # noqa: F401  # 暂时不挂载，保留工具实现
     SubmitExternalResults,
     TeamCreate,
     TeamDelete,
@@ -300,7 +300,9 @@ optional):
                     agent_id=agent_record.id,
                 ),
                 InterruptAgent(**managed_tool_kwargs),
-                WaitAgent(**managed_tool_kwargs),
+                # 暂时取消 wait_agent 的挂载（工具实现仍保留，
+                # 需要时取消注释即可恢复）。
+                # WaitAgent(**managed_tool_kwargs),
             ],
         )
 
