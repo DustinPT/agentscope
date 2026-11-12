@@ -700,28 +700,29 @@ _HEARTBEAT_INTERVAL_SECS = 30
 # Interval between SSE heartbeat comment frames (``:\\n\\n``).
 
 
-async def _leaf_still_awaiting_hitl(
+async def _pending_leaf_tool_call_ids(
     storage: StorageBase,
     user_id: str,
     leaf_agent_id: str,
     leaf_session_id: str,
     reply_id: str,
-) -> bool:
-    """Return whether one leaf session still waits on this reply."""
+) -> set[str]:
+    """Return tool-call ids still awaiting HITL in one leaf reply."""
     session = await storage.get_session(
         user_id,
         leaf_agent_id,
         leaf_session_id,
     )
     if session is None or not session.state.context:
-        return False
+        return set()
     last_msg = session.state.context[-1]
     if last_msg.role != "assistant" or last_msg.id != reply_id:
-        return False
-    return any(
-        tool_call.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+        return set()
+    return {
+        tool_call.id
         for tool_call in last_msg.get_content_blocks("tool_call")
-    )
+        if tool_call.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+    }
 
 
 async def _iter_session_sse_frames(
@@ -788,13 +789,20 @@ async def _iter_session_sse_frames(
             session_id,
             RecursiveHitlProjector.KIND,
         ):
-            if not await _leaf_still_awaiting_hitl(
+            pending_ids = await _pending_leaf_tool_call_ids(
                 storage,
                 user_id,
                 payload["leaf_agent_id"],
                 payload["leaf_session_id"],
                 payload["reply_id"],
-            ):
+            )
+            event = payload.get("event") or {}
+            pending_tool_calls = [
+                tool_call
+                for tool_call in event.get("tool_calls") or []
+                if tool_call.get("id") in pending_ids
+            ]
+            if not pending_tool_calls:
                 await projection.delete(
                     session_id,
                     RecursiveHitlProjector.KIND,
@@ -804,6 +812,11 @@ async def _iter_session_sse_frames(
                     ),
                 )
                 continue
+            if len(pending_tool_calls) != len(event.get("tool_calls") or []):
+                payload = {
+                    **payload,
+                    "event": {**event, "tool_calls": pending_tool_calls},
+                }
             custom = CustomEvent(
                 name=RecursiveHitlProjector.EVT_REQUIRE,
                 value=payload,

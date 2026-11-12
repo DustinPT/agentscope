@@ -85,8 +85,9 @@ async def chat(
     ):
         run_session_id = request.session_id
         run_agent_id = request.agent_id
+        projection = SessionProjection(message_bus)
         target = await RecursiveHitlProjector.resolve(
-            SessionProjection(message_bus),
+            projection,
             request.session_id,
             request.input.reply_id,
         )
@@ -126,6 +127,27 @@ async def chat(
             kind=MessageBusKeys.WAKEUP_KIND_RESUME,
             inputs=request.input,
         )
+        if target is not None:
+            if isinstance(request.input, UserConfirmResultEvent):
+                answered_ids = {
+                    result.tool_call.id
+                    for result in request.input.confirm_results
+                }
+            else:
+                answered_ids = {
+                    result.id for result in request.input.execution_results
+                }
+            latest = await RecursiveHitlProjector.resolve(
+                projection,
+                request.session_id,
+                request.input.reply_id,
+            )
+            if latest is not None:
+                await RecursiveHitlProjector.forget_answered(
+                    projection,
+                    latest,
+                    answered_ids,
+                )
         return ChatTriggerResponse(
             status="started",
             session_id=run_session_id,

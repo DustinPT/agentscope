@@ -87,6 +87,22 @@ class RecursiveHitlProjector:
             event,
             (RequireUserConfirmEvent, RequireExternalExecutionEvent),
         ):
+            event_payload = event.model_dump(mode="json")
+            previous = await self._find_entry(
+                projection,
+                target_session.id,
+                session_record.id,
+                event.reply_id,
+            )
+            merged_tool_calls = self._merge_tool_calls(
+                previous,
+                event_payload,
+            )
+            if merged_tool_calls is not None:
+                event_payload = {
+                    **event_payload,
+                    "tool_calls": merged_tool_calls,
+                }
             payload = {
                 "target_session_id": target_session.id,
                 "leaf_session_id": session_record.id,
@@ -98,7 +114,7 @@ class RecursiveHitlProjector:
                     if isinstance(event, RequireUserConfirmEvent)
                     else "require_external_execution"
                 ),
-                "event": event.model_dump(mode="json"),
+                "event": event_payload,
                 "created_at": datetime.now().isoformat(),
                 "projection_path_session_ids": path,
                 "projection_source": projection_source,
@@ -238,6 +254,96 @@ class RecursiveHitlProjector:
             if entry.get("reply_id") == reply_id:
                 return entry
         return None
+
+    @classmethod
+    async def _find_entry(
+        cls,
+        projection: "SessionProjection",
+        target_session_id: str,
+        leaf_session_id: str,
+        reply_id: str,
+    ) -> dict | None:
+        """Return the stored entry for one leaf reply, if any."""
+        for entry in await projection.list(target_session_id, cls.KIND):
+            if (
+                entry.get("leaf_session_id") == leaf_session_id
+                and entry.get("reply_id") == reply_id
+            ):
+                return entry
+        return None
+
+    @staticmethod
+    def _merge_tool_calls(
+        previous: dict | None,
+        incoming: dict,
+    ) -> list[dict] | None:
+        """Keep still-pending tool calls when a new require overwrites one."""
+        incoming_calls = incoming.get("tool_calls") or []
+        previous_calls = (
+            ((previous or {}).get("event") or {}).get("tool_calls") or []
+        )
+        if not previous_calls:
+            return None
+        merged: dict[str, dict] = {
+            tool_call["id"]: tool_call
+            for tool_call in previous_calls
+            if tool_call.get("id")
+        }
+        for tool_call in incoming_calls:
+            if tool_call.get("id"):
+                merged[tool_call["id"]] = tool_call
+        return list(merged.values())
+
+    @classmethod
+    async def forget_answered(
+        cls,
+        projection: "SessionProjection",
+        entry: dict,
+        answered_tool_call_ids: set[str],
+    ) -> None:
+        """Drop answered tool calls from one projected entry.
+
+        Mirrors the WebUI's optimistic removal so a page refresh no
+        longer replays a confirmation the user already answered. The
+        entry is deleted once no tool call is left waiting.
+        """
+        if not answered_tool_call_ids:
+            return
+        target_session_id = entry["target_session_id"]
+        entry_id = cls.entry_id(
+            entry["leaf_session_id"],
+            entry["reply_id"],
+        )
+        event = entry.get("event") or {}
+        remaining = [
+            tool_call
+            for tool_call in event.get("tool_calls") or []
+            if tool_call.get("id") not in answered_tool_call_ids
+        ]
+        if remaining:
+            updated = {**entry, "event": {**event, "tool_calls": remaining}}
+            await projection.upsert(
+                target_session_id,
+                cls.KIND,
+                entry_id,
+                updated,
+            )
+            await projection.publish(
+                target_session_id,
+                cls.EVT_REQUIRE,
+                updated,
+            )
+            return
+        await projection.delete(target_session_id, cls.KIND, entry_id)
+        await projection.publish(
+            target_session_id,
+            cls.EVT_RESULT,
+            {
+                "target_session_id": target_session_id,
+                "leaf_session_id": entry["leaf_session_id"],
+                "reply_id": entry["reply_id"],
+            },
+        )
 
     @classmethod
     async def purge_target(
